@@ -149,8 +149,6 @@
           </div>
         </div>
 
-        <VideoDeliverySettings />
-
         <div class="setting-row">
           <div class="setting-left">
             <span class="setting-label">镜像我的视频</span>
@@ -196,6 +194,11 @@
             ></div>
           </div>
         </div>
+      </section>
+
+      <section class="settings-section">
+        <h3 class="section-title">视频传输</h3>
+        <VideoDeliverySettings />
       </section>
 
       <section class="settings-section">

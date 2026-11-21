@@ -317,14 +317,18 @@ components:
     VideoStats:
       type: object
       description: 单路视频的实测值。采集与发送由发布者上报，云端按四秒窗口统计网关视频帧及字节，不含音频。null 为暂无样本，0 为实测零。
-      required: [captureFps, publishFps, cloudInputFps, cloudOutputFps, cloudInputKbps, cloudOutputKbps]
+      required: [decodedFrameKbps, publishKbps, viewerCount, publicEgressKbps, captureFps, publishFps, cloudInputFps, cloudOutputFps, cloudInputKbps, cloudOutputKbps]
       properties:
-        captureFps: { type: number, nullable: true, description: 浏览器采集源实测帧率（fps） }
-        publishFps: { type: number, nullable: true, description: 浏览器视频编码发送帧率（fps） }
-        cloudInputFps: { type: number, nullable: true, description: 阿里云接收的视频帧率（fps） }
-        cloudOutputFps: { type: number, nullable: true, description: 阿里云分发路径输出的视频帧率（fps） }
-        cloudInputKbps: { type: number, nullable: true, description: 原始视频码率，云端二次压缩前的视频有效载荷（十进制 kbps） }
-        cloudOutputKbps: { type: number, nullable: true, description: 分发路径的视频有效载荷（十进制 kbps），同一路输出只计一次 }
+        decodedFrameKbps: { type: [number, "null"], description: 发布端解码后可见画面的像素数据率，按实际视频帧的字节数计算（kbps），无支持或缺样为 null }
+        publishKbps: { type: [number, "null"], description: 发布端 WebRTC 实际发送的视频 RTP 有效载荷（kbps），Ocean 压缩比的分子 }
+        viewerCount: { type: integer, minimum: 0, description: 该路云端输出上的 WebRTC 观看连接数 }
+        publicEgressKbps: { type: [number, "null"], description: 该路实际公网媒体下行合计（kbps），无人接收时为零 }
+        captureFps: { type: [number, "null"], description: 浏览器采集源实测帧率（fps） }
+        publishFps: { type: [number, "null"], description: 浏览器视频编码发送帧率（fps） }
+        cloudInputFps: { type: [number, "null"], description: 阿里云接收的视频帧率（fps） }
+        cloudOutputFps: { type: [number, "null"], description: 阿里云分发路径输出的视频帧率（fps） }
+        cloudInputKbps: { type: [number, "null"], description: 云端接收到的已编码视频有效载荷（十进制 kbps） }
+        cloudOutputKbps: { type: [number, "null"], description: 分发路径的视频有效载荷（十进制 kbps），同一路输出只计一次 }
     StreamVo:
       type: object
       description: videoCodec 运行时存在且无 omitempty；文档 §6.3 streams 未列（DERIVATION A7）。
@@ -341,7 +345,7 @@ components:
         width: { type: integer, x-source: meeting_state.go:42 }
         height: { type: integer, x-source: meeting_state.go:43 }
         fps: { type: integer, description: 中卫通会议返回云端输出实测帧率的四舍五入整数，缺样为 0。完整精度与缺样状态见 videoStats。, x-source: meeting_state.go:44 }
-        sourceBitrateKbps: { type: integer, description: '运行时是 int，取不到即 0，不会是 null；文档 §6.3:356 写 number|null（DERIVATION B3）', x-source: meeting_state.go:45 }
+        sourceBitrateKbps: { type: integer, description: 中卫通独立会议的兼容字段取整后的云端视频输入。发布端上行和解码后数据率见 videoStats。缺样为 0。, x-source: meeting_state.go:45 }
         ingressBitrateKbps: { type: integer, description: '这一路**进入分发面时实测到的出站码率**，与 sourceBitrateKbps 在同一条腿上：分子是发布端编码器输出、这个数是平台侧实测的出站。本端那一路的压缩比分母就是它（三方 ownRows 也是这么分的；remoteRows 传的是裸的本机接收速率，本来就跨腿）。取不到即 0，前端显示"统计中"，**不许拿本端下行接收速率顶上去** —— 那是另一条腿的数，混进来倍率就没有意义。实测边界：没有真媒体在流时服务端量不出这个数，恒为 0。不加 omitempty，与 sourceBitrateKbps 同策略', x-source: meeting_state.go:49 }
         transportMode: { type: string, enum: [original, cloud] }
         encodingStrategy: { type: string, enum: [source_frames, bandwidth_first, optimized] }
@@ -351,7 +355,7 @@ components:
         compressionRatio: { type: number, description: '三方在该路发布记录里直接上报的压缩倍率（transportMetrics.compressionRatio）：本端两个数凑不出倍率时的退路，口径同三方 compressionText。omitempty，缺键或 0 = 三方没给，前端显示"统计中"，不许拿派生值冒充。带小数原样传（取整会把 2.31 倍说成 2 倍）', x-source: meeting_state.go:55 }
         compressionEstimated: { type: boolean, description: '上面那个倍率是三方估算而非实测 —— 界面要照实标"估算"（omitempty）', x-source: meeting_state.go:57 }
         videoCodec: { type: string, enum: [h264, hevc, vp8, vp9, av1, ''], x-source: meeting_state.go:56 }
-        videoChannel: { type: string, enum: [direct, lanWhep], description: '视频腿走哪条通道，前端按它选播放器，不靠错误文案猜：direct=GET endpoints.video（直连压缩流）；lanWhep=POST /streams/{streamId}/whep（船端局域网 WHEP，只有边端实例会签）。缺键 = 上游有视频但本实例一条腿都接不通（如云端实例收到只给 RK 通道的发布）。omitempty', x-source: meeting_state.go:60 }
+        videoChannel: { type: string, enum: [direct, lanWhep, cloudWhep], description: '视频腿走哪条通道，前端按它选播放器，不靠错误文案猜：cloudWhep=中卫通公网 WHEP；direct=GET endpoints.video（直连压缩流）；lanWhep=POST /streams/{streamId}/whep（船端局域网 WHEP，只有边端实例会签）。缺键 = 上游有视频但本实例一条腿都接不通（如云端实例收到只给 RK 通道的发布）。omitempty', x-source: meeting_state.go:60 }
         active: { type: boolean, x-source: meeting_state.go:61 }
         endpoints: { $ref: '#/components/schemas/StreamEndpointsVo', description: 'video 只在 videoChannel=direct 时给；lanWhep 那一路的视频不经这条 GET 代理', x-source: meeting_state.go:62 }
 
@@ -836,7 +840,7 @@ components:
             properties:
               code: { type: integer, x-source: response.go:97 }
               msg: { type: string, x-source: response.go:98 }
-              reason: { type: string, enum: [not_found, gone, warming, upstream_unreachable, no_channel, bad_request, system_error, not_in_meeting], x-source: response.go:99, description: "由状态码一处导出（streamReason，response.go:106-124），调用点不传第二份字符串。〔2026-10-10 收口〕取值域从映射表数出来，与 §1 信封侧那三个是两套：一边由业务分支点名、一边由状态码推导，E2 那条看起来冲突就出在这里" }
+              reason: { type: string, enum: [forbidden, not_found, gone, warming, upstream_unreachable, no_channel, bad_request, system_error, not_in_meeting], x-source: response.go:99, description: "由状态码一处导出（streamReason，response.go:106-124），调用点不传第二份字符串。〔2026-10-10 收口〕取值域从映射表数出来，与 §1 信封侧那三个是两套：一边由业务分支点名、一边由状态码推导，E2 那条看起来冲突就出在这里" }
 
 security:
   - bearerAuth: []
@@ -1713,18 +1717,12 @@ paths:
   /meetings/{id}/telemetry:
     post:
       operationId: reportTelemetry
-      summary: 上报发布端实测的编码码率
+      summary: 上报每路发布视频的实测帧率和码率
       description: >-
-        「原始速率 / 压缩比 / 节省带宽」三个数的**唯一真源**：订阅端算不出压缩前的数，
-        只能读服务端把发布端这份上报转发成的该路 `transportMetrics.sourceVideoBitrateKbps`。
-        三方只认 4 秒内的新鲜样本，所以前端 2 秒报一次（丢一次仍在门内）。
-        〔硬规则〕**不得只走 WS** —— WS 未连上时消息静默丢弃，会让**所有订阅者**
-        （含三方自家页面）永远停在「原始码率统计中」；WS 的 `telemetry` 帧保留作冗余，
-        与本端点**共用同一个 item 形状**（契约 §6.3 的 TelemetryItem 是那一份定义）。
-        后端只把样本落进会话、**不立刻向三方心跳**（泵每秒已逐会话发一次，多插一次是白加往返，
-        还会把全局单调的 revision 无谓推高）—— 这一点与 `/media-state` 相反，那条会立刻心跳。
-        摄像头与屏幕共享是两个独立发布，**逐路各报一条**。
-        成功回 `data: {}`（空对象，出口是 `Ok(r, v1.MeetingTelemetryRes{})`）。
+        网页按 publicationId 每两秒分别上报摄像头和共享屏幕的采样，REST 与 WS telemetry 使用相同的 items。
+        中卫通独立会议的 decodedFrameKbps 来自解码后可见帧的字节数，publishKbps 来自本路 outbound-rtp.bytesSent 增量。
+        服务端按发布身份校验。云端视频输出即使无人观看也持续可测。发布端压缩比采用 publishKbps / cloudOutputKbps，
+        观看端优先使用本机同一路视频实收作分母。原始转发显示直传。缺样传 null，实测零传 0。
       x-source: backend/internal/cmd/cmd.go:148 + controller/meeting/meeting.go:1515
       parameters:
         - { name: id, in: path, required: true, schema: { type: integer, format: int64 }, x-source: api/v1/meeting.go:298 }
@@ -1752,6 +1750,8 @@ paths:
                         format: double
                         description: "发布端自己 getStats 实测的编码码率，SI kbit/s。<=0 整条被丢弃 —— 发 0 会被上游当成「实测到 0」，比缺数更坏"
                         x-source: api/v1/meeting.go:283
+                      publishKbps: { type: [number, "null"], minimum: 0, maximum: 1.0e9, description: 已编码的视频 RTP 发送速率（kbps） }
+                      decodedFrameKbps: { type: [number, "null"], minimum: 0, maximum: 1.0e9, description: 发布端解码后可见画面的数据率（kbps） }
                       captureFps: { type: number, nullable: true, minimum: 0, maximum: 240, description: 当前采集源实测 fps }
                       publishFps: { type: number, nullable: true, minimum: 0, maximum: 240, description: 当前浏览器编码发送实测 fps }
                       sourceFps:
@@ -2214,3 +2214,42 @@ paths:
         '400': { $ref: '#/components/responses/StreamError' }
         '404': { $ref: '#/components/responses/StreamError' }
         '502': { $ref: '#/components/responses/StreamError' }
+
+
+  /meetings/{id}/streams/{streamId}/whep:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      - { name: streamId, in: path, required: true, schema: { type: string }, description: '取会议状态的 streams[].id' }
+    post:
+      operationId: subscribeMeetingWhep
+      summary: 观看其他参会端的视频或音频
+      description: 使用观看端网页登录令牌。每个 recvonly SDP offer 描述要订阅的一路。发布者本机直接预览，订阅自己的流返回 HTTP 403 和 forbidden。
+      requestBody:
+        required: true
+        content:
+          application/sdp:
+            schema: { type: string }
+      responses:
+        '200':
+          description: 交给 RTCPeerConnection 的 SDP answer
+          content:
+            application/sdp:
+              schema: { type: string }
+        '400': { $ref: '#/components/responses/StreamError' }
+        '401': { $ref: '#/components/responses/StreamError' }
+        '403': { $ref: '#/components/responses/StreamError' }
+        '404': { $ref: '#/components/responses/StreamError' }
+        '410': { $ref: '#/components/responses/StreamError' }
+        '501': { $ref: '#/components/responses/StreamError' }
+        '502': { $ref: '#/components/responses/StreamError' }
+        '503': { $ref: '#/components/responses/StreamError' }
+    delete:
+      operationId: unsubscribeMeetingWhep
+      summary: 停止本端观看该流
+      description: 释放该观看端为此 streamId 建立的接收连接。发布和云端编码可继续运行。
+      responses:
+        '200':
+          description: 已释放订阅
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }

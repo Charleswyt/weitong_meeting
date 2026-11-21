@@ -46,7 +46,8 @@
 export type RateBasis = 'ingress' | 'egress'
 
 export interface CompressionInput {
-  videoStats?: { cloudInputKbps: number | null; cloudOutputKbps: number | null }
+  videoStats?: { decodedFrameKbps: number | null; publishKbps: number | null; cloudOutputKbps: number | null }
+  receivedVideoKbps?: number | null
   sourceKbps: number
   transmittedKbps: number
   /** 必填、**没有默认值**：漏了编译不过，免得新接一路时静默按跨腿算出一个看着合理的倍率。 */
@@ -122,7 +123,7 @@ export function fpsText(value: number | null | undefined): string {
  * 见 `views/meeting/InMeetingView.vue` 宫格那一行的注释。
  */
 export function rateTextCompact(kbps: number | null | undefined): string {
-  return rateText(kbps).replace(' ', '')
+  return measuredRateText(kbps).replace(' ', '')
 }
 
 /** 节省百分比 = clamp((1 − 压缩后 ÷ 原始) × 100, 0, 100)，照看板 `compressionFieldsFrom`。 */
@@ -167,14 +168,18 @@ export function compressionView(i: CompressionInput): CompressionView {
     compressionKind = 'unknown', reportedRatio = 0, reportedEstimate = false,
   } = i
   if (i.videoStats) {
-    const { cloudInputKbps: input, cloudOutputKbps: output } = i.videoStats
+    const { decodedFrameKbps, publishKbps, cloudOutputKbps } = i.videoStats
+    const received = i.receivedVideoKbps != null && i.receivedVideoKbps > 0
+    const output = received ? i.receivedVideoKbps! : cloudOutputKbps
     const direct = compressionKind === 'none'
-    const pair = input != null && input > 0 && output != null && output > 0
+    const ratio = !direct && publishKbps != null && publishKbps > 0 && output != null && output > 0
+      ? publishKbps / output : null
     return {
-      rawText: measuredRateText(input),
-      ratioText: direct ? DIRECT_TEXT : pair ? (input / output).toFixed(2) + ':1' : '—',
-      savedText: direct ? '—' : pair ? ((1 - output / input) * 100).toFixed(1) + '%' : '—',
-      basisText: '阿里云网关实测视频输入与输出', compressed: !direct && pair, applicable: true, summaryText: '',
+      rawText: measuredRateText(decodedFrameKbps),
+      ratioText: direct ? DIRECT_TEXT : ratio == null ? '—' : ratio.toFixed(2) + '×',
+      savedText: ratio == null ? '—' : (Math.max(0, 1 - 1 / ratio) * 100).toFixed(1) + '%',
+      basisText: direct ? '原始转发' : received ? '发布端视频上行 ÷ 本端视频实收' : '发布端视频上行 ÷ 云端视频输出',
+      compressed: ratio != null, applicable: !direct, summaryText: direct ? DIRECT_SUMMARY : '',
     }
   }
   const basisText = basis === 'ingress' ? BASIS_INGRESS_TEXT : BASIS_EGRESS_TEXT

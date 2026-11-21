@@ -1,7 +1,7 @@
 import { sitePath } from '@/utils/sitePath'
 import { createPublication, stopPublication, type PublicationCreateBody } from '@/api/meeting'
 import { h264First } from '@/utils/codecPreference'
-import { videoSampler, type BrowserVideoSample } from '@/utils/videoObservations'
+import { observeDecodedTrack, videoSampler, type BrowserVideoSample } from '@/utils/videoObservations'
 import { normalizeVideoSpec, publicVideoSpec } from '@/utils/videoSpec'
 import { ApiError } from '@/utils/request'
 
@@ -83,6 +83,7 @@ export interface PublishOptions {
   /** 只在还没产出码率增量时单独回吐目标码率。 */
   onTarget?: (kbps: number) => void
   preferredFps?: number
+  captureTrack?: () => MediaStreamTrack | undefined
   physicalFrames?: () => number | null | undefined
   onVideoSample?: (sample: BrowserVideoSample | null) => void
   /** 上行累计发送字节（getStats bytesSent 累计值）。 */
@@ -103,6 +104,8 @@ export interface PublishOptions {
 export function useWhipPublish(getMeetingId: () => number) {
   let pc: RTCPeerConnection | null = null
   let publicationId = ''
+  let starting: Promise<RTCPeerConnection> | null = null
+  let frameMeter: ReturnType<typeof observeDecodedTrack> = null
   let options: PublishOptions | undefined
   let publishedSpec: ReturnType<typeof publicVideoSpec> | undefined
   let rateTimer: ReturnType<typeof setInterval> | null = null
@@ -115,6 +118,8 @@ export function useWhipPublish(getMeetingId: () => number) {
       clearInterval(rateTimer)
       rateTimer = null
     }
+    frameMeter?.stop()
+    frameMeter = null
     options?.onVideoSample?.(null)
     options = undefined
     publishedSpec = undefined
@@ -134,6 +139,18 @@ export function useWhipPublish(getMeetingId: () => number) {
   }
 
   async function publish(stream: MediaStream, opts: PublishOptions): Promise<RTCPeerConnection> {
+    const attempt = startPublish(stream, opts)
+    starting = attempt
+    try { return await attempt }
+    finally { if (starting === attempt) starting = null }
+  }
+
+  async function publicationIdWhenReady() {
+    if (starting) await starting
+    return publicationId
+  }
+
+  async function startPublish(stream: MediaStream, opts: PublishOptions): Promise<RTCPeerConnection> {
     await unpublish()
     const videoTrack = stream.getVideoTracks()[0]
     const hasAudio = stream.getAudioTracks().length > 0
@@ -159,7 +176,7 @@ export function useWhipPublish(getMeetingId: () => number) {
       throw new PublishError('没能拿到这路媒体的推流地址，请重试')
     }
     const conn = new RTCPeerConnection()
-    stream.getTracks().forEach((t) => conn.addTrack(t, stream))
+    stream.getTracks().forEach(track => conn.addTransceiver(track, { direction: 'sendonly', streams: [stream] }))
     // 来源由后端定（按本实例端别与媒体类型），前端只照它决定编码偏好，别按"是不是边端"自己猜。
     if (sourceType === 'rk_browser_roi') {
       const caps = RTCRtpSender.getCapabilities?.('video')
@@ -246,6 +263,7 @@ export function useWhipPublish(getMeetingId: () => number) {
     })
     // 上行码率/字节只能本地测：累计 outbound-rtp 的字节增量 / 时间差（≥250ms 基线）。
     if (opts.onRate || opts.onBytes || opts.onVideoSample) {
+      if (videoTrack && opts.onVideoSample) frameMeter = observeDecodedTrack(opts.captureTrack?.() ?? videoTrack)
       const sampleVideo = videoSampler()
       let prevBytes = 0
       let prevAt = 0
@@ -253,7 +271,7 @@ export function useWhipPublish(getMeetingId: () => number) {
         conn.getStats().then((report) => {
           if (pc !== conn) return
           const trackId = videoSender?.track?.id
-          if (trackId) opts.onVideoSample?.(sampleVideo(report, trackId, opts.physicalFrames?.()))
+          if (trackId) opts.onVideoSample?.(sampleVideo(report, trackId, opts.physicalFrames?.(), frameMeter?.read()))
           let bytes = 0
           // 编码器当前目标码率：浏览器按带宽估计实时调，只有发送端自己知道，链路不回吐。
           let targetKbps = 0
@@ -295,6 +313,8 @@ export function useWhipPublish(getMeetingId: () => number) {
     const sender = pc.getSenders().find((s) => s.track?.kind === 'video' || s.track === null)
     if (!sender) throw new PublishError('找不到视频发送器')
     await sender.replaceTrack(track)
+    frameMeter?.stop()
+    frameMeter = options?.onVideoSample ? observeDecodedTrack(options.captureTrack?.() ?? track) : null
     // 换轨后重置编码器参数（对齐三方 setFocused + refreshVideoEncoder）
     try {
       const params = sender.getParameters()
@@ -315,5 +335,5 @@ export function useWhipPublish(getMeetingId: () => number) {
     return publishedSpec?.fps === next.fps && publishedSpec.width === next.width && publishedSpec.height === next.height
   }
 
-  return { publish, unpublish, canReplaceVideoTrack, published: () => !!publicationId, publicationIdOf: () => publicationId, replaceVideoTrack }
+  return { publish, unpublish, publicationIdWhenReady, canReplaceVideoTrack, published: () => !!publicationId, publicationIdOf: () => publicationId, replaceVideoTrack }
 }

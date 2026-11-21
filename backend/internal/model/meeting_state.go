@@ -34,12 +34,16 @@ type StreamEndpointsVo struct {
 
 // VideoStats contains observations of one video publication. Nil means no current sample.
 type VideoStats struct {
-	CaptureFps      *float64 `json:"captureFps"`
-	PublishFps      *float64 `json:"publishFps"`
-	CloudInputFps   *float64 `json:"cloudInputFps"`
-	CloudOutputFps  *float64 `json:"cloudOutputFps"`
-	CloudInputKbps  *float64 `json:"cloudInputKbps"`
-	CloudOutputKbps *float64 `json:"cloudOutputKbps"`
+	DecodedFrameKbps *float64 `json:"decodedFrameKbps"`
+	PublishKbps      *float64 `json:"publishKbps"`
+	ViewerCount      int      `json:"viewerCount"`
+	PublicEgressKbps *float64 `json:"publicEgressKbps"`
+	CaptureFps       *float64 `json:"captureFps"`
+	PublishFps       *float64 `json:"publishFps"`
+	CloudInputFps    *float64 `json:"cloudInputFps"`
+	CloudOutputFps   *float64 `json:"cloudOutputFps"`
+	CloudInputKbps   *float64 `json:"cloudInputKbps"`
+	CloudOutputKbps  *float64 `json:"cloudOutputKbps"`
 }
 
 type StreamVo struct {

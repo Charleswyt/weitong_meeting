@@ -446,6 +446,8 @@ type VideoSourceTelemetry struct {
 	SourceFps                  float64  `json:"sourceFps"`
 	CaptureFps                 *float64 `json:"captureFps,omitempty"`
 	PublishFps                 *float64 `json:"publishFps,omitempty"`
+	PublishKbps                *float64 `json:"publishKbps,omitempty"`
+	DecodedFrameKbps           *float64 `json:"decodedFrameKbps,omitempty"`
 	AssociatedAudioBitrateKbps float64  `json:"associatedAudioBitrateKbps"`
 }
 

@@ -11,6 +11,8 @@ import { normalizeEpochMs } from './mediaClock'
 // 这一条 PC 的入向实测。走 WHEP 的那一路不经我方容器，帧头里没有采集墙钟、也没有 onTraffic，
 // 所以悬浮统计条要的每一项都只能从这里取 —— 少读一个字段，界面上就少一格有值。
 export interface WhepStats {
+  sampleTimeMs?: number
+  reportId?: string
   /** 累计收到的字节，用于自算压缩后速率与节省带宽。 */
   bytesReceived: number
   framesDecoded: number
@@ -154,6 +156,8 @@ async function subscribeWhep(
       if (!inbound || Number(s.packetsReceived || 0) > Number(inbound.packetsReceived || 0)) inbound = s
     }
     if (!inbound) return out
+    out.sampleTimeMs = Number(inbound.timestamp)
+    out.reportId = String(inbound.id)
     out.bytesReceived = Number(inbound.bytesReceived || 0)
     out.framesDecoded = Number(inbound.framesDecoded || 0)
     out.width = Number(inbound.frameWidth || 0)
@@ -177,17 +181,16 @@ async function subscribeWhep(
     }
     return out
   }
-  let prev = 0
+  let prev: WhepStats | undefined
   let timer = 0
   if (onRate || onStats) {
     timer = window.setInterval(async () => {
       const st = await readStats()
-      if (onRate) {
-        // 字节回退了说明这不是同一个会话，那一秒就不报数，而不是报一个假的负值。
-        // 定时器周期 1000ms，所以 Δbytes*8/1000 就是 SI kbit/s —— 与三方 `samplePeerRates` 同刻度，
-        // 别改回 /1024：那会让下行与上行（useWhipPublish 用 /1000）差 2.4%，压缩比就是这两个数相除。
-        if (st.bytesReceived >= prev) onRate(Math.round(((st.bytesReceived - prev) * 8) / 1000))
-        prev = st.bytesReceived
+      if (st.sampleTimeMs && (!prev || !prev.sampleTimeMs || st.sampleTimeMs > prev.sampleTimeMs)) {
+        if (prev?.sampleTimeMs && prev.reportId === st.reportId && st.bytesReceived >= prev.bytesReceived) {
+          onRate?.((st.bytesReceived - prev.bytesReceived) * 8 / (st.sampleTimeMs - prev.sampleTimeMs))
+        }
+        prev = st
       }
       onStats?.(st)
     }, 1000)

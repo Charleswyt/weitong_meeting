@@ -107,6 +107,8 @@ func streamReason(status int) string {
 	switch status {
 	case 401:
 		return "not_in_meeting"
+	case 403:
+		return "forbidden"
 	case 404:
 		return "not_found"
 	case 410:

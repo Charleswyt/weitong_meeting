@@ -401,6 +401,10 @@ GET /api/v1/<resource>/list?pageNum=1&pageSize=10&orderByColumn=startTime&isAsc=
     video: boolean; audio: boolean
     width: number; height: number; fps: number
     videoStats?: {              // 中卫通公网会议摄像头和屏幕各自独立。null 表示未取得样本。
+      decodedFrameKbps: number|null   // 发布端解码后的可见画面数据率
+      publishKbps: number|null        // 单路浏览器视频 RTP 上行
+      viewerCount: number             // 单路实际 WebRTC 观看连接
+      publicEgressKbps: number|null   // 单路面向观看端的总下行
       captureFps: number|null   // 浏览器采集源
       publishFps: number|null   // 浏览器发送编码帧
       cloudInputFps: number|null
@@ -930,3 +934,9 @@ WS 这条是冗余、正确性以 REST 为准，理由与 `media` 同（WS 未�
   唯一依据是已删除的 HTML 原型（6 条固定键、且无"自定义"），代码里从未有过键盘绑定。
   取证见 `../evidence/2026-11-17-交付目录改名与旧仓核对.md`。真要做属新增需求：先改画布，再从零加组件。
 - 人脸 ROI 提示 —— 边端 RK 通道专属，岸端浏览器暂不接
+
+### 中卫通公网会议的视频统计
+
+decodedFrameKbps 按发布端解码后逐帧可见像素字节计算。publishKbps 取该路视频 RTP 已发送字节增量。cloudInputKbps 和 cloudOutputKbps 表示云端编码视频的输入和单份输出。四项单位均为十进制 kbps。viewerCount 只计 WebRTC 观看连接，publicEgressKbps 为发给这些观看端的合计速率。无人观看时两项均为 0。压缩比采用 Ocean 的网页算法，发布端用 publishKbps 除以 cloudOutputKbps，观看端优先除以本机该路视频实收，无有效实收时使用云端输出。原始转发显示直传。解码后数据率独立展示。各采样窗口可能略有错位，缺失样本使用 null。 云端压缩在源就绪时启动，结束发布或恢复原始转发时停止。本端以 sendonly 发布，本机预览使用摄像头或屏幕轨道。
+
+观看端对 `/meetings/{id}/streams/{streamId}/whep` 提交 recvonly SDP，HTTP 200 返回 SDP answer。DELETE 同一路径只释放该浏览器的观看连接。订阅自己的流返回 HTTP 403，reason 为 `forbidden`。

@@ -198,7 +198,7 @@
                  宫格那一行后面还跟着这路的分辨率与帧率（摄像头关了则标「仅音频」）。 -->
             <div v-if="r.strip" class="im-tile-rate">
               <span class="im-rate-col"><i>总上行速率</i><b>{{ rateText(r.upKbps) }}</b></span>
-              <span class="im-rate-col"><i>总下行速率</i><b>{{ rateText(r.downKbps) }}</b></span>
+              <span class="im-rate-col"><i>总下行速率</i><b>{{ measuredRateText(r.downKbps) }}</b></span>
             </div>
             <div v-else class="im-tile-rate">
               <span>↑{{ rateTextCompact(r.upKbps) }}</span><span>↓{{ rateTextCompact(r.downKbps) }}</span>
@@ -279,28 +279,28 @@
         <header class="im-dock-head"><b>传输状态</b><button class="im-x" title="关闭" @click="dock = 'none'"><i class="ri-close-line" /></button></header>
         <div class="im-stats-body">
           <div class="im-stats-grid">
-            <div><span class="k">总上行</span><span class="v">{{ uplinkText }}</span></div>
-            <div><span class="k">总下行</span><span class="v">{{ downlinkText }}</span></div>
+            <div><span class="k">本端媒体上行</span><span class="v">{{ uplinkText }}</span></div>
+            <div><span class="k">本端媒体下行</span><span class="v">{{ downlinkText }}</span></div>
             <div><span class="k">会议时长</span><span class="v">{{ durationText }}</span></div>
             <div><span class="k">连接状态</span><span class="v">{{ wsLabel }}</span></div>
-            <div><span class="k">网络质量</span><span class="v" :title="netTitle">{{ net ? net.label + ' ' + net.rttMs + 'ms' : '检测中' }}</span></div>
-            <div v-if="!focusSourceStream?.videoStats" :title="focusRawTitle"><span class="k">原始速率</span><span class="v">{{ focusRawText }}</span></div>
-            <div title="压缩比 = 原始速率 ÷ 压缩后速率"><span class="k">压缩比</span><span class="v">{{ focusRatioText }}</span></div>
-            <div title="节省带宽 = 1 − 压缩后 ÷ 原始"><span class="k">节省带宽</span><span class="v">{{ focusSavedText }}</span></div>
+            <div class="im-net-quality"><span class="k">网络质量</span><span class="v" :title="netTitle">{{ net ? net.label + ' ' + net.rttMs + 'ms' : '检测中' }}</span></div>
+            <div v-if="!lineReading" :title="focusRawTitle"><span class="k">原始速率</span><span class="v">{{ focusRawText }}</span></div>
+            <div v-if="!lineReading" title="压缩比 = 原始速率 ÷ 压缩后速率"><span class="k">压缩比</span><span class="v">{{ focusRatioText }}</span></div>
+            <div v-if="!lineReading" title="节省带宽 = 1 − 压缩后 ÷ 原始"><span class="k">节省带宽</span><span class="v">{{ focusSavedText }}</span></div>
           </div>
-          <VideoPathStatus :streams="streams" :focus="focusSourceStream" />
+          <VideoPathStatus v-if="lineReading" v-model="selectedStatsId" :streams="publicLines" :reading="lineReading" />
           <!-- 三种会议模式共用：本端各路上行 + 推流态；压缩明细已上移到上方网格。 -->
           <div class="im-stats-stream">
-            <div class="im-stats-row" title="本机摄像头这一路的实际上行速率">
+            <div v-if="!lineReading" class="im-stats-row" title="本机摄像头这一路的实际上行速率">
               <span class="k">摄像头上行</span><span class="v">{{ rateText(cameraUpKbps) }}</span>
             </div>
-            <div class="im-stats-row" title="本端编码器当前的实时目标码率">
+            <div v-if="!lineReading" class="im-stats-row" title="本端编码器当前的实时目标码率">
               <span class="k">本机编码器目标码率</span><span class="v">{{ cameraTargetKbps > 0 ? cameraTargetKbps + ' kbps' : '—' }}</span>
             </div>
-            <div v-if="!focusSourceStream?.videoStats" class="im-stats-row" title="本端编码器实测输出帧率">
+            <div v-if="!lineReading" class="im-stats-row" title="本端编码器实测输出帧率">
               <span class="k">实际帧率</span><span class="v">{{ cameraFps > 0 ? Math.round(cameraFps) + ' fps' : '—' }}</span>
             </div>
-            <div class="im-stats-row" title="报给平台并实际发布的规格">
+            <div v-if="!lineReading" class="im-stats-row" title="报给平台并实际发布的规格">
               <span class="k">采集协商规格</span><span class="v">{{ publishSpecText }}</span>
             </div>
             <div class="im-stats-row" title="麦克风这一路上行速率">
@@ -620,12 +620,12 @@ const isHost = computed(() => !!participants.value.find((p) => p.id === myId.val
 // 自己的发布不订阅：否则会出现一个永远黑屏的"自己"窗格（实测出现过）。
 // 瓦片只挂带视频的流；独立 audio 发布按三方惯例作为"伴随音频"订阅播放，不占一格。
 const remoteStreams = computed(() =>
-  streams.value.filter((s) => s.video && s.ownerId !== myId.value),
+  subscribableStreams.value.filter(s => s.video),
 )
 // 别人共享出来的那一路屏幕流：原型「共享屏幕中」要把它顶成主画面。
 const shareStreamId = computed(() => remoteStreams.value.find((s) => s.kind === 'screen')?.id || '')
 const subscribableStreams = computed(() =>
-  streams.value.filter((s) => (s.video || s.audio) && s.ownerId !== myId.value),
+  myId.value ? streams.value.filter(s => (s.video || s.audio) && s.ownerId && s.ownerId !== myId.value) : [],
 )
 
 // 原型三档排列里成员的位置由**排列**决定，不由一个独立开关决定：
@@ -644,8 +644,8 @@ function closeMembers() {
 const memberDownKbps = computed<Record<string, number>>(() => {
   const m: Record<string, number> = {}
   for (const s of subscribableStreams.value) {
-    const r = downlinkRates.value[s.id]
-    if (r && s.ownerId !== myId.value) m[s.ownerId] = (m[s.ownerId] || 0) + r
+    const r = (videoDown.value[s.id] ?? 0) + (audioDown.value[s.id] ?? 0)
+    if (s.active && (videoDown.value[s.id] != null || audioDown.value[s.id] != null)) m[s.ownerId] = (m[s.ownerId] || 0) + r
   }
   return m
 })
@@ -685,7 +685,7 @@ const joinedRows = computed<MemberRow[]>(() =>
       hint: (isSelf ? cameraOn.value : p.cameraOn) ? '' : '摄像头已关闭',
       error: stream ? streamError.value[stream.id] || '' : '',
       upKbps: isSelf ? uplinkKbps.value : null,
-      downKbps: memberDownKbps.value[p.id] ?? null,
+      downKbps: isSelf ? downlinkKbps.value : memberDownKbps.value[p.id] ?? null,
     }
   }),
 )
@@ -974,11 +974,11 @@ const cameraSample = ref<BrowserVideoSample | null>(null)
 const screenSample = ref<BrowserVideoSample | null>(null)
 const cameraFps = ref(0)
 const screenFps = ref(0)
-const uplinkKbps = computed(() => cameraUpKbps.value + micUpKbps.value + screenUpKbps.value)
+const uplinkKbps = computed(() => (cameraOn.value ? cameraUpKbps.value : 0) + (micOn.value ? micUpKbps.value : 0) + (sharing.value ? screenUpKbps.value : 0))
 // 速率文本一律走 `rateText`（`utils/compression.ts`，全仓唯一的 kbps→Mbps 换算处）。
 // 此前本文件与 MainLayout 各有一份 `toFixed(0) + ' kbps'`，于是**同一个数**在顶栏是
 // 「384 kbps」、在同一张会议信息卡里是「384.15 kbps」—— 用户会当成两个数。
-const uplinkText = computed(() => rateText(uplinkKbps.value))
+const uplinkText = computed(() => measuredRateText(uplinkKbps.value))
 
 const statusLabel = computed(() => {
   const s = meetingStore.state?.status
@@ -1294,6 +1294,7 @@ async function publishCamera(): Promise<boolean> {
     delivery: deliveryFor('camera'),
     preferredFps: media.prefs.value?.videoMaxFps,
     physicalFrames: media.physicalCameraFrames,
+    captureTrack: media.capturedCameraTrack,
     onVideoSample: sample => { cameraSample.value = sample },
     mediaLabel: (vt.label || '本页摄像头').slice(0, 128),
     onState: (s) => (publishState.value = s),
@@ -1374,6 +1375,7 @@ function telemetryItems(): TelemetryItem[] {
       sourceVideoBitrateKbps: cameraUpKbps.value,
       sourceFps: cameraFps.value,
       captureFps: cameraSample.value.captureFps, publishFps: cameraSample.value.publishFps,
+      publishKbps: cameraSample.value.publishKbps, decodedFrameKbps: cameraSample.value.decodedFrameKbps,
       associatedAudioBitrateKbps: micUpKbps.value > 0 ? micUpKbps.value : 0,
     })
   }
@@ -1384,6 +1386,7 @@ function telemetryItems(): TelemetryItem[] {
       sourceVideoBitrateKbps: screenUpKbps.value,
       sourceFps: screenFps.value,
       captureFps: screenSample.value.captureFps, publishFps: screenSample.value.publishFps,
+      publishKbps: screenSample.value.publishKbps, decodedFrameKbps: screenSample.value.decodedFrameKbps,
       associatedAudioBitrateKbps: 0,
     })
   }
@@ -1718,7 +1721,7 @@ function deliveryFor(kind: VideoKind) {
   return readDelivery(userStore.userInfo?.username || '', kind)
 }
 async function applyVideoDelivery(kind: VideoKind, value: VideoDelivery): Promise<boolean> {
-  const id = (kind === 'camera' ? whip : whipScreen).publicationIdOf()
+  const id = await (kind === 'camera' ? whip : whipScreen).publicationIdWhenReady()
   if (!id) return false
   await setVideoDelivery(meetingId, id, value)
   return true
@@ -1949,6 +1952,7 @@ async function attachStreamsOnce() {
     dropLanWhepLeg(s.id)
     audioPlayers.get(s.id)?.stop()
     audioPlayers.delete(s.id)
+    delete audioDown.value[s.id]
     retryBlockedUntil.delete(s.id)
     clearStreamError(s.id)
   }
@@ -2023,7 +2027,7 @@ async function attachVideoLeg(s: StreamVo, engine: MediaPlayer) {
     canvas,
     codec: probed,
     headers: authHeaders(),
-    onRate: (kbps) => setDownlinkRate(s.id, kbps),
+    onRate: (kbps) => videoDown.value[s.id] = kbps,
     onTraffic: (bytes) => setStreamBytes(s.id, bytes),
     onFrame: (f) => recordVideoFrame(s.id, f),
     onFirstFrame: () => clearStreamError(s.id),
@@ -2070,6 +2074,7 @@ function dropLanWhepLeg(id: string) {
   if (!player) return
   player.stop()
   whepVideoPlayers.delete(id)
+  delete videoDown.value[id]
   lanWhepFrameWatch.get(id)?.()
   lanWhepFrameWatch.delete(id)
   lanWhepTimeWatch.get(id)?.()
@@ -2110,7 +2115,7 @@ async function attachLanWhepVideoLeg(s: StreamVo) {
   }
   const player = await subscribeWhepVideo(
     whepSubscribePath(meetingId, s.id),
-    (kbps) => setDownlinkRate(s.id, kbps),
+    (kbps) => videoDown.value[s.id] = kbps,
     (st) => recordLanWhepStats(s.id, st),
   ).catch((e) => {
     const kind = streamFailureKind(s, e, true)
@@ -2162,7 +2167,7 @@ async function attachAudioLeg(s: StreamVo, engine: MediaPlayer) {
   // 只有 501（我方自己回"这路没有该通道"）算正常分支 —— 不进冷却，也不算失败。
   const whep = await subscribeWhepAudio(
     whepSubscribePath(meetingId, s.id),
-    (kbps) => setDownlinkRate(s.id, kbps),
+    (kbps) => audioDown.value[s.id] = kbps,
     (st) => recordLanWhepStats(s.id, st),
   ).catch((e) => {
     if (e instanceof SubscribeError && e.status === 501) return null
@@ -2196,7 +2201,7 @@ async function attachAudioLeg(s: StreamVo, engine: MediaPlayer) {
   if (!url) return
   const player = new engine.DirectAudioPlayer({
     headers: authHeaders(),
-    onRate: (kbps) => setDownlinkRate(s.id, kbps),
+    onRate: (kbps) => audioDown.value[s.id] = kbps,
     onTraffic: (bytes) => setStreamBytes(s.id, bytes),
     // 这一路的原始音频流：播放器回吐得了，录制才有独立音轨可录；回吐不了就不录这一路声音，
     // 绝不拿别的元素凑成"这一路有声音"。
@@ -2215,6 +2220,7 @@ async function attachAudioLeg(s: StreamVo, engine: MediaPlayer) {
     console.error('[audio] 起播失败', e)
     // 失败必须把条目摘掉，否则这路流再也重试不了（对端稍后才开始推是常态）。
     audioPlayers.delete(s.id)
+    delete audioDown.value[s.id]
     if (streamFailureKind(s, e, !!url) === 'terminal') clearStreamError(s.id)
     else {
       blockRetry(s.id)
@@ -2227,12 +2233,11 @@ async function attachAudioLeg(s: StreamVo, engine: MediaPlayer) {
 }
 
 // 下行速率：三方无码率端点，唯一真源是播放器自己统计的接收速率。
-const downlinkRates = ref<Record<string, number>>({})
-function setDownlinkRate(id: string, kbps: number) {
-  downlinkRates.value = { ...downlinkRates.value, [id]: kbps }
-}
-const downlinkKbps = computed(() => Object.values(downlinkRates.value).reduce((a, b) => a + b, 0))
-const downlinkText = computed(() => rateText(downlinkKbps.value))
+const videoDown = ref<Record<string, number>>({})
+const audioDown = ref<Record<string, number>>({})
+const downlinkKbps = computed(() => subscribableStreams.value.reduce((total, stream) =>
+  total + (stream.active ? (videoDown.value[stream.id] ?? 0) + (audioDown.value[stream.id] ?? 0) : 0), 0))
+const downlinkText = computed(() => measuredRateText(downlinkKbps.value))
 
 // 侧栏「会议信息卡」的数据源由下方 focusCompression 一带统一写入（含主画面三项派生口径）。
 
@@ -2438,12 +2443,12 @@ const focusUpstreamRawKbps = computed(() => {
 // 那个数会把压缩比推到几百比一，是第 26 项被指"夸张得像假的"的根因。
 const focusRawFromUpstream = computed(() => !focusedIsSelf.value && focusUpstreamRawKbps.value > 0)
 const focusRawKbps = computed(() => {
-  if (focusSourceStream.value?.videoStats) return focusSourceStream.value.videoStats.cloudInputKbps ?? 0
+  if (focusSourceStream.value?.videoStats) return focusSourceStream.value.videoStats.decodedFrameKbps ?? 0
   if (focusedIsSelf.value) return cameraUpKbps.value
   return focusUpstreamRawKbps.value
 })
 const focusRawTitle = computed(() => {
-  if (focusSourceStream.value?.videoStats) return '阿里云网关收到的压缩前视频有效载荷，不含音频'
+  if (focusSourceStream.value?.videoStats) return '发布端解码后可见视频帧的字节数除以采样时间'
   if (focusedIsSelf.value) return '原始速率 = 本机编码器压缩前实际输出的码率'
   return focusRawFromUpstream.value
     ? '原始速率 = 对方设备上报的编码码率'
@@ -2456,12 +2461,31 @@ const focusRawTitle = computed(() => {
 // 后端对 browser_whip + cloudSoftwareRoi=true 明确回 cloudSoftwareRoi（types.go 的 CompressionKind）。
 const focusSelfStream = computed(() =>
   focusedIsSelf.value
-    ? streams.value.find((x) => x.ownerId === myId.value && x.kind === 'camera')
+    ? streams.value.find((x) => x.ownerId === myId.value && x.kind === (sharing.value && shareStream.value ? 'screen' : 'camera'))
     : undefined)
 const focusSourceStream = computed(() =>
   focusedIsSelf.value
     ? focusSelfStream.value
     : streams.value.find((x) => x.id === statStreamId.value))
+const selectedStatsId = ref('')
+const publicLines = computed(() => streams.value.filter(s => s.videoStats && (s.kind === 'camera' || s.kind === 'screen')))
+watch(publicLines, lines => {
+  if (selectedStatsId.value && !lines.some(s => s.id === selectedStatsId.value)) selectedStatsId.value = ''
+})
+const statsLine = computed(() => publicLines.value.find(s => s.id === selectedStatsId.value)
+  ?? (focusSourceStream.value?.videoStats ? focusSourceStream.value : publicLines.value[0]))
+const lineReading = computed(() => {
+  const s = statsLine.value
+  if (!s?.videoStats) return undefined
+  const own = s.ownerId === myId.value
+  const received = !own && s.active ? videoDown.value[s.id] ?? null : null
+  return {
+    name: (own ? '我' : s.ownerName) + ' · ' + (s.kind === 'screen' ? '屏幕共享' : '摄像头'),
+    stats: s.videoStats, own, received, mode: s.transportMode, target: s.targetBitrateKbps, strategy: s.encodingStrategy,
+    compression: compressionView({videoStats: s.videoStats, receivedVideoKbps: received, sourceKbps: 0,
+      transmittedKbps: 0, basis: own ? 'ingress' : 'egress', compressionKind: s.compressionKind}),
+  }
+})
 // 报不报压缩倍率以**后端判好的 compressionKind** 为准，不靠数值大小猜（第 26 项，口径同三方）；
 // 后端还没给出这一路时是 'unknown'，此时才退回数值守卫。
 const focusCompressionKind = computed(() => focusSourceStream.value?.compressionKind || 'unknown')
@@ -2484,6 +2508,7 @@ const focusBasis = computed(() => focusTransmitted.value.basis)
 const focusCompression = computed(() =>
   compressionView({
     videoStats: focusSourceStream.value?.videoStats,
+    receivedVideoKbps: focusedIsSelf.value ? null : videoDown.value[statStreamId.value],
     sourceKbps: focusRawKbps.value,
     transmittedKbps: focusCompressedKbps.value,
     basis: focusBasis.value,
@@ -2500,7 +2525,7 @@ const focusCompressedText = computed(() => focusSourceStream.value?.videoStats ?
 // 侧栏「会议信息卡」的唯一数据源：会中页才有实测速率，写进 store 供全站读，离会由 store 清空。
 // 第8项：主画面那一路的原始/压缩后速率也一并写入（原始速率为 0 表示帧还没到，卡片显示 —），
 // 三项的算法与「这个数从哪来」那句说明都不在侧栏重复 —— 口径只持有在这一处。
-watch([uplinkKbps, downlinkKbps, cameraUpKbps, micUpKbps, focusRawKbps, focusCompressedKbps, focusRawTitle, focusBasis, focusSourceStream], () => {
+watch([uplinkKbps, downlinkKbps, cameraUpKbps, micUpKbps, focusRawKbps, focusCompressedKbps, focusRawTitle, focusBasis, focusSourceStream, lineReading], () => {
   // 码率遥测不在这里发：那是**周期的**（2 秒一次 `pushTelemetry`，WS + REST 双通道），
   // 而这条 watch 只在值变化时触发 —— 挂在它上面等于把"三方 4 秒新鲜门"押在"值一定会变"上。
   meetingStore.setMediaStats({
@@ -2509,6 +2534,7 @@ watch([uplinkKbps, downlinkKbps, cameraUpKbps, micUpKbps, focusRawKbps, focusCom
     cameraUpKbps: cameraUpKbps.value,
     micUpKbps: micUpKbps.value,
     videoStats: focusSourceStream.value?.videoStats,
+    lineReading: lineReading.value,
     focusRawKbps: focusRawKbps.value,
     focusCompressedKbps: focusCompressedKbps.value,
     focusRawTitle: focusRawTitle.value,
@@ -3016,6 +3042,7 @@ onBeforeUnmount(() => {
 .im-stats-body { padding: 0 14px 14px; font-size: 13px; }
 .im-stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
 .im-stats-grid > div { display: flex; flex-direction: column; gap: 2px; padding: 8px; border-radius: var(--radius); background: rgba(127, 127, 127, 0.08); }
+.im-stats-grid > .im-net-quality { grid-column: 1 / -1; flex-direction: row; align-items: baseline; justify-content: space-between; }
 .im-stats-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed var(--border-color); }
 .im-stats .k { color: var(--text-secondary); }
 .im-stats .v { font-variant-numeric: tabular-nums; }

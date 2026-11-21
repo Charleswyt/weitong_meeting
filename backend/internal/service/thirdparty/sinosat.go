@@ -381,10 +381,11 @@ func mapSinosatRoomSnapshot(baseURL, roomId string, data []byte) (*MeetingRespon
 				pub.DirectVideoCodec = strings.ToLower(codec)
 			}
 		}
-		if s.Metrics.SourceKbps != nil {
-			pub.SourceVideoBitrateKbps = *s.Metrics.SourceKbps
-			pub.TransportMetrics = &TransportMetrics{
-				SourceVideoBitrateKbps: *s.Metrics.SourceKbps,
+		if s.Metrics.SourceKbps != nil || s.Metrics.OutputKbps != nil {
+			pub.TransportMetrics = &TransportMetrics{}
+			if s.Metrics.SourceKbps != nil {
+				pub.SourceVideoBitrateKbps = *s.Metrics.SourceKbps
+				pub.TransportMetrics.SourceVideoBitrateKbps = *s.Metrics.SourceKbps
 			}
 			if s.Metrics.OutputKbps != nil {
 				pub.TransportMetrics.UpstreamVideoBitrateKbps = *s.Metrics.OutputKbps

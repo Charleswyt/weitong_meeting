@@ -81,6 +81,7 @@ export function useMediaSettings() {
   const localStream = ref<MediaStream | null>(null)
   // 背景虚化降级时的中文原因，由页面就近展示；成功处理时保持为空。
   const bgBlurNotice = ref('')
+  let captureTrack: MediaStreamTrack | undefined
   let blurSession: BgBlurSession | null = null
   const mirrorStyle = computed(() => (prefs.value?.mirrorVideo ? 'row-reverse' : 'row'))
 
@@ -255,6 +256,7 @@ export function useMediaSettings() {
 
       // 虚化在轨道级做：替换 startPreview 这一个出口，预览与发布（都从这里取流）自然走同一条链路。
       // 判生效只看 vbMode；bgBlur 已在 loadPreferences 里迁移成兼容镜像。
+      captureTrack = stream.getVideoTracks()[0]
       let outStream = stream
       const wantBlur = !audioOnly && BG_BLUR_AVAILABLE && prefs.value?.vbMode === 'blur'
       if (wantBlur) {
@@ -299,6 +301,7 @@ export function useMediaSettings() {
       error.value = ''
       permissionGranted.value = true
       captureIssue.value = legs.issue
+      captureTrack = legs.stream.getVideoTracks()[0]
       localStream.value = legs.stream
       await enumerateDevices()
       return legs.stream
@@ -309,6 +312,7 @@ export function useMediaSettings() {
     // 先停处理会话（帧循环 + segmenter + 源轨道），再停对外可见的轨道。
     blurSession?.dispose()
     blurSession = null
+    captureTrack = undefined
     const target = stream || localStream.value
     target?.getTracks().forEach((t) => t.stop())
     if (!stream || stream === localStream.value) localStream.value = null
@@ -357,6 +361,7 @@ export function useMediaSettings() {
     captureIssue,
     bgBlurNotice,
     // Undefined selects the unprocessed sender’s media-source counter.
+    capturedCameraTrack: () => captureTrack,
     physicalCameraFrames: () => blurSession?.sourceFrames(),
     mirrorStyle,
     loadPreferences,

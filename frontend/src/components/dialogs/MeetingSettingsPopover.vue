@@ -2,7 +2,7 @@
   <el-dialog
     :model-value="modelValue"
     title="会议中设置"
-    width="460px"
+    width="min(460px, calc(100vw - 28px))"
     @update:model-value="$emit('update:modelValue', $event)"
     @open="syncFromPrefs"
   >
@@ -10,7 +10,8 @@
       <template #title>{{ error }}</template>
     </el-alert>
     <div class="msp-body">
-      <VideoDeliverySettings :apply-live="applyLive" />
+      <el-tabs v-model="tab">
+        <el-tab-pane label="设备" name="devices">
       <el-form label-position="top">
         <el-form-item label="摄像头">
           <el-select v-model="cameraDevice" style="width: 100%" placeholder="默认" @change="apply">
@@ -43,7 +44,10 @@
       <div v-if="statusText" class="msp-status" :class="statusClass">{{ statusText }}</div>
       <div v-if="bgBlurNotice" class="msp-note">{{ bgBlurNotice }}</div>
       <div v-if="faceNotice" class="msp-note">{{ faceNotice }}</div>
-      <div class="msp-note">切换摄像头/麦克风或背景虚化会立即重启本机采集；人脸增强只影响对方看到的画面，本地预览看不出变化。</div>
+      <div class="msp-note">切换设备会重启采集。人脸增强作用于发给其他成员的画面。</div>
+        </el-tab-pane>
+        <el-tab-pane label="视频传输" name="delivery"><VideoDeliverySettings :apply-live="applyLive" /></el-tab-pane>
+      </el-tabs>
     </div>
     <template #footer>
       <el-button @click="$emit('update:modelValue', false)">关闭</el-button>
@@ -64,6 +68,7 @@ const emit = defineEmits<{ (e: 'update:modelValue', v: boolean): void; (e: 'chan
 const { prefs, devices, error, bgBlurNotice, loadPreferences, savePreferences, enumerateDevices } = useMediaSettings()
 const { supported: faceSupported, enabled: faceEnabled, notice: faceNotice, loadSupport: loadFaceSupport, setEnabled: setFaceEnabled } = useFaceEnhancement()
 
+const tab = ref('devices')
 const cameraDevice = ref('')
 const micDevice = ref('')
 const speakerDevice = ref('')
@@ -85,6 +90,7 @@ function showStatus(text: string, kind: 'ok' | 'err' | 'info' = 'ok') {
 }
 
 async function syncFromPrefs() {
+  tab.value = 'devices'
   statusText.value = ''
   statusClass.value = ''
   const p = await loadPreferences()

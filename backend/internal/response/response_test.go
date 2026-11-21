@@ -9,7 +9,7 @@ func TestStreamReason(t *testing.T) {
 		want   string
 	}{
 		{401, "not_in_meeting"},
-		{404, "not_found"},
+		{403, "forbidden"}, {404, "not_found"},
 		{410, "gone"},
 		{503, "warming"},
 		{502, "upstream_unreachable"},

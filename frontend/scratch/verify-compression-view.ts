@@ -192,5 +192,16 @@ check('本端出站码率还没到时：倍率与节省都写 —（不是"统�
   selfWaiting.ratioText === '—' && selfWaiting.savedText === '—'
   && selfWaiting.compressed === false, JSON.stringify(selfWaiting))
 
+const publicStream = { sourceKbps: 0, transmittedKbps: 0, basis: 'ingress' as const, compressionKind: 'cloudSoftwareRoi',
+  videoStats: { decodedFrameKbps: 100000, publishKbps: 600, cloudOutputKbps: 100 } }
+const solo = mod.compressionView(publicStream)
+check('解码后原始速率单独计量', solo.rawText === '100.00 Mbps')
+check('单人压缩按发布上行与云端输出计量', solo.ratioText === '6.00×')
+check('观看端按本路视频实收计量', mod.compressionView({...publicStream, basis: 'egress', receivedVideoKbps: 75}).ratioText === '8.00×')
+check('观看端缺样时沿用云端输出', mod.compressionView({...publicStream, basis: 'egress', receivedVideoKbps: null}).ratioText === solo.ratioText)
+check('原始转发显示直传', mod.compressionView({...publicStream, compressionKind: 'none'}).ratioText === '直传')
+check('缺发布上行时不以原始像素速率替代', mod.compressionView({...publicStream,
+  videoStats: {...publicStream.videoStats, publishKbps: null}}).ratioText === '—')
+
 console.log(fail === 0 ? `compressionView 取证：全过` : `compressionView 取证：${fail} FAIL`)
 process.exit(fail === 0 ? 0 : 1)

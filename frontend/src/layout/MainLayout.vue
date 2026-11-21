@@ -116,16 +116,17 @@
         </div>
         <div class="device-row">
           <span class="device-label">发送速率</span>
-          <span class="device-value">{{ rateText(meetingStore.mediaStats?.upKbps) }}</span>
+          <span class="device-value">{{ measuredRateText(meetingStore.mediaStats?.upKbps) }}</span>
         </div>
         <div class="device-row">
           <span class="device-label">接收速率</span>
-          <span class="device-value">{{ rateText(meetingStore.mediaStats?.downKbps) }}</span>
+          <span class="device-value">{{ measuredRateText(meetingStore.mediaStats?.downKbps) }}</span>
         </div>
-        <!-- 第8项：主画面那一路的三项派生口径（顺序照原型：原始速率/节省带宽/压缩比），
-             与会中悬浮统计条共用 utils/compression 一处算法；数没到写"统计中"。
-             没经过二次压缩的那一路**根本没有这组量**，合成一句话说清，别摆三格空值让人以为坏了。 -->
-        <div v-if="!focusCompression.applicable" class="device-row" :title="focusCompressionTip">
+        <div v-if="meetingStore.mediaStats?.lineReading" class="sidebar-line">
+          <b>{{ meetingStore.mediaStats.lineReading.name }}</b>
+          <VideoLineRates compact :reading="meetingStore.mediaStats.lineReading" />
+        </div>
+        <div v-else-if="!focusCompression.applicable" class="device-row" :title="focusCompressionTip">
           <span class="device-label">压缩</span>
           <span class="device-value">{{ focusCompression.summaryText }}</span>
         </div>
@@ -247,7 +248,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { assetUrl } from '@/utils/request'
 import { playbackResumePath } from '@/utils/playbackResume'
-import { compressionView, rateText } from '@/utils/compression'
+import VideoLineRates from '@/components/VideoLineRates.vue'
+import { compressionView, measuredRateText } from '@/utils/compression'
 import { ensureStoragePersisted } from '@/utils/localRecorder'
 import { ensureRecordingsRecovered } from '@/utils/recordingRecovery'
 import { useUserStore } from '@/store/user'
@@ -647,7 +649,10 @@ async function onUserCommand(cmd: string) {
   border-top: 1px solid var(--border-color);
 }
 
+.sidebar-line { border-top: 1px solid var(--border-color); margin-top: 8px; padding-top: 8px; }
+.sidebar-line > b { display: block; margin-bottom: 6px; font-size: 12px; color: var(--text-primary); }
 .device-status {
+  overflow-y: auto; min-height: 0;
   margin: 0 16px 12px;
   padding: 14px;
   background: var(--bg-hover);

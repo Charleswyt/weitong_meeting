@@ -53,6 +53,7 @@ export const useMeetingStore = defineStore('meeting', () => {
     downKbps: number
     cameraUpKbps: number
     micUpKbps: number
+    lineReading?: import('@/utils/videoDelivery').VideoLineReading
     videoStats?: StreamVo['videoStats']
     focusRawKbps: number
     focusCompressedKbps: number

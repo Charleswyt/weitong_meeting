@@ -19,6 +19,7 @@ import (
 
 // StreamAlias 是我方签发的稳定流号 ↔ 三方 publication 的映射项。
 type StreamAlias struct {
+	ParticipantId string
 	StreamId      string
 	PublicationId string
 	Kind          string
@@ -452,6 +453,7 @@ func (room *MeetingRoom) SetStreams(pubs []thirdparty.Publication) {
 			alias = StreamAlias{StreamId: newHexId("st_"), PublicationId: p.PublicationId}
 		}
 		alias.Kind = p.MediaKind
+		alias.ParticipantId = p.ParticipantId
 		next = append(next, alias)
 		nextById[alias.StreamId] = alias
 	}
@@ -519,11 +521,13 @@ func (rg *Registry) UpdateSourceTelemetry(meetingId, userId int64, items []third
 	kept := items[:0]
 	for _, it := range items {
 		// 0 不是"没测到"而是"实测为 0"，两者在上游无法区分；没测到就不发这一条。
-		if it.PublicationId == "" || (it.SourceVideoBitrateKbps <= 0 && it.CaptureFps == nil && it.PublishFps == nil) {
+		if it.PublicationId == "" || (it.SourceVideoBitrateKbps <= 0 && it.CaptureFps == nil && it.PublishFps == nil && it.PublishKbps == nil && it.DecodedFrameKbps == nil) {
 			continue
 		}
 		if (it.CaptureFps != nil && !(*it.CaptureFps >= 0 && *it.CaptureFps <= 240)) ||
-			(it.PublishFps != nil && !(*it.PublishFps >= 0 && *it.PublishFps <= 240)) || len(kept) >= 2 {
+			(it.PublishFps != nil && !(*it.PublishFps >= 0 && *it.PublishFps <= 240)) ||
+			(it.PublishKbps != nil && !(*it.PublishKbps >= 0 && *it.PublishKbps <= 1e9)) ||
+			(it.DecodedFrameKbps != nil && !(*it.DecodedFrameKbps >= 0 && *it.DecodedFrameKbps <= 1e9)) || len(kept) >= 2 {
 			continue
 		}
 		kept = append(kept, it)

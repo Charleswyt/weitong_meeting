@@ -1695,6 +1695,7 @@ func (c *Controller) Telemetry(r *ghttp.Request) {
 			SourceVideoBitrateKbps: it.SourceVideoBitrateKbps,
 			SourceFps:              it.SourceFps,
 			CaptureFps:             it.CaptureFps, PublishFps: it.PublishFps,
+			PublishKbps: it.PublishKbps, DecodedFrameKbps: it.DecodedFrameKbps,
 			AssociatedAudioBitrateKbps: it.AssociatedAudioBitrateKbps,
 		})
 	}
@@ -1725,6 +1726,10 @@ func (c *Controller) StreamWhep(r *ghttp.Request) {
 	alias, ok := room.ResolveStream(req.StreamId)
 	if !ok {
 		response.FailStream(r, http.StatusNotFound, "该流已结束")
+		return
+	}
+	if alias.ParticipantId != "" && alias.ParticipantId == sess.ParticipantId && c.adapter.IsSinosatV1(r.Context()) {
+		response.FailStream(r, http.StatusForbidden, "本端发布的视频和音频使用本地预览")
 		return
 	}
 	c.focusPublication(r.Context(), room, sess, alias.PublicationId)

@@ -1,41 +1,45 @@
 <template>
-  <section v-if="video.length" class="video-path">
-    <label>视频线路
-      <select v-model="selection" aria-label="查看视频线路">
+  <section v-if="reading" class="video-path" aria-label="视频线路状态">
+    <label class="line-selector"><strong>视频线路</strong>
+      <select :value="modelValue" aria-label="查看视频线路" @change="selectLine">
         <option value="">跟随主画面</option>
-        <option v-for="s in video" :key="s.id" :value="s.id">{{ s.ownerName }} · {{ s.kind === 'screen' ? '屏幕共享' : '摄像头' }}</option>
+        <option v-for="s in streams" :key="s.id" :value="s.id">{{ s.ownerName }} · {{ s.kind === 'screen' ? '屏幕共享' : '摄像头' }}</option>
       </select>
     </label>
-    <template v-if="selected">
-      <div class="im-stats-row"><span>当前线路</span><b>{{ selected.ownerName }} · {{ selected.kind === 'screen' ? '屏幕共享' : '摄像头' }}</b></div>
-      <div class="im-stats-row"><span>传输策略</span><b>{{ strategy }}</b></div>
-      <div v-if="selected.transportMode === 'cloud'" class="im-stats-row"><span>云端目标码率</span><b>{{ measuredRateText(selected.targetBitrateKbps) }}</b></div>
-      <div class="im-stats-row"><span>原始视频码率（云端输入）</span><b>{{ measuredRateText(stats?.cloudInputKbps) }}</b></div>
-      <div class="im-stats-row"><span>阿里云输出码率</span><b>{{ measuredRateText(stats?.cloudOutputKbps) }}</b></div>
-      <div class="im-stats-row"><span>{{ selected.kind === 'screen' ? '屏幕' : '摄像头' }}采集帧率</span><b>{{ fpsText(stats?.captureFps) }}</b></div>
-      <div class="im-stats-row"><span>浏览器发送帧率</span><b>{{ fpsText(stats?.publishFps) }}</b></div>
-      <div class="im-stats-row"><span>阿里云接收帧率</span><b>{{ fpsText(stats?.cloudInputFps) }}</b></div>
-      <div class="im-stats-row"><span>阿里云转发输出帧率</span><b>{{ fpsText(stats?.cloudOutputFps) }}</b></div>
-    </template>
+    <div class="line-heading"><b>{{ reading.name }}</b><span>{{ reading.own ? '本机预览' : '远端画面' }}</span></div>
+    <VideoLineRates :reading="reading" />
+    <p v-if="reading.compression.applicable" class="basis">{{ reading.compression.basisText }}</p>
+    <dl class="detail">
+      <dt>传输策略</dt><dd>{{ strategy }}</dd>
+      <template v-if="reading.mode === 'cloud'"><dt>云端目标码率</dt><dd>{{ measuredRateText(reading.target) }}</dd></template>
+      <dt>采集帧率</dt><dd>{{ fpsText(reading.stats.captureFps) }}</dd>
+      <dt>浏览器发送帧率</dt><dd>{{ fpsText(reading.stats.publishFps) }}</dd>
+      <dt>阿里云接收帧率</dt><dd>{{ fpsText(reading.stats.cloudInputFps) }}</dd>
+      <dt>阿里云输出帧率</dt><dd>{{ fpsText(reading.stats.cloudOutputFps) }}</dd>
+      <dt>观看连接</dt><dd data-rate="viewers">{{ reading.stats.viewerCount ?? '—' }}</dd>
+      <dt title="该线路向所有观看端实际发送的合计速率">公网媒体下行</dt><dd data-rate="egress">{{ measuredRateText(reading.stats.publicEgressKbps) }}</dd>
+    </dl>
   </section>
 </template>
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed } from 'vue'
 import type { StreamVo } from '@/api/meeting'
 import { fpsText, measuredRateText } from '@/utils/compression'
-import { strategies } from '@/utils/videoDelivery'
-const props = defineProps<{ streams: StreamVo[]; focus?: StreamVo }>()
-const video = computed(() => props.streams.filter(s => s.transportMode && (s.kind === 'camera' || s.kind === 'screen')))
-const selection = ref('')
-watch(video, rows => { if (!rows.some(s => s.id === selection.value)) selection.value = '' })
-const selected = computed(() => (selection.value ? video.value.find(s => s.id === selection.value) : props.focus))
-const stats = computed(() => selected.value?.videoStats)
-const strategy = computed(() => selected.value?.transportMode === 'original' ? '原始转发' :
-  strategies.find(s => s.value === selected.value?.encodingStrategy)?.label ?? '云端压缩')
+import { strategies, type VideoLineReading } from '@/utils/videoDelivery'
+import VideoLineRates from './VideoLineRates.vue'
+const props = defineProps<{ streams: StreamVo[]; modelValue: string; reading?: VideoLineReading }>()
+const emit = defineEmits<{ (e: 'update:modelValue', id: string): void }>()
+function selectLine(event: Event) { emit('update:modelValue', (event.target as HTMLSelectElement).value) }
+const strategy = computed(() => props.reading?.mode === 'original' ? '原始转发' : strategies.find(s => s.value === props.reading?.strategy)?.label ?? '云端压缩')
 </script>
 <style scoped>
-.video-path { display: grid; gap: 6px; padding: 12px 0; border-top: 1px solid var(--el-border-color-light); }
-.video-path label,.im-stats-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
-.video-path select { max-width: 70%; padding: 4px; color: inherit; background: var(--el-bg-color); border: 1px solid var(--el-border-color); border-radius: 4px; }
-.im-stats-row b { font-variant-numeric: tabular-nums; font-weight: 500; }
+.video-path { display: grid; gap: 10px; padding: 14px 0; border-top: 1px solid var(--border-color); font-size: 13px; color: var(--text-primary); }
+.line-selector,.line-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.line-selector select { max-width: 65%; min-width: 0; border: 1px solid var(--border-color); border-radius: 8px; color: inherit; background: var(--bg-input); padding: 5px 8px; font: inherit; }
+.line-heading { flex-wrap: wrap; }
+.line-heading span,.basis { color: var(--text-muted); font-size: 12px; }
+.basis { margin: 0; line-height: 1.5; }
+.detail { display: grid; grid-template-columns: 1fr auto; gap: 6px 8px; margin: 0; padding-top: 10px; border-top: 1px solid var(--border-color); }
+.detail dt { color: var(--text-secondary); }
+.detail dd { margin: 0; font-variant-numeric: tabular-nums; text-align: right; }
 </style>
