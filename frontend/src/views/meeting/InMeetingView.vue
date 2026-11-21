@@ -416,7 +416,7 @@
       </div>
     </footer>
 
-    <MeetingSettingsPopover v-model="showSettings" @changed="onPrefsChanged" />
+    <MeetingSettingsPopover v-model="showSettings" :apply-live="applyVideoDelivery" @changed="onPrefsChanged" />
     <InviteMeetingDialog
       v-model="showInvite"
       :meeting-id="meetingId"
@@ -482,7 +482,8 @@ import { probeNetwork, gradeNet, type NetProbe } from '@/utils/mediaTest'
 
 type LayoutId = 'top' | 'grid' | 'right'
 type DockId = 'none' | 'members' | 'chat' | 'stats'
-type EncodingStrategy = 'source_frames' | 'bandwidth_first' | 'dynamic_gop'
+import { readDelivery, type VideoDelivery, type VideoKind } from '@/utils/videoDelivery'
+import { setVideoDelivery } from '@/api/meeting'
 
 /** 浏览器 WHEP 视频腿：船内 lanWhep + 公网会议 cloudWhep 共用同一套播放器路径。 */
 function isWhepVideoChannel(ch?: string | null) {
@@ -567,7 +568,7 @@ const lanWhepFrameWatch = new Map<string, () => void>()
 // 帧级时刻的监视器（相对帧延迟的输入），与"等首帧"那份分开存：一个持续跑，一个出帧即撤。
 const lanWhepTimeWatch = new Map<string, () => void>()
 // 音频播放器有两种实现（订阅式与直连流式），共同点只有 stop()。
-const audioPlayers = new Map<string, { stop: () => void }>()
+const audioPlayers = new Map<string, { stop: () => void; failed?: () => boolean }>()
 // 每一路的**声音**最终走的是哪条腿：'whep'（浏览器 PC，能量到播放时刻）还是 'direct'（直连流，
 // 没有 PC）。音画差要拿画面与声音两边的"播放时刻"相减，声音走直连时那个量结构上取不到 ——
 // 与"还没收到数据"是两件事，必须分开说，否则这一格会永远显示"统计中"（用户会一直等）。
@@ -1163,7 +1164,7 @@ function startTicker() {
   // 订阅失败的腿必须自己再来一次：attachRemoteStreams 只由 streams 列表变化驱动，
   // 对端稳定在播时列表不再变 —— 一次 502 之后那块瓦片就永远黑着（实测 2026-10-10 21:07）。
   // 已有播放器的路由各条腿自己的守卫跳过，这里只是把"没挂上"的重新问一遍。
-  retryTimer = window.setInterval(() => void attachStreamsOnce(), 3000)
+  retryTimer = window.setInterval(() => void attachRemoteStreams(), 3000)
   // 码率遥测必须是**周期的**、不能挂在 watch 上：watch 只在值变化时触发，值恰好不变就漏报，
   // 而三方只认 4 秒内的新鲜样本。
   telemetryTimer = window.setInterval(() => void pushTelemetry(), 2000)
@@ -1284,7 +1285,7 @@ async function publishCamera(): Promise<boolean> {
   await whip.publish(new MediaStream([vt]), {
     mediaKind: 'camera',
     targetBitrateKbps: media.prefs.value?.videoTargetBitrateKbps ?? 0,
-    encodingStrategy: cameraEncoding.value,
+    delivery: deliveryFor('camera'),
     mediaLabel: (vt.label || '本页摄像头').slice(0, 128),
     onState: (s) => (publishState.value = s),
     onRate: (kbps, targetKbps, fps) => { cameraUpKbps.value = kbps; cameraTargetKbps.value = targetKbps; cameraFps.value = fps },
@@ -1330,7 +1331,6 @@ async function publishMicrophone(): Promise<boolean> {
   await whipAudio.publish(new MediaStream([at]), {
     mediaKind: 'audio',
     targetBitrateKbps: media.prefs.value?.videoTargetBitrateKbps ?? 0,
-    encodingStrategy: cameraEncoding.value,
     // 三方 audio 发布用真实麦克风 label（缺省"默认麦克风"）。
     mediaLabel: (at.label || '默认麦克风').slice(0, 128),
     onRate: (kbps) => (micUpKbps.value = kbps),
@@ -1518,7 +1518,7 @@ async function toggleShare() {
     sharing.value = true
     // contentHint 是浏览器编码器真正消费的输入：画质优先→detail，其余→motion。
     const vt = s.getVideoTracks()[0]
-    if (vt) vt.contentHint = shareEncoding.value === 'bandwidth_first' ? 'detail' : 'motion'
+    if (vt) vt.contentHint = deliveryFor('screen').encodingStrategy === 'bandwidth_first' ? 'detail' : 'motion'
     vt?.addEventListener('ended', async () => {
       await whipScreen.unpublish().catch(() => undefined)
       shareStream.value = null
@@ -1533,7 +1533,7 @@ async function toggleShare() {
       await whipScreen.publish(s, {
         mediaKind: 'screen',
         targetBitrateKbps: media.prefs.value?.videoTargetBitrateKbps ?? 0,
-        encodingStrategy: shareEncoding.value,
+        delivery: deliveryFor('screen'),
         // 三方用真实轨道 label 当 mediaLabel（如"屏幕：某个窗口"），截 128。
         mediaLabel: (s.getVideoTracks()[0]?.label || '屏幕共享').slice(0, 128),
         onState: (st) => (screenPublishState.value = st),
@@ -1701,15 +1701,15 @@ async function sendChat() {
   }
 }
 
-// 编码策略不再摆在控制条上。默认原始帧率；分辨率与帧率仍由设置页 prefs 驱动。
-const cameraEncoding = computed({
-  get: () => meetingStore.uiCameraEncoding as EncodingStrategy,
-  set: (v: EncodingStrategy) => { meetingStore.uiCameraEncoding = v },
-})
-const shareEncoding = computed({
-  get: () => meetingStore.uiShareEncoding as EncodingStrategy,
-  set: (v: EncodingStrategy) => { meetingStore.uiShareEncoding = v },
-})
+function deliveryFor(kind: VideoKind) {
+  return readDelivery(userStore.userInfo?.username || '', kind)
+}
+async function applyVideoDelivery(kind: VideoKind, value: VideoDelivery): Promise<boolean> {
+  const id = (kind === 'camera' ? whip : whipScreen).publicationIdOf()
+  if (!id) return false
+  await setVideoDelivery(meetingId, id, value)
+  return true
+}
 function resolveLaunchKind(): string {
   const k = (meetingStore.launchKind || sessionStorage.getItem('conference.launchKind') || '').trim().toLowerCase()
   if (k === 'share' || k === 'voice' || k === 'scheduled' || k === 'quick') return k
@@ -1908,6 +1908,8 @@ async function attachRemoteStreams() {
 }
 let attachingStreams = false
 
+const deliveryRevisions = new Map<string, number>()
+
 async function attachStreamsOnce() {
   if (!mediaEngine) {
     try {
@@ -1922,6 +1924,21 @@ async function attachStreamsOnce() {
   }
   // 回收已消失的流（对端停推/发布进了终态）：播放器不摘掉就会一直抱着死会话重试。
   const alive = new Set(subscribableStreams.value.map((s) => s.id))
+  for (const id of deliveryRevisions.keys()) if (!alive.has(id)) deliveryRevisions.delete(id)
+  for (const s of subscribableStreams.value) {
+    if (!s.revision) continue
+    const previous = deliveryRevisions.get(s.id)
+    deliveryRevisions.set(s.id, s.revision)
+    const changed = previous !== undefined && previous !== s.revision
+    const video = whepVideoPlayers.get(s.id)
+    const audio = audioPlayers.get(s.id)
+    if (!changed && !(video && (!s.active || video.failed())) && !(audio && (!s.active || audio.failed?.()))) continue
+    dropLanWhepLeg(s.id)
+    audioPlayers.get(s.id)?.stop()
+    audioPlayers.delete(s.id)
+    retryBlockedUntil.delete(s.id)
+    clearStreamError(s.id)
+  }
   for (const [id, p] of videoPlayers) {
     if (!alive.has(id)) { p.stop(); videoPlayers.delete(id); playerCanvases.delete(id) }
   }
@@ -1941,6 +1958,7 @@ async function attachStreamsOnce() {
   for (const s of subscribableStreams.value) {
     // 视频和音频是同一路发布的两条腿，不是二选一：camera 发布同时带视频与音频端点时
     // 只起视频，对端就成了"看得见但听不见"。
+    if (s.transportMode && !s.active) continue
     if (s.video) await attachVideoLeg(s, engine)
     if (s.audio) await attachAudioLeg(s, engine)
   }

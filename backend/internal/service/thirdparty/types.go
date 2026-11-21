@@ -251,6 +251,11 @@ type ParticipantState struct {
 // 2026-09-29 就是因为把它们声明成 int，导致 /state 与心跳解析全线失败。
 // 计数、id、时间戳这类真整数字段保持 int/int64 不动。
 type Publication struct {
+	TransportMode     string `json:"transportMode,omitempty"`
+	EncodingStrategy  string `json:"encodingStrategy,omitempty"`
+	Revision          int    `json:"revision,omitempty"`
+	TargetBitrateKbps int    `json:"targetBitrateKbps,omitempty"`
+
 	PublicationId          string            `json:"publicationId"`
 	ParticipantId          string            `json:"participantId"`
 	MediaKind              string            `json:"mediaKind"`

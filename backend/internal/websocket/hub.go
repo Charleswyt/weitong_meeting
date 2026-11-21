@@ -419,6 +419,11 @@ func diffPublications(prev, cur []thirdparty.Publication) bool {
 	}
 	for i := range prev {
 		a, b := prev[i], cur[i]
+		if a.TransportMode != "" && (a.Revision != b.Revision || a.TransportMode != b.TransportMode ||
+			a.EncodingStrategy != b.EncodingStrategy || a.DirectVideoCodec != b.DirectVideoCodec ||
+			a.SourceBitrateKbps() != b.SourceBitrateKbps() || a.UpstreamBitrateKbps() != b.UpstreamBitrateKbps()) {
+			return true
+		}
 		if a.PublicationId != b.PublicationId || a.Status != b.Status ||
 			a.DirectVideoUrl != b.DirectVideoUrl || a.DirectAudioUrl != b.DirectAudioUrl ||
 			a.AudioWhepUrl != b.AudioWhepUrl || a.RkReceiverWhepUrl != b.RkReceiverWhepUrl ||

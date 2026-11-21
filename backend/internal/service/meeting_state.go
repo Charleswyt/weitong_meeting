@@ -109,6 +109,7 @@ func BuildMeetingStateVo(meetingId int64, resp *thirdparty.MeetingResponse, room
 		hasAudio := pubHasAudio(pub)
 		videoChannel := VideoLegChannel(pub)
 		sv := model.StreamVo{
+			TransportMode: pub.TransportMode, EncodingStrategy: pub.EncodingStrategy, Revision: pub.Revision, TargetBitrateKbps: pub.TargetBitrateKbps,
 			Id:                streamId,
 			OwnerId:           pub.ParticipantId,
 			OwnerName:         nameById[pub.ParticipantId],
@@ -159,6 +160,9 @@ type mediaPresence struct {
 // 但 stopped/failed 是终态——三方停止后仍会把 audioWhepUrl 留在快照里，不先排除终态，
 // 刷新页面就会给同一成员挂出多块"死瓦片"（实测 09-27：重载后 admin/test2 各出现 2-3 块）。
 func pubReady(pub thirdparty.Publication) bool {
+	if pub.TransportMode != "" {
+		return pub.Status == "ready"
+	}
 	if pub.Status == "stopped" || pub.Status == "failed" {
 		return false
 	}

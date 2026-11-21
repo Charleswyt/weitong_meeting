@@ -10,6 +10,7 @@
       <template #title>{{ error }}</template>
     </el-alert>
     <div class="msp-body">
+      <VideoDeliverySettings :apply-live="applyLive" />
       <el-form label-position="top">
         <el-form-item label="摄像头">
           <el-select v-model="cameraDevice" style="width: 100%" placeholder="默认" @change="apply">
@@ -51,11 +52,13 @@
 </template>
 
 <script setup lang="ts">
+import VideoDeliverySettings from '@/components/VideoDeliverySettings.vue'
+import type { VideoKind, VideoDelivery } from '@/utils/videoDelivery'
 import { ref } from 'vue'
 import { useMediaSettings } from '@/composables/useMediaSettings'
 import { useFaceEnhancement } from '@/composables/useFaceEnhancement'
 
-defineProps<{ modelValue: boolean }>()
+defineProps<{ modelValue: boolean; applyLive?: (kind: VideoKind, value: VideoDelivery) => Promise<boolean> }>()
 const emit = defineEmits<{ (e: 'update:modelValue', v: boolean): void; (e: 'changed'): void }>()
 
 const { prefs, devices, error, bgBlurNotice, loadPreferences, savePreferences, enumerateDevices } = useMediaSettings()

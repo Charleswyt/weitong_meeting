@@ -149,6 +149,8 @@
           </div>
         </div>
 
+        <VideoDeliverySettings />
+
         <div class="setting-row">
           <div class="setting-left">
             <span class="setting-label">镜像我的视频</span>
@@ -446,6 +448,7 @@
 </template>
 
 <script setup lang="ts">
+import VideoDeliverySettings from "@/components/VideoDeliverySettings.vue";
 import { sitePath } from '@/utils/sitePath'
 import {
   computed,

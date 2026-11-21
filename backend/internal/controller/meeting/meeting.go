@@ -1237,6 +1237,13 @@ func (c *Controller) CreatePublication(r *ghttp.Request) {
 	if sourceDeviceID != "" {
 		payload["sourceDeviceId"] = sourceDeviceID
 	}
+	if c.adapter.IsSinosatV1(r.Context()) {
+		if req.TransportMode == "cloud" && (req.MediaKind == "audio" || req.EncodingStrategy == "dynamic_gop" || req.TargetBitrateKbps < 0 || req.TargetBitrateKbps > 6000 || (req.TargetBitrateKbps > 0 && req.TargetBitrateKbps < 20)) {
+			response.FailValidate(r, fmt.Errorf("请为视频选择有效的云端压缩策略与目标码率"))
+			return
+		}
+		payload["transportMode"] = req.TransportMode
+	}
 	if req.TargetBitrateKbps > 0 {
 		payload["targetBitrateKbps"] = req.TargetBitrateKbps
 	}
@@ -1492,6 +1499,55 @@ func (c *Controller) StopPublication(r *ghttp.Request) {
 	}
 	room.UnbindWhip(req.PubId)
 	response.OkWithMessage(r, "已停止发布")
+}
+
+// SetVideoSettings changes only the published rendition. The WHIP capture remains live.
+func (c *Controller) SetVideoSettings(r *ghttp.Request) {
+	var req v1.PublicationSettingsReq
+	if err := r.Parse(&req); err != nil {
+		response.FailValidate(r, err)
+		return
+	}
+	ctx := r.Context()
+	userID := service.GetUserIdFromCtx(ctx)
+	room, ok := c.registry.Room(req.Id)
+	sess, joined := c.registry.Session(req.Id, userID)
+	if !ok || !joined {
+		response.FailNotInMeeting(r, "请先加入会议")
+		return
+	}
+	if _, ok := room.WhipForUser(req.PubId, userID); !ok {
+		response.FailStatus(r, http.StatusForbidden, "仅发布者可设置自己的媒体", "publication_owner_required")
+		return
+	}
+	if !c.adapter.IsSinosatV1(ctx) {
+		response.FailStatus(r, http.StatusConflict, "此入口用于中卫通公网会议", "unsupported_meeting")
+		return
+	}
+	prefs := map[string]interface{}{"mode": req.TransportMode}
+	if req.TransportMode == "cloud" {
+		if req.EncodingStrategy == "" || req.TargetBitrateKbps < 20 || req.TargetBitrateKbps > 6000 {
+			response.FailValidate(r, fmt.Errorf("请选择压缩策略并填写 20–6000 kbps 的目标码率"))
+			return
+		}
+		prefs["encodingStrategy"] = req.EncodingStrategy
+		prefs["videoKbps"] = req.TargetBitrateKbps
+		prefs["codec"] = "h264"
+	}
+	result, err := c.adapter.SetVideoSettings(ctx, sess.ParticipantToken, req.PubId, prefs)
+	if err != nil {
+		response.Fail(r, thirdPartyUserMessage(err, "未能应用视频压缩设置", ""))
+		return
+	}
+	var stream struct {
+		Revision int `json:"revision"`
+	}
+	if err = json.Unmarshal(result, &stream); err != nil || stream.Revision < 1 {
+		response.Fail(r, "媒体服务未确认设置")
+		return
+	}
+	c.registry.Touch(req.Id, userID)
+	response.OkWithData(r, stream, "已应用")
 }
 
 // RoiHint 上报人脸框，供三方编码器把码率花在人脸（外部契约 §10.3）。
@@ -2234,8 +2290,8 @@ func (c *Controller) meetingToVo(ctx context.Context, m *entity.MeetingAppointme
 		CreatorId:       m.CreatorId,
 		HostName:        m.HostThirdPartyAccount,
 		Status:          m.Status,
-		Kind:   service.NormalizeLaunchKind(m.LaunchKind, m.Status == consts.MeetingStatusScheduled),
-		IsHost: service.CanManage(m, cu.UserId, cu.Account),
+		Kind:            service.NormalizeLaunchKind(m.LaunchKind, m.Status == consts.MeetingStatusScheduled),
+		IsHost:          service.CanManage(m, cu.UserId, cu.Account),
 		// 这个入口的入参一定是本库预约单，所以恒为 true：漏赋值会让前端把刚预约的会
 		// 当成外部会（实测预约响应 managed=false，而入会前页按这个标志选路由与可改与否）。
 		Managed:             true,

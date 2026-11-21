@@ -39,6 +39,7 @@ export interface WhepVideoPlayer extends WhepPlayer {
 }
 
 export interface WhepPlayer {
+  failed: () => boolean
   stop: () => void
   element: HTMLMediaElement
   stream: MediaStream
@@ -194,6 +195,7 @@ async function subscribeWhep(
 
   return {
     element: el,
+    failed: () => pc.connectionState === 'failed' || pc.connectionState === 'closed',
     stream,
     stats: readStats,
     inbound: async () => {

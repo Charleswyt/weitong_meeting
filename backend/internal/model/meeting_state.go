@@ -33,6 +33,11 @@ type StreamEndpointsVo struct {
 }
 
 type StreamVo struct {
+	TransportMode     string `json:"transportMode,omitempty"`
+	EncodingStrategy  string `json:"encodingStrategy,omitempty"`
+	Revision          int    `json:"revision,omitempty"`
+	TargetBitrateKbps int    `json:"targetBitrateKbps,omitempty"`
+
 	Id                string `json:"id"`
 	OwnerId           string `json:"ownerId"`
 	OwnerName         string `json:"ownerName"`

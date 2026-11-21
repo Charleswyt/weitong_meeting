@@ -29,12 +29,10 @@ export const useMeetingStore = defineStore('meeting', () => {
   /** quick / scheduled / share / voice：决定入会后默认媒体行为 */
   const launchKind = ref(sessionStorage.getItem('conference.launchKind') || '')
 
-  // 会中 UI 偏好：跨页面导航持久化（排列、面板、编码策略）。
+  // 会中 UI 偏好：跨页面导航持久化（排列、面板）。
   // 组件 ref 会在 unmount 时丢失，store 不会。
   const uiLayout = ref<'top' | 'grid' | 'right'>('top')
   const uiDock = ref<'none' | 'members' | 'chat' | 'stats'>('none')
-  const uiCameraEncoding = ref<'source_frames' | 'bandwidth_first' | 'dynamic_gop'>('source_frames')
-  const uiShareEncoding = ref<'source_frames' | 'bandwidth_first' | 'dynamic_gop'>('source_frames')
 
   // meetingId 是后端给的会话键，对外部会议（只在三方建的会）是负数，只认"有没有"不认正负。
   const inMeeting = computed(() => meetingId.value !== 0)
@@ -87,8 +85,6 @@ export const useMeetingStore = defineStore('meeting', () => {
     // 新会议 = 新会话，UI 偏好从默认值起算，不带上一场的布局/编码过来
     uiLayout.value = 'top'
     uiDock.value = 'none'
-    uiCameraEncoding.value = 'source_frames'
-    uiShareEncoding.value = 'source_frames'
     meetingId.value = data.meetingId
     meetingNo.value = data.meetingNo
     title.value = data.title
@@ -148,8 +144,6 @@ export const useMeetingStore = defineStore('meeting', () => {
     // 离会时重置 UI 偏好，下次入会用默认值
     uiLayout.value = 'top'
     uiDock.value = 'none'
-    uiCameraEncoding.value = 'source_frames'
-    uiShareEncoding.value = 'source_frames'
     exitMeetingPage()
   }
 
@@ -207,8 +201,6 @@ export const useMeetingStore = defineStore('meeting', () => {
     setMediaStats,
     uiLayout,
     uiDock,
-    uiCameraEncoding,
-    uiShareEncoding,
     join,
     enter,
     leave,

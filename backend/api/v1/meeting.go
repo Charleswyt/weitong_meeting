@@ -156,8 +156,18 @@ type PublicationCreateReq struct {
 	Height            int    `json:"height"`
 	Fps               int    `json:"fps"`
 	TargetBitrateKbps int    `json:"targetBitrateKbps"`
-	EncodingStrategy  string `json:"encodingStrategy" v:"in:,source_frames,bandwidth_first,dynamic_gop"`
+	EncodingStrategy  string `json:"encodingStrategy" v:"in:,source_frames,bandwidth_first,optimized,dynamic_gop"`
+	TransportMode     string `json:"transportMode" v:"in:,original,cloud"`
 	MediaLabel        string `json:"mediaLabel"`
+}
+
+type PublicationSettingsReq struct {
+	g.Meta            `path:"/meetings/{id}/publications/{pubId}/settings" method:"put" tags:"会议"`
+	Id                int64  `json:"id"`
+	PubId             string `json:"pubId"`
+	TransportMode     string `json:"transportMode" v:"required|in:original,cloud"`
+	EncodingStrategy  string `json:"encodingStrategy" v:"in:,source_frames,bandwidth_first,optimized"`
+	TargetBitrateKbps int    `json:"targetBitrateKbps"`
 }
 
 type PublicationCreateRes struct {

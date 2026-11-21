@@ -300,13 +300,15 @@ func mapSinosatRoomSnapshot(baseURL, roomId string, data []byte) (*MeetingRespon
 			Status        string `json:"status"`
 			Revision      int    `json:"revision"`
 			Settings      struct {
-				Mode       string `json:"mode"`
-				Codec      string `json:"codec"`
-				Resolution string `json:"resolution"`
-				Fps        int    `json:"fps"`
-				VideoKbps  int    `json:"videoKbps"`
+				Mode             string `json:"mode"`
+				Codec            string `json:"codec"`
+				EncodingStrategy string `json:"encodingStrategy"`
+				Resolution       string `json:"resolution"`
+				Fps              int    `json:"fps"`
+				VideoKbps        int    `json:"videoKbps"`
 			} `json:"settings"`
 			Metrics struct {
+				OutputCodecs     []string `json:"outputCodecs"`
 				SourceKbps       *float64 `json:"sourceKbps"`
 				OutputKbps       *float64 `json:"outputKbps"`
 				CompressionRatio *float64 `json:"compressionRatio"`
@@ -347,6 +349,18 @@ func mapSinosatRoomSnapshot(baseURL, roomId string, data []byte) (*MeetingRespon
 			Status:        mapSinosatStreamStatus(s.Status),
 			SourceType:    "browser_whip",
 			Fps:           float64(s.Settings.Fps),
+			TransportMode: s.Settings.Mode, Revision: s.Revision,
+		}
+		if s.Settings.Mode == "cloud" && s.Kind != "microphone" {
+			pub.CloudSoftwareRoi = s.Settings.Codec == "h264"
+			pub.EncodingStrategy = s.Settings.EncodingStrategy
+			pub.TargetBitrateKbps = s.Settings.VideoKbps
+		}
+		for _, codec := range s.Metrics.OutputCodecs {
+			switch strings.ToLower(codec) {
+			case "h264", "h265", "vp8", "vp9", "av1":
+				pub.DirectVideoCodec = strings.ToLower(codec)
+			}
 		}
 		if s.Metrics.SourceKbps != nil {
 			pub.SourceVideoBitrateKbps = *s.Metrics.SourceKbps
@@ -371,6 +385,14 @@ func mapSinosatRoomSnapshot(baseURL, roomId string, data []byte) (*MeetingRespon
 				pub.AudioWhepUrl = whep
 			default:
 				pub.CloudWhepUrl = whep
+				if s.Kind == "screen" {
+					for _, codec := range s.Metrics.OutputCodecs {
+						if strings.EqualFold(codec, "Opus") {
+							pub.AudioWhepUrl = whep
+							break
+						}
+					}
+				}
 			}
 		}
 		pubs = append(pubs, pub)
@@ -431,12 +453,41 @@ func (a *Adapter) createPublicationSinosat(ctx context.Context, participantToken
 			label = "共享屏幕"
 		}
 	}
-	body := map[string]interface{}{
-		"kind":  kind,
-		"label": label,
-		"settings": map[string]interface{}{
-			"mode": "original",
-		},
+	prefs := map[string]interface{}{"mode": "original"}
+	if kind != "microphone" {
+		if fps, ok := payload["fps"].(int); ok && fps > 0 && fps <= 30 {
+			prefs["fps"] = fps
+		}
+		width, _ := payload["width"].(int)
+		height, _ := payload["height"].(int)
+		short := min(width, height)
+		if short > 0 {
+			switch {
+			case short <= 360:
+				prefs["resolution"] = "360p"
+			case short <= 540:
+				prefs["resolution"] = "540p"
+			case short <= 720:
+				prefs["resolution"] = "720p"
+			default:
+				prefs["resolution"] = "1080p"
+			}
+		}
+		if payload["transportMode"] == "cloud" {
+			prefs["mode"] = "cloud"
+			if strategy, ok := payload["encodingStrategy"].(string); ok && strategy != "" {
+				prefs["encodingStrategy"] = strategy
+			}
+			if budget, ok := payload["targetBitrateKbps"].(int); ok && budget > 0 {
+				prefs["videoKbps"] = budget
+			}
+		}
+	}
+	body := map[string]interface{}{"kind": kind, "label": label, "settings": prefs}
+	if w, ok := payload["width"].(int); ok && w >= 2 && w <= 8192 && kind != "microphone" {
+		if h, ok := payload["height"].(int); ok && h >= 2 && h <= 8192 {
+			body["sourceSize"] = []int{w, h}
+		}
 	}
 	data, err := a.doRequest(ctx, http.MethodPost, "/rooms/"+roomId+"/streams", body, participantToken, authBearer)
 	if err != nil {
@@ -456,6 +507,14 @@ func (a *Adapter) createPublicationSinosat(ctx context.Context, participantToken
 		"whipUrl":       whipURL,
 	})
 	return out, nil
+}
+
+func (a *Adapter) SetVideoSettings(ctx context.Context, token, pubID string, settings map[string]interface{}) ([]byte, error) {
+	roomID, err := a.sinosatRoomOf(token)
+	if err != nil {
+		return nil, err
+	}
+	return a.doRequest(ctx, http.MethodPatch, "/rooms/"+roomID+"/streams/"+pubID, settings, token, authBearer)
 }
 
 func (a *Adapter) stopPublicationSinosat(ctx context.Context, participantToken, publicationId string) ([]byte, error) {

@@ -18,8 +18,8 @@ import (
 	"cloud-conference-backend/internal/controller/recording"
 	"cloud-conference-backend/internal/controller/settings"
 	"cloud-conference-backend/internal/controller/user"
-	"cloud-conference-backend/internal/middleware"
 	"cloud-conference-backend/internal/email"
+	"cloud-conference-backend/internal/middleware"
 	"cloud-conference-backend/internal/service"
 	"cloud-conference-backend/internal/service/thirdparty"
 	"cloud-conference-backend/internal/session"
@@ -155,6 +155,7 @@ var Main = gcmd.Command{
 				g.GET("/:id/media/:streamId/:kind", meetingCtrl.Media)
 				g.POST("/:id/cancel", meetingCtrl.Cancel)
 				g.POST("/:id/publications", meetingCtrl.CreatePublication)
+				g.PUT("/:id/publications/:pubId/settings", meetingCtrl.SetVideoSettings)
 				g.POST("/:id/publications/:pubId/whip", meetingCtrl.Whip)
 				g.DELETE("/:id/publications/:pubId/whip", meetingCtrl.WhipDelete)
 				g.POST("/:id/publications/:pubId/stop", meetingCtrl.StopPublication)

@@ -18,6 +18,8 @@ info:
     分叉与裁定逐条记在同目录 `DERIVATION.md`。派生件 `frontend/src/types/api.gen.ts` 由本文件生成并带源哈希。
     覆盖 42 条路由 —— HTTP 侧已全；未覆盖只剩 WebSocket `/ws/v1/meeting` 的帧形状（见 DERIVATION §6 末）。
 servers:
+  - url: https://47.114.83.151/zwt-meeting/api/v1
+    description: 中卫通公网会议
   - url: /api/v1
     description: GoFrame 路由组前缀（backend/internal/cmd/cmd.go:107）
 
@@ -305,6 +307,13 @@ components:
         joined: { type: boolean, x-source: meeting_state.go:26 }
         participantId: { type: string, description: 未入会为 ""，Go 侧无 null（§6.3:346）, x-source: meeting_state.go:27 }
 
+    VideoDelivery:
+      type: object
+      required: [transportMode, encodingStrategy, targetBitrateKbps]
+      properties:
+        transportMode: { type: string, enum: [original, cloud], default: original }
+        encodingStrategy: { type: string, enum: [source_frames, bandwidth_first, optimized], description: 云端 H.264 软件压缩的原始帧率、动态帧率和优化策略 }
+        targetBitrateKbps: { type: integer, minimum: 20, maximum: 6000 }
     StreamVo:
       type: object
       description: videoCodec 运行时存在且无 omitempty；文档 §6.3 streams 未列（DERIVATION A7）。
@@ -322,10 +331,14 @@ components:
         fps: { type: integer, x-source: meeting_state.go:44 }
         sourceBitrateKbps: { type: integer, description: '运行时是 int，取不到即 0，不会是 null；文档 §6.3:356 写 number|null（DERIVATION B3）', x-source: meeting_state.go:45 }
         ingressBitrateKbps: { type: integer, description: '这一路**进入分发面时实测到的出站码率**，与 sourceBitrateKbps 在同一条腿上：分子是发布端编码器输出、这个数是平台侧实测的出站。本端那一路的压缩比分母就是它（三方 ownRows 也是这么分的；remoteRows 传的是裸的本机接收速率，本来就跨腿）。取不到即 0，前端显示"统计中"，**不许拿本端下行接收速率顶上去** —— 那是另一条腿的数，混进来倍率就没有意义。实测边界：没有真媒体在流时服务端量不出这个数，恒为 0。不加 omitempty，与 sourceBitrateKbps 同策略', x-source: meeting_state.go:49 }
+        transportMode: { type: string, enum: [original, cloud] }
+        encodingStrategy: { type: string, enum: [source_frames, bandwidth_first, optimized] }
+        revision: { type: integer, description: 输出版本变化时重新协商接收端 WHEP }
+        targetBitrateKbps: { type: integer, description: 云端编码目标码率 }
         compressionKind: { type: string, enum: [none, edgeRoi, cloudSoftwareRoi, unknown], description: '报不报压缩倍率以它为准。none = 这一路没经过二次压缩，"压缩前/压缩后"那组量对它**不适用**（不是缺数），界面该合成一句"直传"而不是摆空值', x-source: meeting_state.go:52 }
         compressionRatio: { type: number, description: '三方在该路发布记录里直接上报的压缩倍率（transportMetrics.compressionRatio）：本端两个数凑不出倍率时的退路，口径同三方 compressionText。omitempty，缺键或 0 = 三方没给，前端显示"统计中"，不许拿派生值冒充。带小数原样传（取整会把 2.31 倍说成 2 倍）', x-source: meeting_state.go:55 }
         compressionEstimated: { type: boolean, description: '上面那个倍率是三方估算而非实测 —— 界面要照实标"估算"（omitempty）', x-source: meeting_state.go:57 }
-        videoCodec: { type: string, enum: [h264, hevc], x-source: meeting_state.go:56 }
+        videoCodec: { type: string, enum: [h264, hevc, vp8, vp9, av1, ''], x-source: meeting_state.go:56 }
         videoChannel: { type: string, enum: [direct, lanWhep], description: '视频腿走哪条通道，前端按它选播放器，不靠错误文案猜：direct=GET endpoints.video（直连压缩流）；lanWhep=POST /streams/{streamId}/whep（船端局域网 WHEP，只有边端实例会签）。缺键 = 上游有视频但本实例一条腿都接不通（如云端实例收到只给 RK 通道的发布）。omitempty', x-source: meeting_state.go:60 }
         active: { type: boolean, x-source: meeting_state.go:61 }
         endpoints: { $ref: '#/components/schemas/StreamEndpointsVo', description: 'video 只在 videoChannel=direct 时给；lanWhep 那一路的视频不经这条 GET 代理', x-source: meeting_state.go:62 }
@@ -1776,7 +1789,8 @@ paths:
                 height: { type: integer, x-source: api/v1/meeting.go:183 }
                 fps: { type: integer, x-source: api/v1/meeting.go:184 }
                 targetBitrateKbps: { type: integer, x-source: api/v1/meeting.go:185 }
-                encodingStrategy: { type: string, enum: [source_frames, bandwidth_first, dynamic_gop], x-source: api/v1/meeting.go:186 }
+                transportMode: { type: string, enum: [original, cloud], default: original }
+                encodingStrategy: { type: string, enum: [source_frames, bandwidth_first, optimized], description: 云端压缩默认 source_frames }
                 mediaLabel: { type: string, x-source: api/v1/meeting.go:187 }
       responses:
         '200':
@@ -1790,6 +1804,34 @@ paths:
                     properties:
                       data: { $ref: '#/components/schemas/PublicationCreateData' }
 
+  /meetings/{id}/publications/{pubId}/settings:
+    put:
+      operationId: setVideoDelivery
+      summary: 设置本人摄像头或共享屏幕的云端输出
+      description: 原始转发可仅传 transportMode。云端压缩需同时给出策略和目标码率。WHIP 保持连接，其他参会者按 revision 重新订阅 WHEP。
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+        - { name: pubId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - { type: object, required: [transportMode], properties: { transportMode: { type: string, enum: [original] } } }
+                - allOf:
+                    - { $ref: '#/components/schemas/VideoDelivery' }
+                    - { type: object, properties: { transportMode: { type: string, enum: [cloud] } } }
+      responses:
+        '200':
+          description: 已应用，返回当前媒体输出版本
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - { type: object, properties: { data: { type: object, required: [revision], properties: { revision: { type: integer } } } } }
+        '403': { description: 仅发布者可以操作本路媒体 }
   /meetings/{id}/publications/{pubId}/whip:
     post:
       operationId: whipOffer

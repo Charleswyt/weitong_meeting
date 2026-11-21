@@ -446,6 +446,10 @@ GET /api/v1/<resource>/list?pageNum=1&pageSize=10&orderByColumn=startTime&isAsc=
 }
 ```
 
+#### 中卫通公网会议的视频传输
+
+同一账号可为摄像头和共享屏幕分别设置原始转发或阿里云 H.264 压缩。三种云端策略为 `source_frames`、`bandwidth_first` 和 `optimized`。Web 通过创建发布和发布设置 PUT 传递选择，接收端依据 `streams[].revision` 重连媒体。码率单位为 kbps。端点、字段和可直接发出的请求见 [网页 OpenAPI](./api.openapi.yaml) 和 [Apipost 第 06 组](./中卫通公网会议_Apipost接口集合.json)。
+
 ### 6.3.1 统计条那几格的取数口径
 
 界面上这些数（会中悬浮统计条、侧栏会议信息卡、传输状态抽屉）**全部由前端从播放器实测回调派生**，

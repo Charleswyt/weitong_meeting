@@ -70,7 +70,7 @@ function applyH264Preference(pc: RTCPeerConnection, preferred: RTCRtpCapabilitie
 export interface PublishOptions {
   mediaKind: PublicationCreateBody['mediaKind']
   targetBitrateKbps?: number
-  encodingStrategy?: PublicationCreateBody['encodingStrategy']
+  delivery?: import('@/utils/videoDelivery').VideoDelivery
   mediaLabel?: string
   onState?: (state: RTCPeerConnectionState) => void
   /**
@@ -137,11 +137,11 @@ export function useWhipPublish(getMeetingId: () => number) {
       mediaKind: opts.mediaKind,
       hasVideo: !!videoTrack,
       hasAudio,
-      width: spec.width,
-      height: spec.height,
+      width: opts.delivery && settings?.width ? settings.width : spec.width,
+      height: opts.delivery && settings?.height ? settings.height : spec.height,
       fps: spec.fps,
-      targetBitrateKbps: opts.targetBitrateKbps ?? 0,
-      encodingStrategy: opts.encodingStrategy ?? 'source_frames',
+      targetBitrateKbps: opts.delivery?.transportMode === 'cloud' ? opts.delivery.targetBitrateKbps : (opts.targetBitrateKbps ?? 0),
+      ...(opts.delivery && { transportMode: opts.delivery.transportMode, encodingStrategy: opts.delivery.encodingStrategy }),
       mediaLabel: opts.mediaLabel ?? '',
     })
     const { publicationId: newPubId, whipPath, sourceType } = created.data ?? {}

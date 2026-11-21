@@ -19,6 +19,12 @@ var (
 )
 
 func (p Publication) VideoCodec() string {
+	if p.TransportMode != "" {
+		if p.DirectVideoCodec == "h265" {
+			return "hevc"
+		}
+		return p.DirectVideoCodec
+	}
 	if c := normalizeVideoCodec(p.DirectVideoCodec); c != "" {
 		return c
 	}

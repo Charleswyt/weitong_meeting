@@ -123,11 +123,16 @@ export interface PublicationCreateBody {
   height: number
   fps: number
   targetBitrateKbps: number
-  encodingStrategy?: 'source_frames' | 'bandwidth_first' | 'dynamic_gop'
+  encodingStrategy?: components['schemas']['VideoDelivery']['encodingStrategy']
+  transportMode?: components['schemas']['VideoDelivery']['transportMode']
   mediaLabel: string
 }
 
 // 发布/停止走我方后端；三方 whipUrl 与参会令牌都留在服务端，前端只拿 publicationId 和代理路径。
+export function setVideoDelivery(id: number, pubId: string, value: components['schemas']['VideoDelivery']) {
+  return put<{ revision: number }>(`/api/v1/meetings/${id}/publications/${pubId}/settings`, value)
+}
+
 export function createPublication(meetingId: number, body: PublicationCreateBody) {
   return post<PublicationCreateVo>(`/api/v1/meetings/${meetingId}/publications`, body)
 }
