@@ -1691,9 +1691,10 @@ func (c *Controller) Telemetry(r *ghttp.Request) {
 	items := make([]thirdparty.VideoSourceTelemetry, 0, len(req.Items))
 	for _, it := range req.Items {
 		items = append(items, thirdparty.VideoSourceTelemetry{
-			PublicationId:              it.PublicationId,
-			SourceVideoBitrateKbps:     it.SourceVideoBitrateKbps,
-			SourceFps:                  it.SourceFps,
+			PublicationId:          it.PublicationId,
+			SourceVideoBitrateKbps: it.SourceVideoBitrateKbps,
+			SourceFps:              it.SourceFps,
+			CaptureFps:             it.CaptureFps, PublishFps: it.PublishFps,
 			AssociatedAudioBitrateKbps: it.AssociatedAudioBitrateKbps,
 		})
 	}

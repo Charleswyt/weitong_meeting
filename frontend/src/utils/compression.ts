@@ -46,6 +46,7 @@
 export type RateBasis = 'ingress' | 'egress'
 
 export interface CompressionInput {
+  videoStats?: { cloudInputKbps: number | null; cloudOutputKbps: number | null }
   sourceKbps: number
   transmittedKbps: number
   /** 必填、**没有默认值**：漏了编译不过，免得新接一路时静默按跨腿算出一个看着合理的倍率。 */
@@ -106,6 +107,14 @@ export function rateText(kbps: number | null | undefined): string {
   return v >= 1000 ? (v / 1000).toFixed(2) + ' Mbps' : v.toFixed(2) + ' kbps'
 }
 
+export function measuredRateText(value: number | null | undefined): string {
+  return value === 0 ? '0 kbps' : rateText(value)
+}
+
+export function fpsText(value: number | null | undefined): string {
+  return value == null ? '—' : Number(value.toFixed(1)) + ' fps'
+}
+
 /**
  * 紧凑写法：**只去掉单位前的空格，不重算**（换算仍只有 rateText 一处）。
  * 原型对两种排布要求不同 —— 顶部缩略条是带标签的「总上行速率 / 1.25 Mbps」（有空格，
@@ -157,6 +166,17 @@ export function compressionView(i: CompressionInput): CompressionView {
     sourceKbps, transmittedKbps, basis,
     compressionKind = 'unknown', reportedRatio = 0, reportedEstimate = false,
   } = i
+  if (i.videoStats) {
+    const { cloudInputKbps: input, cloudOutputKbps: output } = i.videoStats
+    const direct = compressionKind === 'none'
+    const pair = input != null && input > 0 && output != null && output > 0
+    return {
+      rawText: measuredRateText(input),
+      ratioText: direct ? DIRECT_TEXT : pair ? (input / output).toFixed(2) + ':1' : '—',
+      savedText: direct ? '—' : pair ? ((1 - output / input) * 100).toFixed(1) + '%' : '—',
+      basisText: '阿里云网关实测视频输入与输出', compressed: !direct && pair, applicable: true, summaryText: '',
+    }
+  }
   const basisText = basis === 'ingress' ? BASIS_INGRESS_TEXT : BASIS_EGRESS_TEXT
   // 判了"没二次压缩"的那一路，三方连原始码率都不报（直接 return 那句直传）——
   // 这一组量对它不适用，不是它缺数。这一支**先于 basis**：直传那一路没有"两个数"可谈论。

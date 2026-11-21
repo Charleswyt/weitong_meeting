@@ -1,5 +1,7 @@
 package thirdparty
 
+import "cloud-conference-backend/internal/model"
+
 // 三方字段命名与语义以 shared/contracts/edge-to-cloud/EXTERNAL_HTTPS_CONFERENCE_API_20260924.md 为准。
 
 type AuthResult struct {
@@ -251,10 +253,11 @@ type ParticipantState struct {
 // 2026-09-29 就是因为把它们声明成 int，导致 /state 与心跳解析全线失败。
 // 计数、id、时间戳这类真整数字段保持 int/int64 不动。
 type Publication struct {
-	TransportMode     string `json:"transportMode,omitempty"`
-	EncodingStrategy  string `json:"encodingStrategy,omitempty"`
-	Revision          int    `json:"revision,omitempty"`
-	TargetBitrateKbps int    `json:"targetBitrateKbps,omitempty"`
+	VideoStats        *model.VideoStats `json:"videoStats,omitempty"`
+	TransportMode     string            `json:"transportMode,omitempty"`
+	EncodingStrategy  string            `json:"encodingStrategy,omitempty"`
+	Revision          int               `json:"revision,omitempty"`
+	TargetBitrateKbps int               `json:"targetBitrateKbps,omitempty"`
 
 	PublicationId          string            `json:"publicationId"`
 	ParticipantId          string            `json:"participantId"`
@@ -438,10 +441,12 @@ func (p Publication) CompressionKind() string {
 // 三方未公开的取数约定（逆向所得，三方改了就断）：字段名与大小写照它的解析器，不我方另立一套。
 // 发送条件见 session 侧 —— 不满足时**整条不发**，发 0 会被服务端当成"实测到 0"，比缺数更坏。
 type VideoSourceTelemetry struct {
-	PublicationId              string  `json:"publicationId"`
-	SourceVideoBitrateKbps     float64 `json:"sourceVideoBitrateKbps"`
-	SourceFps                  float64 `json:"sourceFps"`
-	AssociatedAudioBitrateKbps float64 `json:"associatedAudioBitrateKbps"`
+	PublicationId              string   `json:"publicationId"`
+	SourceVideoBitrateKbps     float64  `json:"sourceVideoBitrateKbps"`
+	SourceFps                  float64  `json:"sourceFps"`
+	CaptureFps                 *float64 `json:"captureFps,omitempty"`
+	PublishFps                 *float64 `json:"publishFps,omitempty"`
+	AssociatedAudioBitrateKbps float64  `json:"associatedAudioBitrateKbps"`
 }
 
 type MediaState struct {

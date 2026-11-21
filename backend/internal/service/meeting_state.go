@@ -109,6 +109,7 @@ func BuildMeetingStateVo(meetingId int64, resp *thirdparty.MeetingResponse, room
 		hasAudio := pubHasAudio(pub)
 		videoChannel := VideoLegChannel(pub)
 		sv := model.StreamVo{
+			VideoStats:    pub.VideoStats,
 			TransportMode: pub.TransportMode, EncodingStrategy: pub.EncodingStrategy, Revision: pub.Revision, TargetBitrateKbps: pub.TargetBitrateKbps,
 			Id:                streamId,
 			OwnerId:           pub.ParticipantId,

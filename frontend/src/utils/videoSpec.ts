@@ -53,3 +53,10 @@ export function normalizeVideoSpec(w: number, h: number, fps: number): VideoSpec
   }
   return { width, height, fps: rate }
 }
+
+// The independent public gateway accepts the actual source size and capture ceiling.
+export function publicVideoSpec(s?: MediaTrackSettings, preferredFps = 30): VideoSpec {
+  const measured = s?.frameRate
+  const fps = Math.min(60, Math.max(1, Math.ceil(measured && measured > 0 ? measured : preferredFps)))
+  return { width: s?.width ?? 0, height: s?.height ?? 0, fps }
+}

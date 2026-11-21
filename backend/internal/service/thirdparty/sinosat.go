@@ -1,6 +1,7 @@
 package thirdparty
 
 import (
+	"cloud-conference-backend/internal/model"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -277,6 +278,20 @@ func (a *Adapter) getRoomSinosat(ctx context.Context, participantToken, roomId s
 	return mapSinosatRoomSnapshot(a.getBaseURL(ctx), roomId, data)
 }
 
+// Reporting observations shares the room snapshot round trip with the normal heartbeat.
+func (a *Adapter) reportSinosatTelemetry(ctx context.Context, token string, media *MediaState) (*MeetingResponse, error) {
+	room, err := a.sinosatRoomOf(token)
+	if err != nil {
+		return nil, err
+	}
+	data, err := a.doRequest(ctx, http.MethodPost, "/rooms/"+room+"/telemetry",
+		map[string]interface{}{"items": media.VideoSourceTelemetry}, token, authBearer)
+	if err != nil {
+		return nil, err
+	}
+	return mapSinosatRoomSnapshot(a.getBaseURL(ctx), room, data)
+}
+
 // mapSinosatRoomSnapshot 把公网会议房间快照洗成我方 MeetingResponse / Publication 形状，
 // 避免 Ocean 字段名外溢到控制层。
 func mapSinosatRoomSnapshot(baseURL, roomId string, data []byte) (*MeetingResponse, error) {
@@ -308,10 +323,11 @@ func mapSinosatRoomSnapshot(baseURL, roomId string, data []byte) (*MeetingRespon
 				VideoKbps        int    `json:"videoKbps"`
 			} `json:"settings"`
 			Metrics struct {
-				OutputCodecs     []string `json:"outputCodecs"`
-				SourceKbps       *float64 `json:"sourceKbps"`
-				OutputKbps       *float64 `json:"outputKbps"`
-				CompressionRatio *float64 `json:"compressionRatio"`
+				VideoStats       *model.VideoStats `json:"videoStats"`
+				OutputCodecs     []string          `json:"outputCodecs"`
+				SourceKbps       *float64          `json:"sourceKbps"`
+				OutputKbps       *float64          `json:"outputKbps"`
+				CompressionRatio *float64          `json:"compressionRatio"`
 			} `json:"metrics"`
 		} `json:"streams"`
 	}
@@ -348,8 +364,11 @@ func mapSinosatRoomSnapshot(baseURL, roomId string, data []byte) (*MeetingRespon
 			MediaLabel:    s.Label,
 			Status:        mapSinosatStreamStatus(s.Status),
 			SourceType:    "browser_whip",
-			Fps:           float64(s.Settings.Fps),
+			VideoStats:    s.Metrics.VideoStats,
 			TransportMode: s.Settings.Mode, Revision: s.Revision,
+		}
+		if pub.VideoStats != nil && pub.VideoStats.CloudOutputFps != nil {
+			pub.Fps = *pub.VideoStats.CloudOutputFps
 		}
 		if s.Settings.Mode == "cloud" && s.Kind != "microphone" {
 			pub.CloudSoftwareRoi = s.Settings.Codec == "h264"
@@ -455,7 +474,7 @@ func (a *Adapter) createPublicationSinosat(ctx context.Context, participantToken
 	}
 	prefs := map[string]interface{}{"mode": "original"}
 	if kind != "microphone" {
-		if fps, ok := payload["fps"].(int); ok && fps > 0 && fps <= 30 {
+		if fps, ok := payload["fps"].(int); ok && fps > 0 && fps <= 60 {
 			prefs["fps"] = fps
 		}
 		width, _ := payload["width"].(int)

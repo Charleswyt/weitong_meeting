@@ -32,11 +32,22 @@ type StreamEndpointsVo struct {
 	Audio string `json:"audio,omitempty"`
 }
 
+// VideoStats contains observations of one video publication. Nil means no current sample.
+type VideoStats struct {
+	CaptureFps      *float64 `json:"captureFps"`
+	PublishFps      *float64 `json:"publishFps"`
+	CloudInputFps   *float64 `json:"cloudInputFps"`
+	CloudOutputFps  *float64 `json:"cloudOutputFps"`
+	CloudInputKbps  *float64 `json:"cloudInputKbps"`
+	CloudOutputKbps *float64 `json:"cloudOutputKbps"`
+}
+
 type StreamVo struct {
-	TransportMode     string `json:"transportMode,omitempty"`
-	EncodingStrategy  string `json:"encodingStrategy,omitempty"`
-	Revision          int    `json:"revision,omitempty"`
-	TargetBitrateKbps int    `json:"targetBitrateKbps,omitempty"`
+	VideoStats        *VideoStats `json:"videoStats,omitempty"`
+	TransportMode     string      `json:"transportMode,omitempty"`
+	EncodingStrategy  string      `json:"encodingStrategy,omitempty"`
+	Revision          int         `json:"revision,omitempty"`
+	TargetBitrateKbps int         `json:"targetBitrateKbps,omitempty"`
 
 	Id                string `json:"id"`
 	OwnerId           string `json:"ownerId"`

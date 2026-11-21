@@ -356,6 +356,8 @@ export function useMediaSettings() {
     error,
     captureIssue,
     bgBlurNotice,
+    // Undefined selects the unprocessed sender’s media-source counter.
+    physicalCameraFrames: () => blurSession?.sourceFrames(),
     mirrorStyle,
     loadPreferences,
     savePreferences,
@@ -472,7 +474,7 @@ function buildVideoConstraints(p: UserSettingsVo | null): MediaTrackConstraints 
       video.width = { ideal: 854 }
       video.height = { ideal: 480 }
     }
-    video.frameRate = { ideal: p.videoMaxFps }
+    video.frameRate = { ideal: p.videoMaxFps, max: p.videoMaxFps }
   }
   return video
 }

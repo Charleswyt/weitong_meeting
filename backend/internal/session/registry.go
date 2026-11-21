@@ -519,7 +519,11 @@ func (rg *Registry) UpdateSourceTelemetry(meetingId, userId int64, items []third
 	kept := items[:0]
 	for _, it := range items {
 		// 0 不是"没测到"而是"实测为 0"，两者在上游无法区分；没测到就不发这一条。
-		if it.PublicationId == "" || it.SourceVideoBitrateKbps <= 0 {
+		if it.PublicationId == "" || (it.SourceVideoBitrateKbps <= 0 && it.CaptureFps == nil && it.PublishFps == nil) {
+			continue
+		}
+		if (it.CaptureFps != nil && !(*it.CaptureFps >= 0 && *it.CaptureFps <= 240)) ||
+			(it.PublishFps != nil && !(*it.PublishFps >= 0 && *it.PublishFps <= 240)) || len(kept) >= 2 {
 			continue
 		}
 		kept = append(kept, it)

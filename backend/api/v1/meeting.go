@@ -298,10 +298,12 @@ type MeetingMediaStateRes struct{}
 // 字段名照三方的解析器写：它是**原样透传给三方的载荷**、后端不改写就转发，
 // 所以属"三方字段名不外溢到契约"那条规则的例外 —— 它不是我域 VO。
 type TelemetryItem struct {
-	PublicationId              string  `json:"publicationId"`
-	SourceVideoBitrateKbps     float64 `json:"sourceVideoBitrateKbps"`
-	SourceFps                  float64 `json:"sourceFps"`
-	AssociatedAudioBitrateKbps float64 `json:"associatedAudioBitrateKbps"`
+	PublicationId              string   `json:"publicationId"`
+	SourceVideoBitrateKbps     float64  `json:"sourceVideoBitrateKbps"`
+	SourceFps                  float64  `json:"sourceFps"`
+	CaptureFps                 *float64 `json:"captureFps,omitempty"`
+	PublishFps                 *float64 `json:"publishFps,omitempty"`
+	AssociatedAudioBitrateKbps float64  `json:"associatedAudioBitrateKbps"`
 }
 
 // MeetingTelemetryReq 是发布端实测码率的 REST 通道。〔硬规则〕**不得只走 WS**：

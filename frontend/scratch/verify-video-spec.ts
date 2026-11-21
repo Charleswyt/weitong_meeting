@@ -7,7 +7,9 @@
 //
 // 跑法：node scratch/verify-video-spec.ts   （有失败则退出码 1）
 
-import { ALLOWED_FPS, ALLOWED_RES, normalizeVideoSpec } from '../src/utils/videoSpec.ts'
+import { ALLOWED_FPS, ALLOWED_RES, normalizeVideoSpec, publicVideoSpec } from '../src/utils/videoSpec.ts'
+
+import { videoSampler } from '../src/utils/videoObservations.ts'
 
 let fail = 0
 const check = (name: string, cond: boolean, extra = '') => {
@@ -44,6 +46,19 @@ check('尺寸未知且帧率为 0 时仍是 0（交给上层判"拿不到"）', 
 // 6) 宽高非零但帧率取整后为 0：按最低档 10 处理（与三方的下拉缺省一致）
 check('帧率取整为 0 → 10', same(normalizeVideoSpec(1920, 1080, 0.4), 1920, 1080, 10),
   JSON.stringify(normalizeVideoSpec(1920, 1080, 0.4)))
+
+check('公网轨保留 854×480 及 30 fps', same(publicVideoSpec({ width: 854, height: 480, frameRate: 30 }), 854, 480, 30))
+check('公网轨保留 60 fps', publicVideoSpec({ frameRate: 60 }).fps === 60)
+const sample = videoSampler()
+const report = (t: number, captured: number, sent: number) => new Map([
+  ['video-source', { type: 'media-source', kind: 'video', id: 'video-source', trackIdentifier: 'camera', timestamp: t, frames: captured }],
+  ['video-out', { type: 'outbound-rtp', kind: 'video', id: 'video-out', mediaSourceId: 'video-source', timestamp: t, framesSent: sent, targetBitrate: 100000 }],
+]) as unknown as RTCStatsReport
+check('只有配置和首个计数时，实测帧率为空', sample(report(1000, 5, 5), 'camera').captureFps === null)
+const measured = sample(report(2000, 35, 25), 'camera')
+check('同一路采集 30 帧、编码发送 20 帧分别计数', measured.captureFps === 30 && measured.publishFps === 20)
+check('有效样本停帧返回零', sample(report(3000, 35, 25), 'camera').publishFps === 0)
+check('切到另一轨不沿用摄像头的计数', sample(report(4000, 45, 32), 'screen').captureFps === null)
 
 if (fail) {
   console.log(`\nvideoSpec 取证：${fail} 条失败`)

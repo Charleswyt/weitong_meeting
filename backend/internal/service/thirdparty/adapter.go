@@ -656,8 +656,9 @@ func (a *Adapter) GetMeetingState(ctx context.Context, participantToken, meeting
 // Heartbeat 提交媒体状态并返回全量状态（三方 heartbeat 即状态拉取，见三方文档第 9 节）。
 func (a *Adapter) Heartbeat(ctx context.Context, participantToken string, media *MediaState) (*MeetingResponse, error) {
 	if a.IsSinosatV1(ctx) {
-		// 公网会议无 heartbeat；房间快照即状态。media 上报留给浏览器 getStats。
-		_ = media
+		if media != nil && len(media.VideoSourceTelemetry) > 0 {
+			return a.reportSinosatTelemetry(ctx, participantToken, media)
+		}
 		return a.getRoomSinosat(ctx, participantToken, "")
 	}
 	data, err := a.doRequest(ctx, http.MethodPost, "/api/conference/meetings/heartbeat",

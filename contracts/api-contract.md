@@ -400,6 +400,14 @@ GET /api/v1/<resource>/list?pageNum=1&pageSize=10&orderByColumn=startTime&isAsc=
     kind: 'camera' | 'screen' | 'audio'
     video: boolean; audio: boolean
     width: number; height: number; fps: number
+    videoStats?: {              // 中卫通公网会议摄像头和屏幕各自独立。null 表示未取得样本。
+      captureFps: number|null   // 浏览器采集源
+      publishFps: number|null   // 浏览器发送编码帧
+      cloudInputFps: number|null
+      cloudOutputFps: number|null
+      cloudInputKbps: number|null   // 阿里云压缩前的视频有效载荷
+      cloudOutputKbps: number|null  // 阿里云分发路径的视频有效载荷
+    }
     sourceBitrateKbps: number   // 该路**发布方的编码码率**（kbps）。〔B2 更正 2026-10-10〕类型是 `number` 不是 `number|null`：
                                 // 代码 `meeting_state.go:45` 是 `int`，**取不到就是 0**，后端从不给 null。
                                 // "取不到必须显示 —、不得用未压缩基线顶替"（第 26 项）这条判据照旧，但它的触发条件是 **0**，

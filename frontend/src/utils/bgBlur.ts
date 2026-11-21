@@ -8,6 +8,7 @@ import { blockUsageTelemetry, getWasmFileset, INIT_STEP_TIMEOUT_MS, withTimeout 
 // 旧的 CSS blur(6px) 会糊整帧且只影响本地预览，已由本模块取代。
 
 export interface BgBlurSession {
+  sourceFrames: () => number | null
   /** 处理后（只糊背景）的视频轨道，尺寸与源轨道一致 */
   track: MediaStreamTrack
   /** 释放全部资源：帧循环、分割器、canvas 轨道与源轨道 */
@@ -310,7 +311,7 @@ export async function createBgBlurTrack(
     console.info('[vb] disposed')
   }
 
-  return { track, dispose }
+  return { track, dispose, sourceFrames: () => video.getVideoPlaybackQuality?.().totalVideoFrames ?? null }
 }
 
 async function initSegmenter(video: HTMLVideoElement): Promise<ImageSegmenter> {

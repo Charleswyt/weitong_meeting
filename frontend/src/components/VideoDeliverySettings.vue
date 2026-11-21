@@ -15,7 +15,7 @@
           </select>
         </label>
         <span class="hint">{{ hints[row.value.encodingStrategy] }}</span>
-        <label>目标码率（kbps）
+        <label>云端压缩目标码率（kbps）
           <input v-model.number="row.value.targetBitrateKbps" type="number" min="20" max="6000" step="1" :disabled="row.busy" />
         </label>
       </template>

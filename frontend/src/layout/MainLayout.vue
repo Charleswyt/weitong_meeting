@@ -371,6 +371,7 @@ const showMeetingInfo = computed(() => meetingStore.inMeeting && route.name === 
 const focusCompression = computed(() => {
   const ms = meetingStore.mediaStats
   return compressionView({
+    videoStats: ms?.videoStats,
     sourceKbps: ms?.focusRawKbps ?? 0,
     transmittedKbps: ms?.focusCompressedKbps ?? 0,
     basis: ms?.focusBasis ?? 'egress',
@@ -382,6 +383,7 @@ const focusCompression = computed(() => {
 const focusCompressionTip = computed(() => {
   const ms = meetingStore.mediaStats
   if (!ms) return '等待该路媒体帧到达'
+  if (ms.videoStats) return '阿里云分发前后的视频有效载荷，使用同一路流的实测值'
   // 不适用与"还没到"是两句话，混成一句就会让人以为这一路坏了。
   if (!focusCompression.value.applicable) return '主画面那一路：没有额外压缩，所以没有「压缩前/压缩后」两个数可报'
   if (ms.focusRawKbps <= 0 && ms.focusCompressedKbps <= 0) return '等待该路媒体帧到达'

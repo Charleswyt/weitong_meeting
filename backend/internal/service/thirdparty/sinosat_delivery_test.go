@@ -48,3 +48,19 @@ func TestSinosatForwardsVideoDelivery(t *testing.T) {
 		t.Fatalf("legacy default: %#v", s)
 	}
 }
+
+func TestSinosatVideoMeasurementsStaySeparateFromSettings(t *testing.T) {
+	data := []byte(`{"streams":[{"id":"one","kind":"camera","settings":{"mode":"cloud","fps":60,"videoKbps":100},"metrics":{"sourceKbps":912.5,"outputKbps":86.3,"videoStats":{"captureFps":30,"publishFps":29,"cloudInputKbps":912.5,"cloudOutputKbps":86.3,"cloudInputFps":28.9,"cloudOutputFps":12.2}}},{"id":"two","kind":"screen","settings":{"mode":"cloud","fps":60,"videoKbps":100},"metrics":{"videoStats":{"captureFps":0}}}]}`)
+	state, err := mapSinosatRoomSnapshot("http://localhost", "1234567890", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := state.Publications[0]
+	if p.TargetBitrateKbps != 100 || p.SourceBitrateKbps() != 913 || p.FpsInt() != 12 || *p.VideoStats.CaptureFps != 30 {
+		t.Fatalf("mixed source, output or target: %+v", p)
+	}
+	p = state.Publications[1]
+	if p.FpsInt() != 0 || p.VideoStats.CloudOutputFps != nil || p.VideoStats.CaptureFps == nil || *p.VideoStats.CaptureFps != 0 {
+		t.Fatal("lost missing versus zero semantics")
+	}
+}

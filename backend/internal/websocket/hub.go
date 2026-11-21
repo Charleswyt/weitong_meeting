@@ -420,7 +420,7 @@ func diffPublications(prev, cur []thirdparty.Publication) bool {
 	for i := range prev {
 		a, b := prev[i], cur[i]
 		if a.TransportMode != "" && (a.Revision != b.Revision || a.TransportMode != b.TransportMode ||
-			a.EncodingStrategy != b.EncodingStrategy || a.DirectVideoCodec != b.DirectVideoCodec ||
+			a.EncodingStrategy != b.EncodingStrategy || !reflect.DeepEqual(a.VideoStats, b.VideoStats) || a.DirectVideoCodec != b.DirectVideoCodec ||
 			a.SourceBitrateKbps() != b.SourceBitrateKbps() || a.UpstreamBitrateKbps() != b.UpstreamBitrateKbps()) {
 			return true
 		}

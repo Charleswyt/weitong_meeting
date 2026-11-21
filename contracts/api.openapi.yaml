@@ -314,12 +314,24 @@ components:
         transportMode: { type: string, enum: [original, cloud], default: original }
         encodingStrategy: { type: string, enum: [source_frames, bandwidth_first, optimized], description: 云端 H.264 软件压缩的原始帧率、动态帧率和优化策略 }
         targetBitrateKbps: { type: integer, minimum: 20, maximum: 6000 }
+    VideoStats:
+      type: object
+      description: 单路视频的实测值。采集与发送由发布者上报，云端按四秒窗口统计网关视频帧及字节，不含音频。null 为暂无样本，0 为实测零。
+      required: [captureFps, publishFps, cloudInputFps, cloudOutputFps, cloudInputKbps, cloudOutputKbps]
+      properties:
+        captureFps: { type: number, nullable: true, description: 浏览器采集源实测帧率（fps） }
+        publishFps: { type: number, nullable: true, description: 浏览器视频编码发送帧率（fps） }
+        cloudInputFps: { type: number, nullable: true, description: 阿里云接收的视频帧率（fps） }
+        cloudOutputFps: { type: number, nullable: true, description: 阿里云分发路径输出的视频帧率（fps） }
+        cloudInputKbps: { type: number, nullable: true, description: 原始视频码率，云端二次压缩前的视频有效载荷（十进制 kbps） }
+        cloudOutputKbps: { type: number, nullable: true, description: 分发路径的视频有效载荷（十进制 kbps），同一路输出只计一次 }
     StreamVo:
       type: object
       description: videoCodec 运行时存在且无 omitempty；文档 §6.3 streams 未列（DERIVATION A7）。
       x-source: backend/internal/model/meeting_state.go:35-63
       required: [id, ownerId, ownerName, kind, video, audio, width, height, fps, sourceBitrateKbps, ingressBitrateKbps, compressionKind, videoCodec, active, endpoints]
       properties:
+        videoStats: { $ref: '#/components/schemas/VideoStats' }
         id: { type: string, description: 后端签发的流号，不等于三方 publicationId, x-source: meeting_state.go:36 }
         ownerId: { type: string, x-source: meeting_state.go:37 }
         ownerName: { type: string, x-source: meeting_state.go:38 }
@@ -328,7 +340,7 @@ components:
         audio: { type: boolean, x-source: meeting_state.go:41 }
         width: { type: integer, x-source: meeting_state.go:42 }
         height: { type: integer, x-source: meeting_state.go:43 }
-        fps: { type: integer, x-source: meeting_state.go:44 }
+        fps: { type: integer, description: 中卫通会议返回云端输出实测帧率的四舍五入整数，缺样为 0。完整精度与缺样状态见 videoStats。, x-source: meeting_state.go:44 }
         sourceBitrateKbps: { type: integer, description: '运行时是 int，取不到即 0，不会是 null；文档 §6.3:356 写 number|null（DERIVATION B3）', x-source: meeting_state.go:45 }
         ingressBitrateKbps: { type: integer, description: '这一路**进入分发面时实测到的出站码率**，与 sourceBitrateKbps 在同一条腿上：分子是发布端编码器输出、这个数是平台侧实测的出站。本端那一路的压缩比分母就是它（三方 ownRows 也是这么分的；remoteRows 传的是裸的本机接收速率，本来就跨腿）。取不到即 0，前端显示"统计中"，**不许拿本端下行接收速率顶上去** —— 那是另一条腿的数，混进来倍率就没有意义。实测边界：没有真媒体在流时服务端量不出这个数，恒为 0。不加 omitempty，与 sourceBitrateKbps 同策略', x-source: meeting_state.go:49 }
         transportMode: { type: string, enum: [original, cloud] }
@@ -1740,6 +1752,8 @@ paths:
                         format: double
                         description: "发布端自己 getStats 实测的编码码率，SI kbit/s。<=0 整条被丢弃 —— 发 0 会被上游当成「实测到 0」，比缺数更坏"
                         x-source: api/v1/meeting.go:283
+                      captureFps: { type: number, nullable: true, minimum: 0, maximum: 240, description: 当前采集源实测 fps }
+                      publishFps: { type: number, nullable: true, minimum: 0, maximum: 240, description: 当前浏览器编码发送实测 fps }
                       sourceFps:
                         type: number
                         format: double
@@ -1787,7 +1801,7 @@ paths:
                 hasAudio: { type: boolean, x-source: api/v1/meeting.go:181 }
                 width: { type: integer, x-source: api/v1/meeting.go:182 }
                 height: { type: integer, x-source: api/v1/meeting.go:183 }
-                fps: { type: integer, x-source: api/v1/meeting.go:184 }
+                fps: { type: integer, minimum: 0, maximum: 60, description: 视频采集标称帧率（fps）。0 表示调用方未提供。, x-source: api/v1/meeting.go:184 }
                 targetBitrateKbps: { type: integer, x-source: api/v1/meeting.go:185 }
                 transportMode: { type: string, enum: [original, cloud], default: original }
                 encodingStrategy: { type: string, enum: [source_frames, bandwidth_first, optimized], description: 云端压缩默认 source_frames }

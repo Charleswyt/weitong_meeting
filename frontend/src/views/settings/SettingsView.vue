@@ -119,7 +119,7 @@
 
         <div class="setting-row">
           <div class="setting-left">
-            <span class="setting-label">目标码率</span>
+            <span class="setting-label">浏览器视频上行上限</span>
             <span class="setting-desc"
               >自适应不设上限；选档位则限制上行码率，重新开启摄像头后生效</span
             >

@@ -2,7 +2,7 @@
   "info": {
     "name": "中卫通公网会议 · 前端联调",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "description": "中卫通公网会议 · 前端联调\n\nApipost 导入本文件时选择 Postman Collection v2.1。新会议网页使用「06 中卫通网页」这一组，业务接口用会议账号令牌，登录响应可自动填写。当前网页同时在「设置 → 视频」和「会中设置 → 视频传输」提供摄像头、共享屏幕的独立配置。\n\n原始转发保留浏览器送来的编码。阿里云软件压缩输出 H.264，可选择 source_frames（原始帧率），bandwidth_first（动态帧率），或 optimized（优化策略）。后者按源短边自动选择 360p 或 540p 上限，保留宽高比，使用动态帧率、全帧 AQ 和渐进刷新。动态帧率取决于目标码率和画面复杂度。独立麦克风继续走音频轨。\n\n业务网页用 POST /meetings/{id}/publications 创建发布，PUT /meetings/{id}/publications/{pubId}/settings 会中修改，GET /meetings/{id}/state 或 WS streams 帧观察状态。目标码率单位为 kbps，云端输出和浏览器上行分别设置。完整网页 OpenAPI 与本集合在同一入口，文件名为 api.openapi.yaml。工作台打开独立中卫通网页。\n\n00–05 组保留底层媒体和平台联调。媒体房间号与网页会议记录 id 含义不同。底层 /rooms 操作使用该组签发的 participantToken。网页 /meetings 使用网页登录签发的 webToken。WHIP/WHEP 请求使用 application/sdp 和浏览器本次生成的 offer。服务端对自己的源轨仅提供本地预览，有其他参会者时才启动云端编码。"
   },
   "variable": [
@@ -2041,7 +2041,7 @@
                 "type": "text"
               }
             ],
-            "description": "房间号和加入响应里的 participantToken 用于这个 GET。工作台、独立页均约每 1.4 秒并行刷新本快照与聊天。参会者被释放或身份过期后再次刷新可能收到 401，持有效账号重新 join 已结束的房间会收到 410。\n\n| 对象或字段 | 类型和界面用途 |\n| --- | --- |\n| roomId、title、createdAt、roomCapacity | 房间摘要。当前人数取 participants.length。host 为操作方的主持权限。self 是当前 participantId。 |\n| participants[].id / displayName / host | 每个当前参会端的 32 位十六进制 ID、显示名、主持人标记。相同账号的两个端分别计数。已入会但没有发布流的成员仍显示头像。 |\n| streams[].id / participantId / kind / label | 媒体的 32 位十六进制 ID、发布者参会 ID、camera / microphone / screen、登记的名称。以 participantId 关联 displayName，按 id 跟踪同一路。 |\n| streams[].status / settings / revision | 媒体状态、该路有效设置、从 1 起的整数版本。settings.mode 为 original 或 cloud。完整输入范围见压缩设置请求。 |\n| metrics.sourceKbps / outputKbps / sentKbps | 源流输入、单份可分发输出、该流所有 WebRTC 观看者的合计分发速率，单位 kbit/s。单份输出与发布端上行均只计一次。 |\n| metrics.compressionRatio | 输入／单份输出的比值，可空。前端在 cloud 模式展示。原始转发使用相同源流，正常有样本时比值为 1。 |\n| metrics.inputCodecs / outputCodecs / receivers | 实际输入和输出编码名称数组，如 VP8、H264、Opus。无轨道时为空数组。receivers 为此流已存在的 WebRTC 观看连接数。配置 codec 表示云端目标，由浏览器决定原始上传编码。 |\n| bandwidth.ingressKbps / egressKbps | 本房全部发布流接收速率 / 全部观看者合计分发速率。约每秒对网关路径计数求差，多个观看端各算一份。 |\n| bandwidth.publisherConnections / readerConnections / sampledAt | 发布连接数 / 观看连接数 / 网关采样 Unix 秒。单个屏幕连接可同时携带画面和声音。 |\n| 0、null、空数组 | 0 表示测到零或当前无对应连接。首次采样、计数器重置或无法归属的窗口用 null。网关采集失败时 bandwidth 的五项为 null。页面连续 6 秒未观察到新的 sampledAt 时显示“等待读数”。 |\n\n**流状态与页面动作**\n\n| status | 条件 | 界面动作 |\n| --- | --- | --- |\n| waiting | 已登记，源尚未就绪 | 发布端提交 WHIP，接收端等待。 |\n| standby | 源已上行，房间中只有发布端 | 保持上行和本机预览。输出码率为 null，云端分发和接收端数为 0。 |\n| compressing | 源已就绪且有其他参会端，当前输出尚未就绪 | 等待云端编码器启动或切换版本。 |\n| ready | 当前分发路径已就绪且有其他参会端 | 其他端可协商 WHEP。观看者尚未订阅时 receivers 也可以为 0。 |\n\n**浏览器补充的数据**\n\n- 发送用 outbound-rtp.bytesSent，接收用 inbound-rtp.bytesReceived。以字节差 × 8 ÷ RTCStats.timestamp 的毫秒差得到 kbit/s。按当前端、streamId、方向、音视频轨道归集。RTP 载荷累计从此次入会起算，停流仍保留。新 SSRC、重协商和计数器重置时重新建立速率基线。码率 kbit/s 按 1000 换算，KiB、MiB 累计量按 1024 换算。\n- 轨道信息取 codecId 对应的 mimeType、frameWidth、frameHeight、framesPerSecond。音量用 audioLevel 或 mediaSourceId 对应的音量。jitter 秒换为毫秒，packetsLost 为累计丢包。发布方向的抖动和丢包取 remoteId 对应的 remote-inbound-rtp。浏览器没有提供的字段可省略。共享屏幕的 audio 轨道显示为“共享音频”。\n- 本端上行只计实际发布，自己的本地预览下行为 0。远端下行只计本浏览器实际接收。本端累计字节、聊天与房间控制正文流量由浏览器单独维护。后者含 JSON/SDP 的 UTF-8 正文字节，不计 HTTP/TLS/IP 协议头，GET 的请求正文为 0。\n- 卡片状态还使用 MediaStreamTrack.onended、RTCPeerConnection.connectionState 与 ontrack。连接状态由浏览器报告，可为 new、connecting、connected、disconnected、failed、closed。单项设备未授权或不存在时仍可用成功取得的另一项入会。查看预览不登记流。发布失败时可保留本机预览。接收失败或 revision 改变时释放旧连接，对 ready 的远端流重新协商。\n\n**200 云端压缩已就绪，两个观看端**\n\n```json\n{\n  \"roomId\": \"1234567890\",\n  \"title\": \"调试会议\",\n  \"createdAt\": 1795200000.0,\n  \"roomCapacity\": 10,\n  \"self\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"host\": true,\n  \"participants\": [\n    {\n      \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"displayName\": \"发布端\",\n      \"host\": true\n    },\n    {\n      \"id\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\n      \"displayName\": \"观看端\",\n      \"host\": false\n    },\n    {\n      \"id\": \"ffffffffffffffffffffffffffffffff\",\n      \"displayName\": \"另一观看端\",\n      \"host\": false\n    }\n  ],\n  \"streams\": [\n    {\n      \"id\": \"cccccccccccccccccccccccccccccccc\",\n      \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"kind\": \"camera\",\n      \"label\": \"摄像头\",\n      \"settings\": {\n        \"mode\": \"cloud\",\n        \"audioKbps\": 48,\n        \"codec\": \"h264\",\n        \"resolution\": \"540p\",\n        \"fps\": 15,\n        \"videoKbps\": 384,\n        \"gopSeconds\": 2\n      },\n      \"revision\": 2,\n      \"status\": \"ready\",\n      \"metrics\": {\n        \"sourceKbps\": 862.3,\n        \"outputKbps\": 358.9,\n        \"sentKbps\": 717.8,\n        \"compressionRatio\": 2.4,\n        \"inputCodecs\": [\n          \"VP8\"\n        ],\n        \"outputCodecs\": [\n          \"H264\"\n        ],\n        \"receivers\": 2\n      }\n    }\n  ],\n  \"bandwidth\": {\n    \"sampledAt\": 1795200010.25,\n    \"ingressKbps\": 862.3,\n    \"egressKbps\": 717.8,\n    \"publisherConnections\": 1,\n    \"readerConnections\": 2\n  }\n}\n```\n\n**200 刚登记，等待发布**\n\n```json\n{\n  \"roomId\": \"1234567890\",\n  \"title\": \"调试会议\",\n  \"createdAt\": 1795200000.0,\n  \"roomCapacity\": 10,\n  \"self\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"host\": true,\n  \"participants\": [\n    {\n      \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"displayName\": \"发布端\",\n      \"host\": true\n    }\n  ],\n  \"streams\": [\n    {\n      \"id\": \"cccccccccccccccccccccccccccccccc\",\n      \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"kind\": \"camera\",\n      \"label\": \"摄像头\",\n      \"settings\": {\n        \"mode\": \"original\",\n        \"audioKbps\": 48,\n        \"codec\": \"h264\",\n        \"resolution\": \"720p\",\n        \"fps\": 20,\n        \"videoKbps\": 800,\n        \"gopSeconds\": 2\n      },\n      \"revision\": 1,\n      \"status\": \"waiting\",\n      \"metrics\": {\n        \"sourceKbps\": null,\n        \"outputKbps\": null,\n        \"sentKbps\": null,\n        \"compressionRatio\": null,\n        \"inputCodecs\": [],\n        \"outputCodecs\": [],\n        \"receivers\": 0\n      }\n    }\n  ],\n  \"bandwidth\": {\n    \"sampledAt\": 1795200010.25,\n    \"ingressKbps\": 0,\n    \"egressKbps\": 0,\n    \"publisherConnections\": 0,\n    \"readerConnections\": 0\n  }\n}\n```\n\n**200 单人已上行，等待其他参会端**\n\n```json\n{\n  \"roomId\": \"1234567890\",\n  \"title\": \"调试会议\",\n  \"createdAt\": 1795200000.0,\n  \"roomCapacity\": 10,\n  \"self\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"host\": true,\n  \"participants\": [\n    {\n      \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"displayName\": \"发布端\",\n      \"host\": true\n    }\n  ],\n  \"streams\": [\n    {\n      \"id\": \"cccccccccccccccccccccccccccccccc\",\n      \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"kind\": \"camera\",\n      \"label\": \"摄像头\",\n      \"settings\": {\n        \"mode\": \"cloud\",\n        \"audioKbps\": 48,\n        \"codec\": \"h264\",\n        \"resolution\": \"540p\",\n        \"fps\": 15,\n        \"videoKbps\": 384,\n        \"gopSeconds\": 2\n      },\n      \"revision\": 1,\n      \"status\": \"standby\",\n      \"metrics\": {\n        \"sourceKbps\": 862.3,\n        \"outputKbps\": null,\n        \"sentKbps\": 0.0,\n        \"compressionRatio\": null,\n        \"inputCodecs\": [\n          \"VP8\"\n        ],\n        \"outputCodecs\": [],\n        \"receivers\": 0\n      }\n    }\n  ],\n  \"bandwidth\": {\n    \"sampledAt\": 1795200010.25,\n    \"ingressKbps\": 862.3,\n    \"egressKbps\": 0,\n    \"publisherConnections\": 1,\n    \"readerConnections\": 0\n  }\n}\n```\n\n**200 已加入第二端，正在准备压缩输出**\n\n```json\n{\n  \"roomId\": \"1234567890\",\n  \"title\": \"调试会议\",\n  \"createdAt\": 1795200000.0,\n  \"roomCapacity\": 10,\n  \"self\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"host\": true,\n  \"participants\": [\n    {\n      \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"displayName\": \"发布端\",\n      \"host\": true\n    },\n    {\n      \"id\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\n      \"displayName\": \"观看端\",\n      \"host\": false\n    }\n  ],\n  \"streams\": [\n    {\n      \"id\": \"cccccccccccccccccccccccccccccccc\",\n      \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"kind\": \"camera\",\n      \"label\": \"摄像头\",\n      \"settings\": {\n        \"mode\": \"cloud\",\n        \"audioKbps\": 48,\n        \"codec\": \"h264\",\n        \"resolution\": \"540p\",\n        \"fps\": 15,\n        \"videoKbps\": 384,\n        \"gopSeconds\": 2\n      },\n      \"revision\": 2,\n      \"status\": \"compressing\",\n      \"metrics\": {\n        \"sourceKbps\": 862.3,\n        \"outputKbps\": null,\n        \"sentKbps\": 0.0,\n        \"compressionRatio\": null,\n        \"inputCodecs\": [\n          \"VP8\"\n        ],\n        \"outputCodecs\": [],\n        \"receivers\": 0\n      }\n    }\n  ],\n  \"bandwidth\": {\n    \"sampledAt\": 1795200010.25,\n    \"ingressKbps\": 862.3,\n    \"egressKbps\": 0,\n    \"publisherConnections\": 1,\n    \"readerConnections\": 0\n  }\n}\n```\n\n**200 网关采样暂不可用**\n\n```json\n{\n  \"roomId\": \"1234567890\",\n  \"title\": \"调试会议\",\n  \"createdAt\": 1795200000.0,\n  \"roomCapacity\": 10,\n  \"self\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"host\": true,\n  \"participants\": [\n    {\n      \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"displayName\": \"发布端\",\n      \"host\": true\n    }\n  ],\n  \"streams\": [],\n  \"bandwidth\": {\n    \"sampledAt\": null,\n    \"ingressKbps\": null,\n    \"egressKbps\": null,\n    \"publisherConnections\": null,\n    \"readerConnections\": null\n  }\n}\n```\n\n- 401 需要重新入会 · {\"error\": \"参会身份已失效，请重新加入\"}"
+            "description": "房间号和加入响应里的 participantToken 用于这个 GET。工作台、独立页均约每 1.4 秒并行刷新本快照与聊天。参会者被释放或身份过期后再次刷新可能收到 401，持有效账号重新 join 已结束的房间会收到 410。\n\n| 对象或字段 | 类型和界面用途 |\n| --- | --- |\n| roomId、title、createdAt、roomCapacity | 房间摘要。当前人数取 participants.length。host 为操作方的主持权限。self 是当前 participantId。 |\n| participants[].id / displayName / host | 每个当前参会端的 32 位十六进制 ID、显示名、主持人标记。相同账号的两个端分别计数。已入会但没有发布流的成员仍显示头像。 |\n| streams[].id / participantId / kind / label | 媒体的 32 位十六进制 ID、发布者参会 ID、camera / microphone / screen、登记的名称。以 participantId 关联 displayName，按 id 跟踪同一路。 |\n| streams[].status / settings / revision | 媒体状态、该路有效设置、从 1 起的整数版本。settings.mode 为 original 或 cloud。完整输入范围见压缩设置请求。 |\n| metrics.sourceKbps / outputKbps / sentKbps | 源流输入、单份可分发输出、该流所有 WebRTC 观看者的合计分发速率，单位 kbit/s。单份输出与发布端上行均只计一次。 |\n| metrics.compressionRatio | 输入／单份输出的比值，可空。前端在 cloud 模式展示。原始转发使用相同源流，正常有样本时比值为 1。 |\n| metrics.inputCodecs / outputCodecs / receivers | 实际输入和输出编码名称数组，如 VP8、H264、Opus。无轨道时为空数组。receivers 为此流已存在的 WebRTC 观看连接数。配置 codec 表示云端目标，由浏览器决定原始上传编码。 |\n| bandwidth.ingressKbps / egressKbps | 本房全部发布流接收速率 / 全部观看者合计分发速率。约每秒对网关路径计数求差，多个观看端各算一份。 |\n| bandwidth.publisherConnections / readerConnections / sampledAt | 发布连接数 / 观看连接数 / 网关采样 Unix 秒。单个屏幕连接可同时携带画面和声音。 |\n| 0、null、空数组 | 0 表示测到零或当前无对应连接。首次采样、计数器重置或无法归属的窗口用 null。网关采集失败时 bandwidth 的五项为 null。页面连续 6 秒未观察到新的 sampledAt 时显示“等待读数”。 |\n\n**流状态与页面动作**\n\n| status | 条件 | 界面动作 |\n| --- | --- | --- |\n| waiting | 已登记，源尚未就绪 | 发布端提交 WHIP，接收端等待。 |\n| standby | 源已上行，房间中只有发布端 | 保持上行和本机预览。输出码率为 null，云端分发和接收端数为 0。 |\n| compressing | 源已就绪且有其他参会端，当前输出尚未就绪 | 等待云端编码器启动或切换版本。 |\n| ready | 当前分发路径已就绪且有其他参会端 | 其他端可协商 WHEP。观看者尚未订阅时 receivers 也可以为 0。 |\n\n**浏览器补充的数据**\n\n- 发送用 outbound-rtp.bytesSent，接收用 inbound-rtp.bytesReceived。以字节差 × 8 ÷ RTCStats.timestamp 的毫秒差得到 kbit/s。按当前端、streamId、方向、音视频轨道归集。RTP 载荷累计从此次入会起算，停流仍保留。新 SSRC、重协商和计数器重置时重新建立速率基线。码率 kbit/s 按 1000 换算，KiB、MiB 累计量按 1024 换算。\n- 轨道信息取 codecId 对应的 mimeType、frameWidth、frameHeight、framesPerSecond。音量用 audioLevel 或 mediaSourceId 对应的音量。jitter 秒换为毫秒，packetsLost 为累计丢包。发布方向的抖动和丢包取 remoteId 对应的 remote-inbound-rtp。浏览器没有提供的字段可省略。共享屏幕的 audio 轨道显示为“共享音频”。\n- 本端上行只计实际发布，自己的本地预览下行为 0。远端下行只计本浏览器实际接收。本端累计字节、聊天与房间控制正文流量由浏览器单独维护。后者含 JSON/SDP 的 UTF-8 正文字节，不计 HTTP/TLS/IP 协议头，GET 的请求正文为 0。\n- 卡片状态还使用 MediaStreamTrack.onended、RTCPeerConnection.connectionState 与 ontrack。连接状态由浏览器报告，可为 new、connecting、connected、disconnected、failed、closed。单项设备未授权或不存在时仍可用成功取得的另一项入会。查看预览不登记流。发布失败时可保留本机预览。接收失败或 revision 改变时释放旧连接，对 ready 的远端流重新协商。\n\n**200 云端压缩已就绪，两个观看端**\n\n```json\n{\n  \"roomId\": \"1234567890\",\n  \"title\": \"调试会议\",\n  \"createdAt\": 1795200000.0,\n  \"roomCapacity\": 10,\n  \"self\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"host\": true,\n  \"participants\": [\n    {\n      \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"displayName\": \"发布端\",\n      \"host\": true\n    },\n    {\n      \"id\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\n      \"displayName\": \"观看端\",\n      \"host\": false\n    },\n    {\n      \"id\": \"ffffffffffffffffffffffffffffffff\",\n      \"displayName\": \"另一观看端\",\n      \"host\": false\n    }\n  ],\n  \"streams\": [\n    {\n      \"id\": \"cccccccccccccccccccccccccccccccc\",\n      \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"kind\": \"camera\",\n      \"label\": \"摄像头\",\n      \"settings\": {\n        \"mode\": \"cloud\",\n        \"audioKbps\": 48,\n        \"codec\": \"h264\",\n        \"resolution\": \"540p\",\n        \"fps\": 15,\n        \"videoKbps\": 384,\n        \"gopSeconds\": 2\n      },\n      \"revision\": 2,\n      \"status\": \"ready\",\n      \"metrics\": {\n        \"sourceKbps\": 862.3,\n        \"outputKbps\": 358.9,\n        \"sentKbps\": 717.8,\n        \"compressionRatio\": 2.4,\n        \"inputCodecs\": [\n          \"VP8\"\n        ],\n        \"outputCodecs\": [\n          \"H264\"\n        ],\n        \"receivers\": 2\n      }\n    }\n  ],\n  \"bandwidth\": {\n    \"sampledAt\": 1795200010.25,\n    \"ingressKbps\": 862.3,\n    \"egressKbps\": 717.8,\n    \"publisherConnections\": 1,\n    \"readerConnections\": 2\n  }\n}\n```\n\n**200 刚登记，等待发布**\n\n```json\n{\n  \"roomId\": \"1234567890\",\n  \"title\": \"调试会议\",\n  \"createdAt\": 1795200000.0,\n  \"roomCapacity\": 10,\n  \"self\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"host\": true,\n  \"participants\": [\n    {\n      \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"displayName\": \"发布端\",\n      \"host\": true\n    }\n  ],\n  \"streams\": [\n    {\n      \"id\": \"cccccccccccccccccccccccccccccccc\",\n      \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"kind\": \"camera\",\n      \"label\": \"摄像头\",\n      \"settings\": {\n        \"mode\": \"original\",\n        \"audioKbps\": 48,\n        \"codec\": \"h264\",\n        \"resolution\": \"720p\",\n        \"fps\": 20,\n        \"videoKbps\": 800,\n        \"gopSeconds\": 2\n      },\n      \"revision\": 1,\n      \"status\": \"waiting\",\n      \"metrics\": {\n        \"sourceKbps\": null,\n        \"outputKbps\": null,\n        \"sentKbps\": null,\n        \"compressionRatio\": null,\n        \"inputCodecs\": [],\n        \"outputCodecs\": [],\n        \"receivers\": 0\n      }\n    }\n  ],\n  \"bandwidth\": {\n    \"sampledAt\": 1795200010.25,\n    \"ingressKbps\": 0,\n    \"egressKbps\": 0,\n    \"publisherConnections\": 0,\n    \"readerConnections\": 0\n  }\n}\n```\n\n**200 单人已上行，等待其他参会端**\n\n```json\n{\n  \"roomId\": \"1234567890\",\n  \"title\": \"调试会议\",\n  \"createdAt\": 1795200000.0,\n  \"roomCapacity\": 10,\n  \"self\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"host\": true,\n  \"participants\": [\n    {\n      \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"displayName\": \"发布端\",\n      \"host\": true\n    }\n  ],\n  \"streams\": [\n    {\n      \"id\": \"cccccccccccccccccccccccccccccccc\",\n      \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"kind\": \"camera\",\n      \"label\": \"摄像头\",\n      \"settings\": {\n        \"mode\": \"cloud\",\n        \"audioKbps\": 48,\n        \"codec\": \"h264\",\n        \"resolution\": \"540p\",\n        \"fps\": 15,\n        \"videoKbps\": 384,\n        \"gopSeconds\": 2\n      },\n      \"revision\": 1,\n      \"status\": \"standby\",\n      \"metrics\": {\n        \"sourceKbps\": 862.3,\n        \"outputKbps\": null,\n        \"sentKbps\": 0.0,\n        \"compressionRatio\": null,\n        \"inputCodecs\": [\n          \"VP8\"\n        ],\n        \"outputCodecs\": [],\n        \"receivers\": 0\n      }\n    }\n  ],\n  \"bandwidth\": {\n    \"sampledAt\": 1795200010.25,\n    \"ingressKbps\": 862.3,\n    \"egressKbps\": 0,\n    \"publisherConnections\": 1,\n    \"readerConnections\": 0\n  }\n}\n```\n\n**200 已加入第二端，正在准备压缩输出**\n\n```json\n{\n  \"roomId\": \"1234567890\",\n  \"title\": \"调试会议\",\n  \"createdAt\": 1795200000.0,\n  \"roomCapacity\": 10,\n  \"self\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"host\": true,\n  \"participants\": [\n    {\n      \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"displayName\": \"发布端\",\n      \"host\": true\n    },\n    {\n      \"id\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\n      \"displayName\": \"观看端\",\n      \"host\": false\n    }\n  ],\n  \"streams\": [\n    {\n      \"id\": \"cccccccccccccccccccccccccccccccc\",\n      \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"kind\": \"camera\",\n      \"label\": \"摄像头\",\n      \"settings\": {\n        \"mode\": \"cloud\",\n        \"audioKbps\": 48,\n        \"codec\": \"h264\",\n        \"resolution\": \"540p\",\n        \"fps\": 15,\n        \"videoKbps\": 384,\n        \"gopSeconds\": 2\n      },\n      \"revision\": 2,\n      \"status\": \"compressing\",\n      \"metrics\": {\n        \"sourceKbps\": 862.3,\n        \"outputKbps\": null,\n        \"sentKbps\": 0.0,\n        \"compressionRatio\": null,\n        \"inputCodecs\": [\n          \"VP8\"\n        ],\n        \"outputCodecs\": [],\n        \"receivers\": 0\n      }\n    }\n  ],\n  \"bandwidth\": {\n    \"sampledAt\": 1795200010.25,\n    \"ingressKbps\": 862.3,\n    \"egressKbps\": 0,\n    \"publisherConnections\": 1,\n    \"readerConnections\": 0\n  }\n}\n```\n\n**200 网关采样暂不可用**\n\n```json\n{\n  \"roomId\": \"1234567890\",\n  \"title\": \"调试会议\",\n  \"createdAt\": 1795200000.0,\n  \"roomCapacity\": 10,\n  \"self\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"host\": true,\n  \"participants\": [\n    {\n      \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"displayName\": \"发布端\",\n      \"host\": true\n    }\n  ],\n  \"streams\": [],\n  \"bandwidth\": {\n    \"sampledAt\": null,\n    \"ingressKbps\": null,\n    \"egressKbps\": null,\n    \"publisherConnections\": null,\n    \"readerConnections\": null\n  }\n}\n```\n\n- 401 需要重新入会 · {\"error\": \"参会身份已失效，请重新加入\"} 每路视频的 metrics.videoStats 中 captureFps 为摄像头或屏幕采集帧率，publishFps 为浏览器视频发送帧率，cloudInputFps、cloudOutputFps 分别为阿里云接收和分发输出的实测帧率。cloudInputKbps 为云端压缩前的原始视频码率，cloudOutputKbps 为输出视频码率。码率按十进制 kbps，仅含视频。云端按约四秒窗口计数。null 表示等待或失去样本，0 表示已观测到零。原始转发共用输入路径，单人待机时输出为空。"
           },
           "response": [
             {
@@ -2075,7 +2075,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\n  \"roomId\": \"1234567890\",\n  \"title\": \"调试会议\",\n  \"createdAt\": 1795200000.0,\n  \"roomCapacity\": 10,\n  \"self\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"host\": true,\n  \"participants\": [\n    {\n      \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"displayName\": \"发布端\",\n      \"host\": true\n    },\n    {\n      \"id\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\n      \"displayName\": \"观看端\",\n      \"host\": false\n    },\n    {\n      \"id\": \"ffffffffffffffffffffffffffffffff\",\n      \"displayName\": \"另一观看端\",\n      \"host\": false\n    }\n  ],\n  \"streams\": [\n    {\n      \"id\": \"cccccccccccccccccccccccccccccccc\",\n      \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"kind\": \"camera\",\n      \"label\": \"摄像头\",\n      \"settings\": {\n        \"mode\": \"cloud\",\n        \"audioKbps\": 48,\n        \"codec\": \"h264\",\n        \"resolution\": \"540p\",\n        \"fps\": 15,\n        \"videoKbps\": 384,\n        \"gopSeconds\": 2,\n        \"encodingStrategy\": \"source_frames\"\n      },\n      \"revision\": 2,\n      \"status\": \"ready\",\n      \"metrics\": {\n        \"sourceKbps\": 862.3,\n        \"outputKbps\": 358.9,\n        \"sentKbps\": 717.8,\n        \"compressionRatio\": 2.4,\n        \"inputCodecs\": [\n          \"VP8\"\n        ],\n        \"outputCodecs\": [\n          \"H264\"\n        ],\n        \"receivers\": 2\n      }\n    }\n  ],\n  \"bandwidth\": {\n    \"sampledAt\": 1795200010.25,\n    \"ingressKbps\": 862.3,\n    \"egressKbps\": 717.8,\n    \"publisherConnections\": 1,\n    \"readerConnections\": 2\n  }\n}"
+              "body": "{\n  \"roomId\": \"1234567890\",\n  \"title\": \"调试会议\",\n  \"createdAt\": 1795200000.0,\n  \"roomCapacity\": 10,\n  \"self\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"host\": true,\n  \"participants\": [\n    {\n      \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"displayName\": \"发布端\",\n      \"host\": true\n    },\n    {\n      \"id\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\n      \"displayName\": \"观看端\",\n      \"host\": false\n    },\n    {\n      \"id\": \"ffffffffffffffffffffffffffffffff\",\n      \"displayName\": \"另一观看端\",\n      \"host\": false\n    }\n  ],\n  \"streams\": [\n    {\n      \"id\": \"cccccccccccccccccccccccccccccccc\",\n      \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"kind\": \"camera\",\n      \"label\": \"摄像头\",\n      \"settings\": {\n        \"mode\": \"cloud\",\n        \"audioKbps\": 48,\n        \"codec\": \"h264\",\n        \"resolution\": \"540p\",\n        \"fps\": 15,\n        \"videoKbps\": 384,\n        \"gopSeconds\": 2,\n        \"encodingStrategy\": \"source_frames\"\n      },\n      \"revision\": 2,\n      \"status\": \"ready\",\n      \"metrics\": {\n        \"sourceKbps\": 862.3,\n        \"outputKbps\": 358.9,\n        \"sentKbps\": 717.8,\n        \"compressionRatio\": 2.4,\n        \"inputCodecs\": [\n          \"VP8\"\n        ],\n        \"outputCodecs\": [\n          \"H264\"\n        ],\n        \"receivers\": 2,\n        \"videoStats\": {\n          \"captureFps\": null,\n          \"publishFps\": null,\n          \"cloudInputFps\": 15,\n          \"cloudOutputFps\": 15,\n          \"cloudInputKbps\": 862.3,\n          \"cloudOutputKbps\": 358.9\n        }\n      }\n    }\n  ],\n  \"bandwidth\": {\n    \"sampledAt\": 1795200010.25,\n    \"ingressKbps\": 862.3,\n    \"egressKbps\": 717.8,\n    \"publisherConnections\": 1,\n    \"readerConnections\": 2\n  }\n}"
             },
             {
               "name": "刚登记，等待发布",
@@ -2108,7 +2108,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\n  \"roomId\": \"1234567890\",\n  \"title\": \"调试会议\",\n  \"createdAt\": 1795200000.0,\n  \"roomCapacity\": 10,\n  \"self\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"host\": true,\n  \"participants\": [\n    {\n      \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"displayName\": \"发布端\",\n      \"host\": true\n    }\n  ],\n  \"streams\": [\n    {\n      \"id\": \"cccccccccccccccccccccccccccccccc\",\n      \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"kind\": \"camera\",\n      \"label\": \"摄像头\",\n      \"settings\": {\n        \"mode\": \"original\",\n        \"audioKbps\": 48,\n        \"codec\": \"h264\",\n        \"resolution\": \"720p\",\n        \"fps\": 20,\n        \"videoKbps\": 800,\n        \"gopSeconds\": 2,\n        \"encodingStrategy\": \"source_frames\"\n      },\n      \"revision\": 1,\n      \"status\": \"waiting\",\n      \"metrics\": {\n        \"sourceKbps\": null,\n        \"outputKbps\": null,\n        \"sentKbps\": null,\n        \"compressionRatio\": null,\n        \"inputCodecs\": [],\n        \"outputCodecs\": [],\n        \"receivers\": 0\n      }\n    }\n  ],\n  \"bandwidth\": {\n    \"sampledAt\": 1795200010.25,\n    \"ingressKbps\": 0,\n    \"egressKbps\": 0,\n    \"publisherConnections\": 0,\n    \"readerConnections\": 0\n  }\n}"
+              "body": "{\n  \"roomId\": \"1234567890\",\n  \"title\": \"调试会议\",\n  \"createdAt\": 1795200000.0,\n  \"roomCapacity\": 10,\n  \"self\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"host\": true,\n  \"participants\": [\n    {\n      \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"displayName\": \"发布端\",\n      \"host\": true\n    }\n  ],\n  \"streams\": [\n    {\n      \"id\": \"cccccccccccccccccccccccccccccccc\",\n      \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"kind\": \"camera\",\n      \"label\": \"摄像头\",\n      \"settings\": {\n        \"mode\": \"original\",\n        \"audioKbps\": 48,\n        \"codec\": \"h264\",\n        \"resolution\": \"720p\",\n        \"fps\": 20,\n        \"videoKbps\": 800,\n        \"gopSeconds\": 2,\n        \"encodingStrategy\": \"source_frames\"\n      },\n      \"revision\": 1,\n      \"status\": \"waiting\",\n      \"metrics\": {\n        \"sourceKbps\": null,\n        \"outputKbps\": null,\n        \"sentKbps\": null,\n        \"compressionRatio\": null,\n        \"inputCodecs\": [],\n        \"outputCodecs\": [],\n        \"receivers\": 0,\n        \"videoStats\": {\n          \"captureFps\": null,\n          \"publishFps\": null,\n          \"cloudInputFps\": null,\n          \"cloudOutputFps\": null,\n          \"cloudInputKbps\": null,\n          \"cloudOutputKbps\": null\n        }\n      }\n    }\n  ],\n  \"bandwidth\": {\n    \"sampledAt\": 1795200010.25,\n    \"ingressKbps\": 0,\n    \"egressKbps\": 0,\n    \"publisherConnections\": 0,\n    \"readerConnections\": 0\n  }\n}"
             },
             {
               "name": "单人已上行，等待其他参会端",
@@ -2141,7 +2141,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\n  \"roomId\": \"1234567890\",\n  \"title\": \"调试会议\",\n  \"createdAt\": 1795200000.0,\n  \"roomCapacity\": 10,\n  \"self\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"host\": true,\n  \"participants\": [\n    {\n      \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"displayName\": \"发布端\",\n      \"host\": true\n    }\n  ],\n  \"streams\": [\n    {\n      \"id\": \"cccccccccccccccccccccccccccccccc\",\n      \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"kind\": \"camera\",\n      \"label\": \"摄像头\",\n      \"settings\": {\n        \"mode\": \"cloud\",\n        \"audioKbps\": 48,\n        \"codec\": \"h264\",\n        \"resolution\": \"540p\",\n        \"fps\": 15,\n        \"videoKbps\": 384,\n        \"gopSeconds\": 2,\n        \"encodingStrategy\": \"source_frames\"\n      },\n      \"revision\": 1,\n      \"status\": \"standby\",\n      \"metrics\": {\n        \"sourceKbps\": 862.3,\n        \"outputKbps\": null,\n        \"sentKbps\": 0.0,\n        \"compressionRatio\": null,\n        \"inputCodecs\": [\n          \"VP8\"\n        ],\n        \"outputCodecs\": [],\n        \"receivers\": 0\n      }\n    }\n  ],\n  \"bandwidth\": {\n    \"sampledAt\": 1795200010.25,\n    \"ingressKbps\": 862.3,\n    \"egressKbps\": 0,\n    \"publisherConnections\": 1,\n    \"readerConnections\": 0\n  }\n}"
+              "body": "{\n  \"roomId\": \"1234567890\",\n  \"title\": \"调试会议\",\n  \"createdAt\": 1795200000.0,\n  \"roomCapacity\": 10,\n  \"self\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"host\": true,\n  \"participants\": [\n    {\n      \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"displayName\": \"发布端\",\n      \"host\": true\n    }\n  ],\n  \"streams\": [\n    {\n      \"id\": \"cccccccccccccccccccccccccccccccc\",\n      \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"kind\": \"camera\",\n      \"label\": \"摄像头\",\n      \"settings\": {\n        \"mode\": \"cloud\",\n        \"audioKbps\": 48,\n        \"codec\": \"h264\",\n        \"resolution\": \"540p\",\n        \"fps\": 15,\n        \"videoKbps\": 384,\n        \"gopSeconds\": 2,\n        \"encodingStrategy\": \"source_frames\"\n      },\n      \"revision\": 1,\n      \"status\": \"standby\",\n      \"metrics\": {\n        \"sourceKbps\": 862.3,\n        \"outputKbps\": null,\n        \"sentKbps\": 0.0,\n        \"compressionRatio\": null,\n        \"inputCodecs\": [\n          \"VP8\"\n        ],\n        \"outputCodecs\": [],\n        \"receivers\": 0,\n        \"videoStats\": {\n          \"captureFps\": null,\n          \"publishFps\": null,\n          \"cloudInputFps\": 15,\n          \"cloudOutputFps\": null,\n          \"cloudInputKbps\": 862.3,\n          \"cloudOutputKbps\": null\n        }\n      }\n    }\n  ],\n  \"bandwidth\": {\n    \"sampledAt\": 1795200010.25,\n    \"ingressKbps\": 862.3,\n    \"egressKbps\": 0,\n    \"publisherConnections\": 1,\n    \"readerConnections\": 0\n  }\n}"
             },
             {
               "name": "已加入第二端，正在准备压缩输出",
@@ -2174,7 +2174,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\n  \"roomId\": \"1234567890\",\n  \"title\": \"调试会议\",\n  \"createdAt\": 1795200000.0,\n  \"roomCapacity\": 10,\n  \"self\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"host\": true,\n  \"participants\": [\n    {\n      \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"displayName\": \"发布端\",\n      \"host\": true\n    },\n    {\n      \"id\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\n      \"displayName\": \"观看端\",\n      \"host\": false\n    }\n  ],\n  \"streams\": [\n    {\n      \"id\": \"cccccccccccccccccccccccccccccccc\",\n      \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"kind\": \"camera\",\n      \"label\": \"摄像头\",\n      \"settings\": {\n        \"mode\": \"cloud\",\n        \"audioKbps\": 48,\n        \"codec\": \"h264\",\n        \"resolution\": \"540p\",\n        \"fps\": 15,\n        \"videoKbps\": 384,\n        \"gopSeconds\": 2,\n        \"encodingStrategy\": \"source_frames\"\n      },\n      \"revision\": 2,\n      \"status\": \"compressing\",\n      \"metrics\": {\n        \"sourceKbps\": 862.3,\n        \"outputKbps\": null,\n        \"sentKbps\": 0.0,\n        \"compressionRatio\": null,\n        \"inputCodecs\": [\n          \"VP8\"\n        ],\n        \"outputCodecs\": [],\n        \"receivers\": 0\n      }\n    }\n  ],\n  \"bandwidth\": {\n    \"sampledAt\": 1795200010.25,\n    \"ingressKbps\": 862.3,\n    \"egressKbps\": 0,\n    \"publisherConnections\": 1,\n    \"readerConnections\": 0\n  }\n}"
+              "body": "{\n  \"roomId\": \"1234567890\",\n  \"title\": \"调试会议\",\n  \"createdAt\": 1795200000.0,\n  \"roomCapacity\": 10,\n  \"self\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"host\": true,\n  \"participants\": [\n    {\n      \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"displayName\": \"发布端\",\n      \"host\": true\n    },\n    {\n      \"id\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\n      \"displayName\": \"观看端\",\n      \"host\": false\n    }\n  ],\n  \"streams\": [\n    {\n      \"id\": \"cccccccccccccccccccccccccccccccc\",\n      \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"kind\": \"camera\",\n      \"label\": \"摄像头\",\n      \"settings\": {\n        \"mode\": \"cloud\",\n        \"audioKbps\": 48,\n        \"codec\": \"h264\",\n        \"resolution\": \"540p\",\n        \"fps\": 15,\n        \"videoKbps\": 384,\n        \"gopSeconds\": 2,\n        \"encodingStrategy\": \"source_frames\"\n      },\n      \"revision\": 2,\n      \"status\": \"compressing\",\n      \"metrics\": {\n        \"sourceKbps\": 862.3,\n        \"outputKbps\": null,\n        \"sentKbps\": 0.0,\n        \"compressionRatio\": null,\n        \"inputCodecs\": [\n          \"VP8\"\n        ],\n        \"outputCodecs\": [],\n        \"receivers\": 0,\n        \"videoStats\": {\n          \"captureFps\": null,\n          \"publishFps\": null,\n          \"cloudInputFps\": 15,\n          \"cloudOutputFps\": null,\n          \"cloudInputKbps\": 862.3,\n          \"cloudOutputKbps\": null\n        }\n      }\n    }\n  ],\n  \"bandwidth\": {\n    \"sampledAt\": 1795200010.25,\n    \"ingressKbps\": 862.3,\n    \"egressKbps\": 0,\n    \"publisherConnections\": 1,\n    \"readerConnections\": 0\n  }\n}"
             },
             {
               "name": "网关采样暂不可用",
@@ -2241,6 +2241,96 @@
               ],
               "cookie": [],
               "body": "{\n  \"error\": \"参会身份已失效，请重新加入\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "上报采集与发送帧率（媒体服务）",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/rooms/{{roomId}}/telemetry",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rooms",
+                "{{roomId}}",
+                "telemetry"
+              ]
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{participantToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "description": "使用本人的参会令牌。最多两路。同一次响应返回房间快照。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"publicationId\": \"{{streamId}}\",\n      \"captureFps\": 30,\n      \"publishFps\": 29.8\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "房间快照",
+              "originalRequest": {
+                "method": "POST",
+                "url": {
+                  "raw": "{{baseUrl}}/rooms/{{roomId}}/telemetry",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "rooms",
+                    "{{roomId}}",
+                    "telemetry"
+                  ]
+                },
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{participantToken}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "description": "使用本人的参会令牌。最多两路。同一次响应返回房间快照。",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"items\": [\n    {\n      \"publicationId\": \"{{streamId}}\",\n      \"captureFps\": 30,\n      \"publishFps\": 29.8\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"roomId\": \"1234567890\",\n  \"title\": \"调试会议\",\n  \"createdAt\": 1795200000.0,\n  \"roomCapacity\": 10,\n  \"self\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"host\": true,\n  \"participants\": [\n    {\n      \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"displayName\": \"发布端\",\n      \"host\": true\n    },\n    {\n      \"id\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\n      \"displayName\": \"观看端\",\n      \"host\": false\n    },\n    {\n      \"id\": \"ffffffffffffffffffffffffffffffff\",\n      \"displayName\": \"另一观看端\",\n      \"host\": false\n    }\n  ],\n  \"streams\": [\n    {\n      \"id\": \"cccccccccccccccccccccccccccccccc\",\n      \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"kind\": \"camera\",\n      \"label\": \"摄像头\",\n      \"settings\": {\n        \"mode\": \"cloud\",\n        \"audioKbps\": 48,\n        \"codec\": \"h264\",\n        \"resolution\": \"540p\",\n        \"fps\": 15,\n        \"videoKbps\": 384,\n        \"gopSeconds\": 2,\n        \"encodingStrategy\": \"source_frames\"\n      },\n      \"revision\": 2,\n      \"status\": \"ready\",\n      \"metrics\": {\n        \"sourceKbps\": 862.3,\n        \"outputKbps\": 358.9,\n        \"sentKbps\": 717.8,\n        \"compressionRatio\": 2.4,\n        \"inputCodecs\": [\n          \"VP8\"\n        ],\n        \"outputCodecs\": [\n          \"H264\"\n        ],\n        \"receivers\": 2,\n        \"videoStats\": {\n          \"captureFps\": null,\n          \"publishFps\": null,\n          \"cloudInputFps\": 15,\n          \"cloudOutputFps\": 15,\n          \"cloudInputKbps\": 862.3,\n          \"cloudOutputKbps\": 358.9\n        }\n      }\n    }\n  ],\n  \"bandwidth\": {\n    \"sampledAt\": 1795200010.25,\n    \"ingressKbps\": 862.3,\n    \"egressKbps\": 717.8,\n    \"publisherConnections\": 1,\n    \"readerConnections\": 2\n  }\n}"
             }
           ]
         },
@@ -2567,7 +2657,7 @@
                 }
               }
             },
-            "description": "登记时可给 sourceSize，例如 [1280, 720]，表示浏览器采集轨的实际宽和高。缺省时从输入流探测。\n\nmode=original 为原始转发。mode=cloud、codec=h264 调用 Ocean 云端编码器。encodingStrategy 接受 source_frames（原始帧率）、bandwidth_first（按码率预算调帧）、optimized（动态帧率、全帧 AQ、渐进刷新）。优化策略按实际输入短边选择上限，≤720 像素选 360p，更高选 540p，保持比例且不上采样。其余两档使用 resolution 上限。fps 为 1–30，H.264 videoKbps 为 20–6000，gopSeconds 为 1–5。VP8 兼容模式省略 encodingStrategy，videoKbps 为 64–6000；麦克风仅使用 mode 和 audioKbps（12–128）。同一设置重复提交保持 revision，生效的输出变更增加 revision，发布端保持 WHIP，观看端重新协商。"
+            "description": "登记时可给 sourceSize，例如 [1280, 720]，表示浏览器采集轨的实际宽和高。缺省时从输入流探测。\n\nmode=original 为原始转发。mode=cloud、codec=h264 调用 Ocean 云端编码器。encodingStrategy 接受 source_frames（原始帧率）、bandwidth_first（按码率预算调帧）、optimized（动态帧率、全帧 AQ、渐进刷新）。优化策略按实际输入短边选择上限，≤720 像素选 360p，更高选 540p，保持比例且不上采样。其余两档使用 resolution 上限。fps 为 1–60，H.264 videoKbps 为 20–6000，gopSeconds 为 1–5。VP8 兼容模式省略 encodingStrategy，videoKbps 为 64–6000；麦克风仅使用 mode 和 audioKbps（12–128）。同一设置重复提交保持 revision，生效的输出变更增加 revision，发布端保持 WHIP，观看端重新协商。"
           },
           "response": [
             {
@@ -2616,7 +2706,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\n  \"id\": \"cccccccccccccccccccccccccccccccc\",\n  \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"kind\": \"camera\",\n  \"label\": \"摄像头\",\n  \"settings\": {\n    \"mode\": \"original\",\n    \"audioKbps\": 48,\n    \"codec\": \"h264\",\n    \"resolution\": \"720p\",\n    \"fps\": 20,\n    \"videoKbps\": 800,\n    \"gopSeconds\": 2,\n    \"encodingStrategy\": \"source_frames\"\n  },\n  \"revision\": 1,\n  \"status\": \"waiting\",\n  \"metrics\": {\n    \"sourceKbps\": null,\n    \"outputKbps\": null,\n    \"sentKbps\": null,\n    \"compressionRatio\": null,\n    \"inputCodecs\": [],\n    \"outputCodecs\": [],\n    \"receivers\": 0\n  }\n}"
+              "body": "{\n  \"id\": \"cccccccccccccccccccccccccccccccc\",\n  \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"kind\": \"camera\",\n  \"label\": \"摄像头\",\n  \"settings\": {\n    \"mode\": \"original\",\n    \"audioKbps\": 48,\n    \"codec\": \"h264\",\n    \"resolution\": \"720p\",\n    \"fps\": 20,\n    \"videoKbps\": 800,\n    \"gopSeconds\": 2,\n    \"encodingStrategy\": \"source_frames\"\n  },\n  \"revision\": 1,\n  \"status\": \"waiting\",\n  \"metrics\": {\n    \"sourceKbps\": null,\n    \"outputKbps\": null,\n    \"sentKbps\": null,\n    \"compressionRatio\": null,\n    \"inputCodecs\": [],\n    \"outputCodecs\": [],\n    \"receivers\": 0,\n    \"videoStats\": {\n      \"captureFps\": null,\n      \"publishFps\": null,\n      \"cloudInputFps\": null,\n      \"cloudOutputFps\": null,\n      \"cloudInputKbps\": null,\n      \"cloudOutputKbps\": null\n    }\n  }\n}"
             },
             {
               "name": "该类型已发布",
@@ -2722,7 +2812,7 @@
                 }
               }
             },
-            "description": "mode=original 为原始转发。mode=cloud、codec=h264 调用 Ocean 云端编码器。encodingStrategy 接受 source_frames（原始帧率）、bandwidth_first（按码率预算调帧）、optimized（动态帧率、全帧 AQ、渐进刷新）。优化策略按实际输入短边选择上限，≤720 像素选 360p，更高选 540p，保持比例且不上采样。其余两档使用 resolution 上限。fps 为 1–30，H.264 videoKbps 为 20–6000，gopSeconds 为 1–5。VP8 兼容模式省略 encodingStrategy，videoKbps 为 64–6000；麦克风仅使用 mode 和 audioKbps（12–128）。同一设置重复提交保持 revision，生效的输出变更增加 revision，发布端保持 WHIP，观看端重新协商。"
+            "description": "mode=original 为原始转发。mode=cloud、codec=h264 调用 Ocean 云端编码器。encodingStrategy 接受 source_frames（原始帧率）、bandwidth_first（按码率预算调帧）、optimized（动态帧率、全帧 AQ、渐进刷新）。优化策略按实际输入短边选择上限，≤720 像素选 360p，更高选 540p，保持比例且不上采样。其余两档使用 resolution 上限。fps 为 1–60，H.264 videoKbps 为 20–6000，gopSeconds 为 1–5。VP8 兼容模式省略 encodingStrategy，videoKbps 为 64–6000；麦克风仅使用 mode 和 audioKbps（12–128）。同一设置重复提交保持 revision，生效的输出变更增加 revision，发布端保持 WHIP，观看端重新协商。"
           },
           "response": [
             {
@@ -2878,7 +2968,7 @@
                 }
               }
             },
-            "description": "登记时可给 sourceSize，例如 [1280, 720]，表示浏览器采集轨的实际宽和高。缺省时从输入流探测。\n\nmode=original 为原始转发。mode=cloud、codec=h264 调用 Ocean 云端编码器。encodingStrategy 接受 source_frames（原始帧率）、bandwidth_first（按码率预算调帧）、optimized（动态帧率、全帧 AQ、渐进刷新）。优化策略按实际输入短边选择上限，≤720 像素选 360p，更高选 540p，保持比例且不上采样。其余两档使用 resolution 上限。fps 为 1–30，H.264 videoKbps 为 20–6000，gopSeconds 为 1–5。VP8 兼容模式省略 encodingStrategy，videoKbps 为 64–6000；麦克风仅使用 mode 和 audioKbps（12–128）。同一设置重复提交保持 revision，生效的输出变更增加 revision，发布端保持 WHIP，观看端重新协商。"
+            "description": "登记时可给 sourceSize，例如 [1280, 720]，表示浏览器采集轨的实际宽和高。缺省时从输入流探测。\n\nmode=original 为原始转发。mode=cloud、codec=h264 调用 Ocean 云端编码器。encodingStrategy 接受 source_frames（原始帧率）、bandwidth_first（按码率预算调帧）、optimized（动态帧率、全帧 AQ、渐进刷新）。优化策略按实际输入短边选择上限，≤720 像素选 360p，更高选 540p，保持比例且不上采样。其余两档使用 resolution 上限。fps 为 1–60，H.264 videoKbps 为 20–6000，gopSeconds 为 1–5。VP8 兼容模式省略 encodingStrategy，videoKbps 为 64–6000；麦克风仅使用 mode 和 audioKbps（12–128）。同一设置重复提交保持 revision，生效的输出变更增加 revision，发布端保持 WHIP，观看端重新协商。"
           },
           "response": [
             {
@@ -2927,7 +3017,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\n  \"id\": \"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\n  \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"kind\": \"screen\",\n  \"label\": \"共享屏幕\",\n  \"settings\": {\n    \"mode\": \"cloud\",\n    \"audioKbps\": 48,\n    \"codec\": \"h264\",\n    \"resolution\": \"540p\",\n    \"fps\": 15,\n    \"videoKbps\": 384,\n    \"gopSeconds\": 2,\n    \"encodingStrategy\": \"source_frames\"\n  },\n  \"revision\": 1,\n  \"status\": \"waiting\",\n  \"metrics\": {\n    \"sourceKbps\": null,\n    \"outputKbps\": null,\n    \"sentKbps\": null,\n    \"compressionRatio\": null,\n    \"inputCodecs\": [],\n    \"outputCodecs\": [],\n    \"receivers\": 0\n  }\n}"
+              "body": "{\n  \"id\": \"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\n  \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"kind\": \"screen\",\n  \"label\": \"共享屏幕\",\n  \"settings\": {\n    \"mode\": \"cloud\",\n    \"audioKbps\": 48,\n    \"codec\": \"h264\",\n    \"resolution\": \"540p\",\n    \"fps\": 15,\n    \"videoKbps\": 384,\n    \"gopSeconds\": 2,\n    \"encodingStrategy\": \"source_frames\"\n  },\n  \"revision\": 1,\n  \"status\": \"waiting\",\n  \"metrics\": {\n    \"sourceKbps\": null,\n    \"outputKbps\": null,\n    \"sentKbps\": null,\n    \"compressionRatio\": null,\n    \"inputCodecs\": [],\n    \"outputCodecs\": [],\n    \"receivers\": 0,\n    \"videoStats\": {\n      \"captureFps\": null,\n      \"publishFps\": null,\n      \"cloudInputFps\": null,\n      \"cloudOutputFps\": null,\n      \"cloudInputKbps\": null,\n      \"cloudOutputKbps\": null\n    }\n  }\n}"
             },
             {
               "name": "该类型已发布",
@@ -3083,7 +3173,7 @@
                 }
               }
             },
-            "description": "mode=original 为原始转发。mode=cloud、codec=h264 调用 Ocean 云端编码器。encodingStrategy 接受 source_frames（原始帧率）、bandwidth_first（按码率预算调帧）、optimized（动态帧率、全帧 AQ、渐进刷新）。优化策略按实际输入短边选择上限，≤720 像素选 360p，更高选 540p，保持比例且不上采样。其余两档使用 resolution 上限。fps 为 1–30，H.264 videoKbps 为 20–6000，gopSeconds 为 1–5。VP8 兼容模式省略 encodingStrategy，videoKbps 为 64–6000；麦克风仅使用 mode 和 audioKbps（12–128）。同一设置重复提交保持 revision，生效的输出变更增加 revision，发布端保持 WHIP，观看端重新协商。"
+            "description": "mode=original 为原始转发。mode=cloud、codec=h264 调用 Ocean 云端编码器。encodingStrategy 接受 source_frames（原始帧率）、bandwidth_first（按码率预算调帧）、optimized（动态帧率、全帧 AQ、渐进刷新）。优化策略按实际输入短边选择上限，≤720 像素选 360p，更高选 540p，保持比例且不上采样。其余两档使用 resolution 上限。fps 为 1–60，H.264 videoKbps 为 20–6000，gopSeconds 为 1–5。VP8 兼容模式省略 encodingStrategy，videoKbps 为 64–6000；麦克风仅使用 mode 和 audioKbps（12–128）。同一设置重复提交保持 revision，生效的输出变更增加 revision，发布端保持 WHIP，观看端重新协商。"
           },
           "response": [
             {
@@ -3133,7 +3223,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\n  \"id\": \"cccccccccccccccccccccccccccccccc\",\n  \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"kind\": \"camera\",\n  \"label\": \"摄像头\",\n  \"settings\": {\n    \"mode\": \"cloud\",\n    \"audioKbps\": 48,\n    \"codec\": \"h264\",\n    \"resolution\": \"540p\",\n    \"fps\": 15,\n    \"videoKbps\": 384,\n    \"gopSeconds\": 2,\n    \"encodingStrategy\": \"source_frames\"\n  },\n  \"revision\": 2,\n  \"status\": \"compressing\",\n  \"metrics\": {\n    \"sourceKbps\": 862.3,\n    \"outputKbps\": null,\n    \"sentKbps\": 0.0,\n    \"compressionRatio\": null,\n    \"inputCodecs\": [\n      \"VP8\"\n    ],\n    \"outputCodecs\": [],\n    \"receivers\": 0\n  }\n}"
+              "body": "{\n  \"id\": \"cccccccccccccccccccccccccccccccc\",\n  \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"kind\": \"camera\",\n  \"label\": \"摄像头\",\n  \"settings\": {\n    \"mode\": \"cloud\",\n    \"audioKbps\": 48,\n    \"codec\": \"h264\",\n    \"resolution\": \"540p\",\n    \"fps\": 15,\n    \"videoKbps\": 384,\n    \"gopSeconds\": 2,\n    \"encodingStrategy\": \"source_frames\"\n  },\n  \"revision\": 2,\n  \"status\": \"compressing\",\n  \"metrics\": {\n    \"sourceKbps\": 862.3,\n    \"outputKbps\": null,\n    \"sentKbps\": 0.0,\n    \"compressionRatio\": null,\n    \"inputCodecs\": [\n      \"VP8\"\n    ],\n    \"outputCodecs\": [],\n    \"receivers\": 0,\n    \"videoStats\": {\n      \"captureFps\": null,\n      \"publishFps\": null,\n      \"cloudInputFps\": 15,\n      \"cloudOutputFps\": null,\n      \"cloudInputKbps\": 862.3,\n      \"cloudOutputKbps\": null\n    }\n  }\n}"
             },
             {
               "name": "视频码率越界",
@@ -3272,7 +3362,7 @@
                 }
               }
             },
-            "description": "mode=original 为原始转发。mode=cloud、codec=h264 调用 Ocean 云端编码器。encodingStrategy 接受 source_frames（原始帧率）、bandwidth_first（按码率预算调帧）、optimized（动态帧率、全帧 AQ、渐进刷新）。优化策略按实际输入短边选择上限，≤720 像素选 360p，更高选 540p，保持比例且不上采样。其余两档使用 resolution 上限。fps 为 1–30，H.264 videoKbps 为 20–6000，gopSeconds 为 1–5。VP8 兼容模式省略 encodingStrategy，videoKbps 为 64–6000；麦克风仅使用 mode 和 audioKbps（12–128）。同一设置重复提交保持 revision，生效的输出变更增加 revision，发布端保持 WHIP，观看端重新协商。"
+            "description": "mode=original 为原始转发。mode=cloud、codec=h264 调用 Ocean 云端编码器。encodingStrategy 接受 source_frames（原始帧率）、bandwidth_first（按码率预算调帧）、optimized（动态帧率、全帧 AQ、渐进刷新）。优化策略按实际输入短边选择上限，≤720 像素选 360p，更高选 540p，保持比例且不上采样。其余两档使用 resolution 上限。fps 为 1–60，H.264 videoKbps 为 20–6000，gopSeconds 为 1–5。VP8 兼容模式省略 encodingStrategy，videoKbps 为 64–6000；麦克风仅使用 mode 和 audioKbps（12–128）。同一设置重复提交保持 revision，生效的输出变更增加 revision，发布端保持 WHIP，观看端重新协商。"
           },
           "response": [
             {
@@ -3322,7 +3412,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\n  \"id\": \"cccccccccccccccccccccccccccccccc\",\n  \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"kind\": \"camera\",\n  \"label\": \"摄像头\",\n  \"settings\": {\n    \"mode\": \"original\",\n    \"audioKbps\": 48,\n    \"codec\": \"h264\",\n    \"resolution\": \"540p\",\n    \"fps\": 15,\n    \"videoKbps\": 384,\n    \"gopSeconds\": 2,\n    \"encodingStrategy\": \"source_frames\"\n  },\n  \"revision\": 3,\n  \"status\": \"ready\",\n  \"metrics\": {\n    \"sourceKbps\": 862.3,\n    \"outputKbps\": 862.3,\n    \"sentKbps\": 0.0,\n    \"compressionRatio\": 1.0,\n    \"inputCodecs\": [\n      \"VP8\"\n    ],\n    \"outputCodecs\": [\n      \"VP8\"\n    ],\n    \"receivers\": 0\n  }\n}"
+              "body": "{\n  \"id\": \"cccccccccccccccccccccccccccccccc\",\n  \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"kind\": \"camera\",\n  \"label\": \"摄像头\",\n  \"settings\": {\n    \"mode\": \"original\",\n    \"audioKbps\": 48,\n    \"codec\": \"h264\",\n    \"resolution\": \"540p\",\n    \"fps\": 15,\n    \"videoKbps\": 384,\n    \"gopSeconds\": 2,\n    \"encodingStrategy\": \"source_frames\"\n  },\n  \"revision\": 3,\n  \"status\": \"ready\",\n  \"metrics\": {\n    \"sourceKbps\": 862.3,\n    \"outputKbps\": 862.3,\n    \"sentKbps\": 0.0,\n    \"compressionRatio\": 1.0,\n    \"inputCodecs\": [\n      \"VP8\"\n    ],\n    \"outputCodecs\": [\n      \"VP8\"\n    ],\n    \"receivers\": 0,\n    \"videoStats\": {\n      \"captureFps\": null,\n      \"publishFps\": null,\n      \"cloudInputFps\": 15,\n      \"cloudOutputFps\": 15,\n      \"cloudInputKbps\": 862.3,\n      \"cloudOutputKbps\": 862.3\n    }\n  }\n}"
             }
           ]
         },
@@ -3363,7 +3453,7 @@
                 }
               }
             },
-            "description": "mode=original 为原始转发。mode=cloud、codec=h264 调用 Ocean 云端编码器。encodingStrategy 接受 source_frames（原始帧率）、bandwidth_first（按码率预算调帧）、optimized（动态帧率、全帧 AQ、渐进刷新）。优化策略按实际输入短边选择上限，≤720 像素选 360p，更高选 540p，保持比例且不上采样。其余两档使用 resolution 上限。fps 为 1–30，H.264 videoKbps 为 20–6000，gopSeconds 为 1–5。VP8 兼容模式省略 encodingStrategy，videoKbps 为 64–6000；麦克风仅使用 mode 和 audioKbps（12–128）。同一设置重复提交保持 revision，生效的输出变更增加 revision，发布端保持 WHIP，观看端重新协商。"
+            "description": "mode=original 为原始转发。mode=cloud、codec=h264 调用 Ocean 云端编码器。encodingStrategy 接受 source_frames（原始帧率）、bandwidth_first（按码率预算调帧）、optimized（动态帧率、全帧 AQ、渐进刷新）。优化策略按实际输入短边选择上限，≤720 像素选 360p，更高选 540p，保持比例且不上采样。其余两档使用 resolution 上限。fps 为 1–60，H.264 videoKbps 为 20–6000，gopSeconds 为 1–5。VP8 兼容模式省略 encodingStrategy，videoKbps 为 64–6000；麦克风仅使用 mode 和 audioKbps（12–128）。同一设置重复提交保持 revision，生效的输出变更增加 revision，发布端保持 WHIP，观看端重新协商。"
           },
           "response": [
             {
@@ -3503,7 +3593,7 @@
                 }
               }
             },
-            "description": "mode=original 为原始转发。mode=cloud、codec=h264 调用 Ocean 云端编码器。encodingStrategy 接受 source_frames（原始帧率）、bandwidth_first（按码率预算调帧）、optimized（动态帧率、全帧 AQ、渐进刷新）。优化策略按实际输入短边选择上限，≤720 像素选 360p，更高选 540p，保持比例且不上采样。其余两档使用 resolution 上限。fps 为 1–30，H.264 videoKbps 为 20–6000，gopSeconds 为 1–5。VP8 兼容模式省略 encodingStrategy，videoKbps 为 64–6000；麦克风仅使用 mode 和 audioKbps（12–128）。同一设置重复提交保持 revision，生效的输出变更增加 revision，发布端保持 WHIP，观看端重新协商。"
+            "description": "mode=original 为原始转发。mode=cloud、codec=h264 调用 Ocean 云端编码器。encodingStrategy 接受 source_frames（原始帧率）、bandwidth_first（按码率预算调帧）、optimized（动态帧率、全帧 AQ、渐进刷新）。优化策略按实际输入短边选择上限，≤720 像素选 360p，更高选 540p，保持比例且不上采样。其余两档使用 resolution 上限。fps 为 1–60，H.264 videoKbps 为 20–6000，gopSeconds 为 1–5。VP8 兼容模式省略 encodingStrategy，videoKbps 为 64–6000；麦克风仅使用 mode 和 audioKbps（12–128）。同一设置重复提交保持 revision，生效的输出变更增加 revision，发布端保持 WHIP，观看端重新协商。"
           },
           "response": [
             {
@@ -3553,7 +3643,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\n  \"id\": \"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\n  \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"kind\": \"screen\",\n  \"label\": \"共享屏幕\",\n  \"settings\": {\n    \"mode\": \"cloud\",\n    \"audioKbps\": 32,\n    \"codec\": \"vp8\",\n    \"resolution\": \"540p\",\n    \"fps\": 15,\n    \"videoKbps\": 300,\n    \"gopSeconds\": 2,\n    \"encodingStrategy\": null\n  },\n  \"revision\": 2,\n  \"status\": \"compressing\",\n  \"metrics\": {\n    \"sourceKbps\": 862.3,\n    \"outputKbps\": null,\n    \"sentKbps\": 0.0,\n    \"compressionRatio\": null,\n    \"inputCodecs\": [\n      \"Opus\",\n      \"VP8\"\n    ],\n    \"outputCodecs\": [],\n    \"receivers\": 0\n  }\n}"
+              "body": "{\n  \"id\": \"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\n  \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"kind\": \"screen\",\n  \"label\": \"共享屏幕\",\n  \"settings\": {\n    \"mode\": \"cloud\",\n    \"audioKbps\": 32,\n    \"codec\": \"vp8\",\n    \"resolution\": \"540p\",\n    \"fps\": 15,\n    \"videoKbps\": 300,\n    \"gopSeconds\": 2,\n    \"encodingStrategy\": null\n  },\n  \"revision\": 2,\n  \"status\": \"compressing\",\n  \"metrics\": {\n    \"sourceKbps\": 862.3,\n    \"outputKbps\": null,\n    \"sentKbps\": 0.0,\n    \"compressionRatio\": null,\n    \"inputCodecs\": [\n      \"Opus\",\n      \"VP8\"\n    ],\n    \"outputCodecs\": [],\n    \"receivers\": 0,\n    \"videoStats\": {\n      \"captureFps\": null,\n      \"publishFps\": null,\n      \"cloudInputFps\": 15,\n      \"cloudOutputFps\": null,\n      \"cloudInputKbps\": 862.3,\n      \"cloudOutputKbps\": null\n    }\n  }\n}"
             }
           ]
         },
@@ -3722,7 +3812,7 @@
                 }
               }
             },
-            "description": "mode=original 为原始转发。mode=cloud、codec=h264 调用 Ocean 云端编码器。encodingStrategy 接受 source_frames（原始帧率）、bandwidth_first（按码率预算调帧）、optimized（动态帧率、全帧 AQ、渐进刷新）。优化策略按实际输入短边选择上限，≤720 像素选 360p，更高选 540p，保持比例且不上采样。其余两档使用 resolution 上限。fps 为 1–30，H.264 videoKbps 为 20–6000，gopSeconds 为 1–5。VP8 兼容模式省略 encodingStrategy，videoKbps 为 64–6000；麦克风仅使用 mode 和 audioKbps（12–128）。同一设置重复提交保持 revision，生效的输出变更增加 revision，发布端保持 WHIP，观看端重新协商。"
+            "description": "mode=original 为原始转发。mode=cloud、codec=h264 调用 Ocean 云端编码器。encodingStrategy 接受 source_frames（原始帧率）、bandwidth_first（按码率预算调帧）、optimized（动态帧率、全帧 AQ、渐进刷新）。优化策略按实际输入短边选择上限，≤720 像素选 360p，更高选 540p，保持比例且不上采样。其余两档使用 resolution 上限。fps 为 1–60，H.264 videoKbps 为 20–6000，gopSeconds 为 1–5。VP8 兼容模式省略 encodingStrategy，videoKbps 为 64–6000；麦克风仅使用 mode 和 audioKbps（12–128）。同一设置重复提交保持 revision，生效的输出变更增加 revision，发布端保持 WHIP，观看端重新协商。"
           },
           "response": [
             {
@@ -3772,7 +3862,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\n  \"id\": \"cccccccccccccccccccccccccccccccc\",\n  \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"kind\": \"camera\",\n  \"label\": \"摄像头\",\n  \"settings\": {\n    \"mode\": \"cloud\",\n    \"audioKbps\": 48,\n    \"codec\": \"h264\",\n    \"resolution\": \"540p\",\n    \"fps\": 15,\n    \"videoKbps\": 384,\n    \"gopSeconds\": 2,\n    \"encodingStrategy\": \"bandwidth_first\"\n  },\n  \"revision\": 2,\n  \"status\": \"compressing\",\n  \"metrics\": {\n    \"sourceKbps\": 862.3,\n    \"outputKbps\": null,\n    \"sentKbps\": 0.0,\n    \"compressionRatio\": null,\n    \"inputCodecs\": [\n      \"VP8\"\n    ],\n    \"outputCodecs\": [],\n    \"receivers\": 0\n  }\n}"
+              "body": "{\n  \"id\": \"cccccccccccccccccccccccccccccccc\",\n  \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"kind\": \"camera\",\n  \"label\": \"摄像头\",\n  \"settings\": {\n    \"mode\": \"cloud\",\n    \"audioKbps\": 48,\n    \"codec\": \"h264\",\n    \"resolution\": \"540p\",\n    \"fps\": 15,\n    \"videoKbps\": 384,\n    \"gopSeconds\": 2,\n    \"encodingStrategy\": \"bandwidth_first\"\n  },\n  \"revision\": 2,\n  \"status\": \"compressing\",\n  \"metrics\": {\n    \"sourceKbps\": 862.3,\n    \"outputKbps\": null,\n    \"sentKbps\": 0.0,\n    \"compressionRatio\": null,\n    \"inputCodecs\": [\n      \"VP8\"\n    ],\n    \"outputCodecs\": [],\n    \"receivers\": 0,\n    \"videoStats\": {\n      \"captureFps\": null,\n      \"publishFps\": null,\n      \"cloudInputFps\": 15,\n      \"cloudOutputFps\": null,\n      \"cloudInputKbps\": 862.3,\n      \"cloudOutputKbps\": null\n    }\n  }\n}"
             },
             {
               "name": "视频码率越界",
@@ -3911,7 +4001,7 @@
                 }
               }
             },
-            "description": "mode=original 为原始转发。mode=cloud、codec=h264 调用 Ocean 云端编码器。encodingStrategy 接受 source_frames（原始帧率）、bandwidth_first（按码率预算调帧）、optimized（动态帧率、全帧 AQ、渐进刷新）。优化策略按实际输入短边选择上限，≤720 像素选 360p，更高选 540p，保持比例且不上采样。其余两档使用 resolution 上限。fps 为 1–30，H.264 videoKbps 为 20–6000，gopSeconds 为 1–5。VP8 兼容模式省略 encodingStrategy，videoKbps 为 64–6000；麦克风仅使用 mode 和 audioKbps（12–128）。同一设置重复提交保持 revision，生效的输出变更增加 revision，发布端保持 WHIP，观看端重新协商。"
+            "description": "mode=original 为原始转发。mode=cloud、codec=h264 调用 Ocean 云端编码器。encodingStrategy 接受 source_frames（原始帧率）、bandwidth_first（按码率预算调帧）、optimized（动态帧率、全帧 AQ、渐进刷新）。优化策略按实际输入短边选择上限，≤720 像素选 360p，更高选 540p，保持比例且不上采样。其余两档使用 resolution 上限。fps 为 1–60，H.264 videoKbps 为 20–6000，gopSeconds 为 1–5。VP8 兼容模式省略 encodingStrategy，videoKbps 为 64–6000；麦克风仅使用 mode 和 audioKbps（12–128）。同一设置重复提交保持 revision，生效的输出变更增加 revision，发布端保持 WHIP，观看端重新协商。"
           },
           "response": [
             {
@@ -3961,7 +4051,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\n  \"id\": \"cccccccccccccccccccccccccccccccc\",\n  \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"kind\": \"camera\",\n  \"label\": \"摄像头\",\n  \"settings\": {\n    \"mode\": \"cloud\",\n    \"audioKbps\": 48,\n    \"codec\": \"h264\",\n    \"resolution\": \"540p\",\n    \"fps\": 15,\n    \"videoKbps\": 384,\n    \"gopSeconds\": 2,\n    \"encodingStrategy\": \"optimized\"\n  },\n  \"revision\": 2,\n  \"status\": \"compressing\",\n  \"metrics\": {\n    \"sourceKbps\": 862.3,\n    \"outputKbps\": null,\n    \"sentKbps\": 0.0,\n    \"compressionRatio\": null,\n    \"inputCodecs\": [\n      \"VP8\"\n    ],\n    \"outputCodecs\": [],\n    \"receivers\": 0\n  }\n}"
+              "body": "{\n  \"id\": \"cccccccccccccccccccccccccccccccc\",\n  \"participantId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"kind\": \"camera\",\n  \"label\": \"摄像头\",\n  \"settings\": {\n    \"mode\": \"cloud\",\n    \"audioKbps\": 48,\n    \"codec\": \"h264\",\n    \"resolution\": \"540p\",\n    \"fps\": 15,\n    \"videoKbps\": 384,\n    \"gopSeconds\": 2,\n    \"encodingStrategy\": \"optimized\"\n  },\n  \"revision\": 2,\n  \"status\": \"compressing\",\n  \"metrics\": {\n    \"sourceKbps\": 862.3,\n    \"outputKbps\": null,\n    \"sentKbps\": 0.0,\n    \"compressionRatio\": null,\n    \"inputCodecs\": [\n      \"VP8\"\n    ],\n    \"outputCodecs\": [],\n    \"receivers\": 0,\n    \"videoStats\": {\n      \"captureFps\": null,\n      \"publishFps\": null,\n      \"cloudInputFps\": 15,\n      \"cloudOutputFps\": null,\n      \"cloudInputKbps\": 862.3,\n      \"cloudOutputKbps\": null\n    }\n  }\n}"
             },
             {
               "name": "视频码率越界",
@@ -6284,6 +6374,96 @@
           "response": []
         },
         {
+          "name": "上报采集与发送帧率（会议网页）",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/meetings/{{webMeetingId}}/telemetry",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "meetings",
+                "{{webMeetingId}}",
+                "telemetry"
+              ]
+            },
+            "description": "使用网页登录令牌，按 publicationId 每两秒上报本端的实测值。缺失可省略帧率字段。",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{webToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"publicationId\": \"{{webPubId}}\",\n      \"sourceVideoBitrateKbps\": 1382.4,\n      \"sourceFps\": 29.8,\n      \"captureFps\": 30,\n      \"publishFps\": 29.8,\n      \"associatedAudioBitrateKbps\": 0\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "收到采样",
+              "originalRequest": {
+                "method": "POST",
+                "url": {
+                  "raw": "{{baseUrl}}/meetings/{{webMeetingId}}/telemetry",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "meetings",
+                    "{{webMeetingId}}",
+                    "telemetry"
+                  ]
+                },
+                "description": "使用网页登录令牌，按 publicationId 每两秒上报本端的实测值。缺失可省略帧率字段。",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{webToken}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"items\": [\n    {\n      \"publicationId\": \"{{webPubId}}\",\n      \"sourceVideoBitrateKbps\": 1382.4,\n      \"sourceFps\": 29.8,\n      \"captureFps\": 30,\n      \"publishFps\": 29.8,\n      \"associatedAudioBitrateKbps\": 0\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"code\": 200,\n  \"msg\": \"ok\",\n  \"data\": {}\n}"
+            }
+          ]
+        },
+        {
           "name": "查询每路输出与压缩统计",
           "request": {
             "method": "GET",
@@ -6298,7 +6478,7 @@
                 "state"
               ]
             },
-            "description": "streams[].transportMode、encodingStrategy、revision、targetBitrateKbps、compressionKind、sourceBitrateKbps、ingressBitrateKbps 和 compressionRatio；码率单位 kbps。",
+            "description": "data.streams 按发布区分摄像头、共享和音频。targetBitrateKbps 单独表示云端配置目标。videoStats 中 captureFps 为摄像头或屏幕采集帧率，publishFps 为浏览器视频发送帧率，cloudInputFps、cloudOutputFps 分别为阿里云接收和分发输出的实测帧率。cloudInputKbps 为云端压缩前的原始视频码率，cloudOutputKbps 为输出视频码率。码率按十进制 kbps，仅含视频。云端按约四秒窗口计数。null 表示等待或失去样本，0 表示已观测到零。原始转发共用输入路径，单人待机时输出为空。",
             "header": [
               {
                 "key": "Authorization",
@@ -6307,7 +6487,43 @@
               }
             ]
           },
-          "response": []
+          "response": [
+            {
+              "name": "单路视频状态（响应节选）",
+              "originalRequest": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/meetings/{{webMeetingId}}/state",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "meetings",
+                    "{{webMeetingId}}",
+                    "state"
+                  ]
+                },
+                "description": "data.streams 按发布区分摄像头、共享和音频。targetBitrateKbps 单独表示云端配置目标。videoStats 中 captureFps 为摄像头或屏幕采集帧率，publishFps 为浏览器视频发送帧率，cloudInputFps、cloudOutputFps 分别为阿里云接收和分发输出的实测帧率。cloudInputKbps 为云端压缩前的原始视频码率，cloudOutputKbps 为输出视频码率。码率按十进制 kbps，仅含视频。云端按约四秒窗口计数。null 表示等待或失去样本，0 表示已观测到零。原始转发共用输入路径，单人待机时输出为空。",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{webToken}}",
+                    "type": "text"
+                  }
+                ]
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"code\": 200,\n  \"msg\": \"ok\",\n  \"data\": {\n    \"meetingId\": 123,\n    \"streams\": [\n      {\n        \"id\": \"st_example\",\n        \"ownerId\": \"example-publisher\",\n        \"ownerName\": \"参会者\",\n        \"kind\": \"camera\",\n        \"video\": true,\n        \"audio\": false,\n        \"width\": 0,\n        \"height\": 0,\n        \"fps\": 13,\n        \"sourceBitrateKbps\": 1382,\n        \"ingressBitrateKbps\": 146,\n        \"compressionKind\": \"cloudSoftwareRoi\",\n        \"compressionRatio\": 9.45,\n        \"videoCodec\": \"h264\",\n        \"videoChannel\": \"cloudWhep\",\n        \"active\": true,\n        \"endpoints\": {},\n        \"transportMode\": \"cloud\",\n        \"encodingStrategy\": \"optimized\",\n        \"targetBitrateKbps\": 100,\n        \"revision\": 2,\n        \"videoStats\": {\n          \"captureFps\": 30,\n          \"publishFps\": 29.8,\n          \"cloudInputFps\": 29.9,\n          \"cloudOutputFps\": 12.5,\n          \"cloudInputKbps\": 1382.4,\n          \"cloudOutputKbps\": 146.3\n        }\n      }\n    ]\n  }\n}"
+            }
+          ]
         },
         {
           "name": "停止本路发布",

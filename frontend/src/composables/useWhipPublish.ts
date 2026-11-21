@@ -1,7 +1,8 @@
 import { sitePath } from '@/utils/sitePath'
 import { createPublication, stopPublication, type PublicationCreateBody } from '@/api/meeting'
 import { h264First } from '@/utils/codecPreference'
-import { normalizeVideoSpec } from '@/utils/videoSpec'
+import { videoSampler, type BrowserVideoSample } from '@/utils/videoObservations'
+import { normalizeVideoSpec, publicVideoSpec } from '@/utils/videoSpec'
 import { ApiError } from '@/utils/request'
 
 /**
@@ -81,6 +82,9 @@ export interface PublishOptions {
   onRate?: (kbps: number, targetKbps: number, fps: number) => void
   /** 只在还没产出码率增量时单独回吐目标码率。 */
   onTarget?: (kbps: number) => void
+  preferredFps?: number
+  physicalFrames?: () => number | null | undefined
+  onVideoSample?: (sample: BrowserVideoSample | null) => void
   /** 上行累计发送字节（getStats bytesSent 累计值）。 */
   onBytes?: (bytes: number) => void
 }
@@ -99,6 +103,8 @@ export interface PublishOptions {
 export function useWhipPublish(getMeetingId: () => number) {
   let pc: RTCPeerConnection | null = null
   let publicationId = ''
+  let options: PublishOptions | undefined
+  let publishedSpec: ReturnType<typeof publicVideoSpec> | undefined
   let rateTimer: ReturnType<typeof setInterval> | null = null
 
   async function unpublish() {
@@ -109,6 +115,9 @@ export function useWhipPublish(getMeetingId: () => number) {
       clearInterval(rateTimer)
       rateTimer = null
     }
+    options?.onVideoSample?.(null)
+    options = undefined
+    publishedSpec = undefined
     pc = null
     publicationId = ''
     if (conn) conn.close()
@@ -132,7 +141,7 @@ export function useWhipPublish(getMeetingId: () => number) {
     // 三方只接受固定档位的视频规格（分辨率 1920x1080/1280x720、帧率 ≤25），
     // 裸 getSettings() 可能报出整屏 DPI 缩放后的 2561x1601@30 → 被 bad_publication_video_spec 拒。
     // 对齐三方 ocean-meeting.js：发布前把 spec 归一化到允许档位。
-    const spec = normalizeVideoSpec(settings?.width ?? 0, settings?.height ?? 0, settings?.frameRate ?? 0)
+    const spec = opts.delivery ? publicVideoSpec(settings, opts.preferredFps) : normalizeVideoSpec(settings?.width ?? 0, settings?.height ?? 0, settings?.frameRate ?? 0)
     const created = await createPublication(getMeetingId(), {
       mediaKind: opts.mediaKind,
       hasVideo: !!videoTrack,
@@ -188,7 +197,7 @@ export function useWhipPublish(getMeetingId: () => number) {
         // CanvasCaptureMediaStreamTrack 没有硬件帧率，不设 maxFramerate 编码器可能判轨道不活跃。
         encodings[0] = { ...encodings[0], maxFramerate: spec.fps, scaleResolutionDownBy: 1 }
         params.encodings = encodings
-        params.degradationPreference = 'maintain-resolution'
+        params.degradationPreference = opts.delivery ? 'maintain-framerate' : 'maintain-resolution'
         await videoSender.setParameters(params)
       } catch (e) {
         console.warn('[whip] 编码器参数没设进去，这路按浏览器默认走', e)
@@ -236,11 +245,15 @@ export function useWhipPublish(getMeetingId: () => number) {
       opts.onState?.(conn.connectionState)
     })
     // 上行码率/字节只能本地测：累计 outbound-rtp 的字节增量 / 时间差（≥250ms 基线）。
-    if (opts.onRate || opts.onBytes) {
+    if (opts.onRate || opts.onBytes || opts.onVideoSample) {
+      const sampleVideo = videoSampler()
       let prevBytes = 0
       let prevAt = 0
       rateTimer = setInterval(() => {
         conn.getStats().then((report) => {
+          if (pc !== conn) return
+          const trackId = videoSender?.track?.id
+          if (trackId) opts.onVideoSample?.(sampleVideo(report, trackId, opts.physicalFrames?.()))
           let bytes = 0
           // 编码器当前目标码率：浏览器按带宽估计实时调，只有发送端自己知道，链路不回吐。
           let targetKbps = 0
@@ -267,6 +280,8 @@ export function useWhipPublish(getMeetingId: () => number) {
         }).catch(() => undefined)
       }, 1000)
     }
+    options = opts
+    publishedSpec = spec
     pc = conn
     publicationId = newPubId
     return conn
@@ -284,8 +299,8 @@ export function useWhipPublish(getMeetingId: () => number) {
     try {
       const params = sender.getParameters()
       if (!Array.isArray(params.encodings) || !params.encodings.length) params.encodings = [{}]
-      params.encodings[0].maxFramerate = 25
-      params.degradationPreference = 'maintain-resolution'
+      params.encodings[0].maxFramerate = options?.delivery ? publicVideoSpec(track.getSettings(), options.preferredFps).fps : 25
+      params.degradationPreference = options?.delivery ? 'maintain-framerate' : 'maintain-resolution'
       await sender.setParameters(params)
     } catch { /* best-effort */ }
     // 生成关键帧让对端/RK 接收侧能立即解码新轨
@@ -294,5 +309,11 @@ export function useWhipPublish(getMeetingId: () => number) {
     } catch { /* 浏览器不支持时静默 */ }
   }
 
-  return { publish, unpublish, published: () => !!publicationId, publicationIdOf: () => publicationId, replaceVideoTrack }
+  function canReplaceVideoTrack(track: MediaStreamTrack) {
+    if (!options?.delivery) return true
+    const next = publicVideoSpec(track.getSettings(), options.preferredFps)
+    return publishedSpec?.fps === next.fps && publishedSpec.width === next.width && publishedSpec.height === next.height
+  }
+
+  return { publish, unpublish, canReplaceVideoTrack, published: () => !!publicationId, publicationIdOf: () => publicationId, replaceVideoTrack }
 }
