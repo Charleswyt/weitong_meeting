@@ -27,14 +27,3 @@ export function readDelivery(account: string, kind: VideoKind): VideoDelivery {
 export function saveDelivery(account: string, kind: VideoKind, value: VideoDelivery) {
   localStorage.setItem(key(account, kind), JSON.stringify(value))
 }
-
-export interface VideoLineReading {
-  name: string
-  own: boolean
-  received: number | null
-  mode?: string
-  target?: number
-  strategy?: string
-  stats: NonNullable<components['schemas']['StreamVo']['videoStats']>
-  compression: import('./compression').CompressionView
-}

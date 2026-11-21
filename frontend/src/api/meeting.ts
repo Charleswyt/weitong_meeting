@@ -168,12 +168,8 @@ export function reportMediaState(id: number, state: { cameraOn: boolean; micOn: 
 type TelemetryBody = operations['reportTelemetry']['requestBody']['content']['application/json']
 export type TelemetryItem = NonNullable<TelemetryBody['items']>[number]
 
-// 发布端实测码率的 REST 通道，与 WS `telemetry` 帧**共用同一个 item 形状**（契约 §6.3 TelemetryItem）。
-// 〔硬规则〕不得只走 WS：这一项是「原始速率/压缩比/节省带宽」三个数的唯一真源（订阅端算不出压缩前的数），
-// 而三方只认 4 秒内的新鲜样本 —— WS 未连上时消息静默丢弃，就会让所有订阅者（含三方自家页面）
-// 永远停在「原始码率统计中」。WS 那条保留作冗余。
-// 与 reportMediaState 的关键差别：后端收到只把样本落进会话、**不立刻向三方心跳**
-// （泵每秒已逐会话发一次），所以这条可以安全地周期性打，不会把 revision 无谓推高。
+// REST 与 WebSocket 共用逐路浏览器样本。REST 在 WebSocket 重连时也能更新遥测。
+// 中卫通公网会议的 compressionRatio 由媒体服务基于云端采样计算。
 export function reportTelemetry(id: number, items: TelemetryItem[]) {
   return post(`/api/v1/meetings/${id}/telemetry`, { items })
 }

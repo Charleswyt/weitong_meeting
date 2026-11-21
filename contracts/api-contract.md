@@ -426,6 +426,7 @@ GET /api/v1/<resource>/list?pageNum=1&pageSize=10&orderByColumn=startTime&isAsc=
                                       // 2026-10-13 实测拦下过），上桌的是「直传（没有额外压缩）」。
                                       // 且 'none' 的含义是**这一路没有"压缩前/压缩后"这组量**，不是"数还没取到"：
                                       // 界面该把三格合成一句说清楚，缺数组才写「统计中」（见下方三项口径）。
+    // 中卫通公网会议直接展示该字段，缺样省略。下述旧适配器的回退口径仅适用于其他会议。
     compressionRatio?: number         // 〔新增 2026-10-13〕三方在该路发布记录里**直接上报**的压缩倍率
                                       // （`transportMetrics.compressionRatio`）。它是倍率的**第三级取数**：
                                       // 本端两个数（编码码率、实传速率）凑不出倍率时才用它 —— 口径照三方
@@ -937,6 +938,6 @@ WS 这条是冗余、正确性以 REST 为准，理由与 `media` 同（WS 未�
 
 ### 中卫通公网会议的视频统计
 
-decodedFrameKbps 按发布端解码后逐帧可见像素字节计算。publishKbps 取该路视频 RTP 已发送字节增量。cloudInputKbps 和 cloudOutputKbps 表示云端编码视频的输入和单份输出。四项单位均为十进制 kbps。viewerCount 只计 WebRTC 观看连接，publicEgressKbps 为发给这些观看端的合计速率。无人观看时两项均为 0。压缩比采用 Ocean 的网页算法，发布端用 publishKbps 除以 cloudOutputKbps，观看端优先除以本机该路视频实收，无有效实收时使用云端输出。原始转发显示直传。解码后数据率独立展示。各采样窗口可能略有错位，缺失样本使用 null。 云端压缩在源就绪时启动，结束发布或恢复原始转发时停止。本端以 sendonly 发布，本机预览使用摄像头或屏幕轨道。
+decodedFrameKbps 按发布端解码后逐帧可见像素字节计算。publishKbps 取该路视频 RTP 已发送字节增量。cloudInputKbps 和 cloudOutputKbps 表示云端编码视频的输入和单份输出。四项单位均为十进制 kbps。viewerCount 只计 WebRTC 观看连接，publicEgressKbps 为发给这些观看端的合计速率。无人观看时两项均为 0。每路云端视频压缩比为 cloudInputKbps / cloudOutputKbps，按阿里云接收和单份编码输出的视频有效载荷计算。发布端和所有观看端读取同一个 compressionRatio。两项速率均为正时返回两位小数的倍率。原始转发显示直传，缺样显示「—」。本端带宽只显示浏览器实际媒体上行和下行。各采样窗口可能略有错位，缺失样本使用 null。 云端压缩在源就绪时启动，结束发布或恢复原始转发时停止。本端以 sendonly 发布，本机预览使用摄像头或屏幕轨道。
 
 观看端对 `/meetings/{id}/streams/{streamId}/whep` 提交 recvonly SDP，HTTP 200 返回 SDP answer。DELETE 同一路径只释放该浏览器的观看连接。订阅自己的流返回 HTTP 403，reason 为 `forbidden`。

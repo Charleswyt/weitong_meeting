@@ -1,5 +1,5 @@
-// 主画面那一路的「原始速率 / 压缩比 / 节省带宽」口径收口在这一处：
-// 悬浮统计条（InMeetingView）与侧栏会议信息卡（MainLayout）共用，禁止两处各算一遍。
+// 中卫通公网会议的 cloudCompressionText 格式化媒体服务返回的逐路倍率。
+// 以下说明适用于旧媒体适配器使用的 compressionView。
 //
 // 口径照三方**两个**页面的实现逆向而来 —— 取证副本 `../../scratch/tp-meeting.js`（会议页，下称 tp，
 // 副本哈希 `9f519d23a7358482`）与工作区根 `scratch/app.js`（流媒体看板，下称 app）。
@@ -46,8 +46,6 @@
 export type RateBasis = 'ingress' | 'egress'
 
 export interface CompressionInput {
-  videoStats?: { decodedFrameKbps: number | null; publishKbps: number | null; cloudOutputKbps: number | null }
-  receivedVideoKbps?: number | null
   sourceKbps: number
   transmittedKbps: number
   /** 必填、**没有默认值**：漏了编译不过，免得新接一路时静默按跨腿算出一个看着合理的倍率。 */
@@ -106,6 +104,13 @@ export function rateText(kbps: number | null | undefined): string {
   const v = Number(kbps)
   if (!(v > 0)) return '—'
   return v >= 1000 ? (v / 1000).toFixed(2) + ' Mbps' : v.toFixed(2) + ' kbps'
+}
+
+/** The independent public meeting reports a rounded ratio per publication. */
+export function cloudCompressionText(mode?: string, ratio?: number | null): string {
+  if (mode === 'original') return DIRECT_TEXT
+  return mode === 'cloud' && typeof ratio === 'number' && Number.isFinite(ratio) && ratio > 0
+    ? ratio.toFixed(2) + '×' : '—'
 }
 
 export function measuredRateText(value: number | null | undefined): string {
@@ -167,21 +172,6 @@ export function compressionView(i: CompressionInput): CompressionView {
     sourceKbps, transmittedKbps, basis,
     compressionKind = 'unknown', reportedRatio = 0, reportedEstimate = false,
   } = i
-  if (i.videoStats) {
-    const { decodedFrameKbps, publishKbps, cloudOutputKbps } = i.videoStats
-    const received = i.receivedVideoKbps != null && i.receivedVideoKbps > 0
-    const output = received ? i.receivedVideoKbps! : cloudOutputKbps
-    const direct = compressionKind === 'none'
-    const ratio = !direct && publishKbps != null && publishKbps > 0 && output != null && output > 0
-      ? publishKbps / output : null
-    return {
-      rawText: measuredRateText(decodedFrameKbps),
-      ratioText: direct ? DIRECT_TEXT : ratio == null ? '—' : ratio.toFixed(2) + '×',
-      savedText: ratio == null ? '—' : (Math.max(0, 1 - 1 / ratio) * 100).toFixed(1) + '%',
-      basisText: direct ? '原始转发' : received ? '发布端视频上行 ÷ 本端视频实收' : '发布端视频上行 ÷ 云端视频输出',
-      compressed: ratio != null, applicable: !direct, summaryText: direct ? DIRECT_SUMMARY : '',
-    }
-  }
   const basisText = basis === 'ingress' ? BASIS_INGRESS_TEXT : BASIS_EGRESS_TEXT
   // 判了"没二次压缩"的那一路，三方连原始码率都不报（直接 return 那句直传）——
   // 这一组量对它不适用，不是它缺数。这一支**先于 basis**：直传那一路没有"两个数"可谈论。

@@ -320,7 +320,7 @@ components:
       required: [decodedFrameKbps, publishKbps, viewerCount, publicEgressKbps, captureFps, publishFps, cloudInputFps, cloudOutputFps, cloudInputKbps, cloudOutputKbps]
       properties:
         decodedFrameKbps: { type: [number, "null"], description: 发布端解码后可见画面的像素数据率，按实际视频帧的字节数计算（kbps），无支持或缺样为 null }
-        publishKbps: { type: [number, "null"], description: 发布端 WebRTC 实际发送的视频 RTP 有效载荷（kbps），Ocean 压缩比的分子 }
+        publishKbps: { type: [number, "null"], description: 发布端 WebRTC 实际发送的视频 RTP 有效载荷（kbps） }
         viewerCount: { type: integer, minimum: 0, description: 该路云端输出上的 WebRTC 观看连接数 }
         publicEgressKbps: { type: [number, "null"], description: 该路实际公网媒体下行合计（kbps），无人接收时为零 }
         captureFps: { type: [number, "null"], description: 浏览器采集源实测帧率（fps） }
@@ -346,13 +346,13 @@ components:
         height: { type: integer, x-source: meeting_state.go:43 }
         fps: { type: integer, description: 中卫通会议返回云端输出实测帧率的四舍五入整数，缺样为 0。完整精度与缺样状态见 videoStats。, x-source: meeting_state.go:44 }
         sourceBitrateKbps: { type: integer, description: 中卫通独立会议的兼容字段取整后的云端视频输入。发布端上行和解码后数据率见 videoStats。缺样为 0。, x-source: meeting_state.go:45 }
-        ingressBitrateKbps: { type: integer, description: '这一路**进入分发面时实测到的出站码率**，与 sourceBitrateKbps 在同一条腿上：分子是发布端编码器输出、这个数是平台侧实测的出站。本端那一路的压缩比分母就是它（三方 ownRows 也是这么分的；remoteRows 传的是裸的本机接收速率，本来就跨腿）。取不到即 0，前端显示"统计中"，**不许拿本端下行接收速率顶上去** —— 那是另一条腿的数，混进来倍率就没有意义。实测边界：没有真媒体在流时服务端量不出这个数，恒为 0。不加 omitempty，与 sourceBitrateKbps 同策略', x-source: meeting_state.go:49 }
+        ingressBitrateKbps: { type: integer, description: '兼容字段。中卫通公网会议返回取整后的该路云端输出码率，未取得时为 0。公网视频压缩比由服务端通过 compressionRatio 给出。', x-source: meeting_state.go:49 }
         transportMode: { type: string, enum: [original, cloud] }
         encodingStrategy: { type: string, enum: [source_frames, bandwidth_first, optimized] }
         revision: { type: integer, description: 输出版本变化时重新协商接收端 WHEP }
         targetBitrateKbps: { type: integer, description: 云端编码目标码率 }
         compressionKind: { type: string, enum: [none, edgeRoi, cloudSoftwareRoi, unknown], description: '报不报压缩倍率以它为准。none = 这一路没经过二次压缩，"压缩前/压缩后"那组量对它**不适用**（不是缺数），界面该合成一句"直传"而不是摆空值', x-source: meeting_state.go:52 }
-        compressionRatio: { type: number, description: '三方在该路发布记录里直接上报的压缩倍率（transportMetrics.compressionRatio）：本端两个数凑不出倍率时的退路，口径同三方 compressionText。omitempty，缺键或 0 = 三方没给，前端显示"统计中"，不许拿派生值冒充。带小数原样传（取整会把 2.31 倍说成 2 倍）', x-source: meeting_state.go:55 }
+        compressionRatio: { type: number, description: '中卫通公网会议使用该路 videoStats.cloudInputKbps / videoStats.cloudOutputKbps，发布与观看端读取相同的服务端结果。两项均为正且开启云端压缩时给出倍率，保留两位小数。直传和缺样时省略。其他媒体适配器返回其上报值。', x-source: meeting_state.go:75 }
         compressionEstimated: { type: boolean, description: '上面那个倍率是三方估算而非实测 —— 界面要照实标"估算"（omitempty）', x-source: meeting_state.go:57 }
         videoCodec: { type: string, enum: [h264, hevc, vp8, vp9, av1, ''], x-source: meeting_state.go:56 }
         videoChannel: { type: string, enum: [direct, lanWhep, cloudWhep], description: '视频腿走哪条通道，前端按它选播放器，不靠错误文案猜：cloudWhep=中卫通公网 WHEP；direct=GET endpoints.video（直连压缩流）；lanWhep=POST /streams/{streamId}/whep（船端局域网 WHEP，只有边端实例会签）。缺键 = 上游有视频但本实例一条腿都接不通（如云端实例收到只给 RK 通道的发布）。omitempty', x-source: meeting_state.go:60 }
@@ -1721,8 +1721,8 @@ paths:
       description: >-
         网页按 publicationId 每两秒分别上报摄像头和共享屏幕的采样，REST 与 WS telemetry 使用相同的 items。
         中卫通独立会议的 decodedFrameKbps 来自解码后可见帧的字节数，publishKbps 来自本路 outbound-rtp.bytesSent 增量。
-        服务端按发布身份校验。云端视频输出即使无人观看也持续可测。发布端压缩比采用 publishKbps / cloudOutputKbps，
-        观看端优先使用本机同一路视频实收作分母。原始转发显示直传。缺样传 null，实测零传 0。
+        服务端按发布身份校验。本端传输状态显示浏览器实测上行和下行。
+        云端压缩比独立取自同一路视频的 cloudInputKbps / cloudOutputKbps，并可在无人观看时持续计算。
       x-source: backend/internal/cmd/cmd.go:148 + controller/meeting/meeting.go:1515
       parameters:
         - { name: id, in: path, required: true, schema: { type: integer, format: int64 }, x-source: api/v1/meeting.go:298 }

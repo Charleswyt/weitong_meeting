@@ -115,35 +115,14 @@
           <span class="device-value">{{ meetingDurationText }}</span>
         </div>
         <div class="device-row">
-          <span class="device-label">发送速率</span>
+          <span class="device-label">本端媒体上行</span>
           <span class="device-value">{{ measuredRateText(meetingStore.mediaStats?.upKbps) }}</span>
         </div>
         <div class="device-row">
-          <span class="device-label">接收速率</span>
+          <span class="device-label">本端媒体下行</span>
           <span class="device-value">{{ measuredRateText(meetingStore.mediaStats?.downKbps) }}</span>
         </div>
-        <div v-if="meetingStore.mediaStats?.lineReading" class="sidebar-line">
-          <b>{{ meetingStore.mediaStats.lineReading.name }}</b>
-          <VideoLineRates compact :reading="meetingStore.mediaStats.lineReading" />
-        </div>
-        <div v-else-if="!focusCompression.applicable" class="device-row" :title="focusCompressionTip">
-          <span class="device-label">压缩</span>
-          <span class="device-value">{{ focusCompression.summaryText }}</span>
-        </div>
-        <template v-else>
-          <div class="device-row" :title="focusCompressionTip">
-            <span class="device-label">原始速率</span>
-            <span class="device-value">{{ focusCompression.rawText }}</span>
-          </div>
-          <div class="device-row" :title="focusCompressionTip">
-            <span class="device-label">节省带宽</span>
-            <span class="device-value">{{ focusCompression.savedText }}</span>
-          </div>
-          <div class="device-row" :title="focusCompressionTip">
-            <span class="device-label">压缩比</span>
-            <span class="device-value">{{ focusCompression.ratioText }}</span>
-          </div>
-        </template>
+
       </div>
 
       <div class="sidebar-footer">
@@ -248,8 +227,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { assetUrl } from '@/utils/request'
 import { playbackResumePath } from '@/utils/playbackResume'
-import VideoLineRates from '@/components/VideoLineRates.vue'
-import { compressionView, measuredRateText } from '@/utils/compression'
+import { measuredRateText } from '@/utils/compression'
 import { ensureStoragePersisted } from '@/utils/localRecorder'
 import { ensureRecordingsRecovered } from '@/utils/recordingRecovery'
 import { useUserStore } from '@/store/user'
@@ -362,42 +340,6 @@ const deviceState = computed(() => ({
 // 「会议信息」是**会中页**的东西，不是"账号在某场会里"的东西：
 // 会中用户切到设置/录制/所有会议时，原型那几页的侧栏底部同样是设备状态卡。
 const showMeetingInfo = computed(() => meetingStore.inMeeting && route.name === 'InMeeting')
-
-// 速率与时长都取会中页实测/服务端真值，没测到就显示"—"，不显示 0 冒充"没有流量"。
-// **速率文本只有一处实现**：`utils/compression.ts` 的 `rateText`（同 `rateTextCompact`）。
-// 这里曾自己写 `toFixed(0)+' kbps'`，与顶栏那份、与 `rateText` 共三份 —— 同一个数于是
-// 在顶栏写「384 kbps」、在这张卡里写「384.15 kbps」，看起来像两个数。
-
-// 第8项：原始速率/节省带宽/压缩比 = 主画面那一路的三项，算法与来源说明都在 utils/compression
-// 与会中页各持一处，这里只照抄展示，不重复实现第二套（第 26 项：两处各算就会各说一套）。
-const focusCompression = computed(() => {
-  const ms = meetingStore.mediaStats
-  return compressionView({
-    videoStats: ms?.videoStats,
-    sourceKbps: ms?.focusRawKbps ?? 0,
-    transmittedKbps: ms?.focusCompressedKbps ?? 0,
-    basis: ms?.focusBasis ?? 'egress',
-    compressionKind: ms?.focusCompressionKind ?? 'unknown',
-    reportedRatio: ms?.focusReportedRatio ?? 0,
-    reportedEstimate: ms?.focusReportedEstimate === true,
-  })
-})
-const focusCompressionTip = computed(() => {
-  const ms = meetingStore.mediaStats
-  if (!ms) return '等待该路媒体帧到达'
-  if (ms.videoStats) return '阿里云分发前后的视频有效载荷，使用同一路流的实测值'
-  // 不适用与"还没到"是两句话，混成一句就会让人以为这一路坏了。
-  if (!focusCompression.value.applicable) return '主画面那一路：没有额外压缩，所以没有「压缩前/压缩后」两个数可报'
-  if (ms.focusRawKbps <= 0 && ms.focusCompressedKbps <= 0) return '等待该路媒体帧到达'
-  const ratioPart = focusCompression.value.compressed
-    ? '压缩比 = 原始 ÷ 压缩后；节省带宽 = 1 − 压缩后 ÷ 原始。' + focusCompression.value.basisText
-    // 同侧那一路（自己发布的那一路）不是"没有压缩收益"，而是**这一格不报倍率**：
-    // 两个数都在发布侧且分母是瞬时出站量，抖动到会倒挂。别把它说成"按直传显示"，那是另一回事。
-    : ms.focusBasis === 'ingress'
-      ? '这一格不报倍率：' + focusCompression.value.basisText
-      : '这一路没有压缩收益，按直传显示'
-  return `主画面那一路：${ms.focusRawTitle}；${ratioPart}`
-})
 
 // computed 里的 Date.now() 不是响应依赖，会中时长会停在第一次渲染值；
 // 会中信息卡可见时每秒推一次 nowTick，让时长跟着走。
@@ -649,8 +591,6 @@ async function onUserCommand(cmd: string) {
   border-top: 1px solid var(--border-color);
 }
 
-.sidebar-line { border-top: 1px solid var(--border-color); margin-top: 8px; padding-top: 8px; }
-.sidebar-line > b { display: block; margin-bottom: 6px; font-size: 12px; color: var(--text-primary); }
 .device-status {
   overflow-y: auto; min-height: 0;
   margin: 0 16px 12px;

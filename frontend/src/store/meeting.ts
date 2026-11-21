@@ -12,7 +12,6 @@ import {
   type StreamVo,
 } from '@/api/meeting'
 import { ApiError } from '@/utils/request'
-import type { RateBasis } from '@/utils/compression'
 import router from '@/router'
 
 // 会议态的唯一真源：入会成功才置位，离会/会议结束/WS 长期断开即清除。
@@ -41,32 +40,8 @@ export const useMeetingStore = defineStore('meeting', () => {
   const streams = computed<StreamVo[]>(() => state.value?.streams || [])
   const self = computed(() => participants.value.find((p) => p.id === participantId.value) || null)
 
-  // 侧栏「会议信息卡」的数据源：速率由会中页实测后写入（getStats / 播放器回调），
-  // 不在 store 里造默认值 —— 没测出来就是空，卡片显示「—」。
-  // focusRawKbps / focusCompressedKbps 是**主画面那一路**的原始/压缩后速率（kbps），
-  // 原始速率/压缩比/节省带宽三项由 utils/compression 统一换算（与会中悬浮统计条同一口径），
-  // 帧还没到时是 0 —— 消费方必须显示 —，不得当成"速率为 0"。
-  // focusRawTitle 是「原始速率这个数从哪来」的一句话说明：只有会中页知道自己聚焦的是本端
-  // 还是某一路远端，所以那句话由它写，侧栏照抄 —— 口径说明也只许有一处持有（第 26 项）。
-  const mediaStats = ref<{
-    upKbps: number
-    downKbps: number
-    cameraUpKbps: number
-    micUpKbps: number
-    lineReading?: import('@/utils/videoDelivery').VideoLineReading
-    videoStats?: StreamVo['videoStats']
-    focusRawKbps: number
-    focusCompressedKbps: number
-    focusRawTitle: string
-    /** 主画面那一路的压缩类型，直接取后端 streams[].compressionKind（口径只有一处判读） */
-    focusCompressionKind: string
-    /** 三方在该路发布记录里直接上报的压缩倍率（本端两个数凑不出倍率时的退路）；0 = 没给。 */
-    focusReportedRatio: number
-    /** 上面那个倍率是三方估算而非实测，界面要标出来。 */
-    focusReportedEstimate: boolean
-    /** 压缩后这个数量在哪条腿，由会中页经 `pickTransmittedKbps` 定，侧栏只照抄。 */
-    focusBasis: RateBasis
-  } | null>(null)
+  // Browser media rates for the meeting sidebar.
+  const mediaStats = ref<{ upKbps: number; downKbps: number } | null>(null)
 
   function setMediaStats(v: typeof mediaStats.value) {
     mediaStats.value = v

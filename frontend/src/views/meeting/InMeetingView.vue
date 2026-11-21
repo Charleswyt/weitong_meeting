@@ -197,35 +197,31 @@
                  「总上行速率 / 1.25 Mbps」，宫格与成员面板才是「↑1.25Mbps ↓3.82Mbps」。
                  宫格那一行后面还跟着这路的分辨率与帧率（摄像头关了则标「仅音频」）。 -->
             <div v-if="r.strip" class="im-tile-rate">
-              <span class="im-rate-col"><i>总上行速率</i><b>{{ rateText(r.upKbps) }}</b></span>
+              <span class="im-rate-col"><i>总上行速率</i><b>{{ measuredRateText(r.upKbps) }}</b></span>
               <span class="im-rate-col"><i>总下行速率</i><b>{{ measuredRateText(r.downKbps) }}</b></span>
             </div>
             <div v-else class="im-tile-rate">
               <span>↑{{ rateTextCompact(r.upKbps) }}</span><span>↓{{ rateTextCompact(r.downKbps) }}</span>
-              <em v-if="layout === 'grid' && specText(r)" class="im-tile-spec">{{ specText(r) }}</em>
+              <em v-if="layout === 'grid' && !r.isSelf && specText(r)" class="im-tile-spec">{{ specText(r) }}</em>
             </div>
             <!-- 采不到轨（设备被占用）是真故障，要盖在名牌上说清楚，别装作黑帧正常。 -->
             <span v-if="r.isSelf && selfIssueText" class="im-off">{{ selfIssueText }}</span>
             <span v-else-if="r.error" class="im-off">{{ r.error }}</span>
           </div>
           <div v-if="r.speaking" class="im-speaking" />
-          <!-- 主画面统计条（原型「主画面统计条」，第3项）：只挂在主画面那一个窗格内部，
-               贴在它下沿、不越过窗格边界；鼠标划过从下往上浮出，10 秒后自动收回。
-               第2项：远端那一格的原始速率/压缩比/节省带宽按契约 ADR-0007 口径实测推导，不再恒为 —。 -->
-          <!-- 主画面悬浮条只留现场可读信息；原始速率/压缩比/节省带宽改放到「传输状态」面板。 -->
           <div v-if="isMainTile(r) && (focusStat || focusedIsSelf)" class="im-statbar" :class="{ open: statBarOpen }">
-            <div class="im-statbar-item"><span class="k">参会者</span><span class="v">{{ focusNameText }}</span></div>
-            <div class="im-statbar-item"><span class="k">分辨率</span><span class="v">{{ focusResolutionText }}</span></div>
-            <div class="im-statbar-item"><span class="k">{{ focusSourceStream?.videoStats ? '云端输出帧率' : '帧率' }}</span><span class="v">{{ focusFpsText }}</span></div>
-            <div class="im-statbar-item" :title="focusSourceStream?.videoStats ? '阿里云分发路径实测视频码率' : '当前视频码率'">
-              <span class="k">视频输出码率</span><span class="v">{{ focusCompressedText }}</span>
-            </div>
-            <div class="im-statbar-item" :title="focusDelayTitle">
-              <span class="k">相对帧延迟</span><span class="v">{{ focusDelayText }}</span>
-            </div>
-            <div class="im-statbar-item" :title="focusAvSyncTitle">
-              <span class="k">播放音画差</span><span class="v">{{ focusAvSyncText }}</span>
-            </div>
+            <template v-if="focusedIsSelf">
+              <div class="im-statbar-item"><span class="k">本端媒体上行</span><span class="v">{{ uplinkText }}</span></div>
+              <div class="im-statbar-item"><span class="k">本端媒体下行</span><span class="v">{{ downlinkText }}</span></div>
+            </template>
+            <template v-else>
+              <div class="im-statbar-item"><span class="k">参会者</span><span class="v">{{ focusName }}</span></div>
+              <div class="im-statbar-item"><span class="k">分辨率</span><span class="v">{{ focusResolution }}</span></div>
+              <div class="im-statbar-item"><span class="k">接收帧率</span><span class="v">{{ focusFps }}</span></div>
+              <div class="im-statbar-item"><span class="k">视频实收</span><span class="v">{{ measuredRateText(videoDown[statStreamId]) }}</span></div>
+              <div class="im-statbar-item" :title="focusDelayTitle"><span class="k">相对帧延迟</span><span class="v">{{ focusDelayText }}</span></div>
+              <div class="im-statbar-item" :title="focusAvSyncTitle"><span class="k">播放音画差</span><span class="v">{{ focusAvSyncText }}</span></div>
+            </template>
           </div>
         </div>
         </div><!-- /im-stage-group -->
@@ -278,40 +274,13 @@
       <aside v-if="dock === 'stats'" class="im-dock im-stats">
         <header class="im-dock-head"><b>传输状态</b><button class="im-x" title="关闭" @click="dock = 'none'"><i class="ri-close-line" /></button></header>
         <div class="im-stats-body">
-          <div class="im-stats-grid">
-            <div><span class="k">本端媒体上行</span><span class="v">{{ uplinkText }}</span></div>
-            <div><span class="k">本端媒体下行</span><span class="v">{{ downlinkText }}</span></div>
-            <div><span class="k">会议时长</span><span class="v">{{ durationText }}</span></div>
-            <div><span class="k">连接状态</span><span class="v">{{ wsLabel }}</span></div>
-            <div class="im-net-quality"><span class="k">网络质量</span><span class="v" :title="netTitle">{{ net ? net.label + ' ' + net.rttMs + 'ms' : '检测中' }}</span></div>
-            <div v-if="!lineReading" :title="focusRawTitle"><span class="k">原始速率</span><span class="v">{{ focusRawText }}</span></div>
-            <div v-if="!lineReading" title="压缩比 = 原始速率 ÷ 压缩后速率"><span class="k">压缩比</span><span class="v">{{ focusRatioText }}</span></div>
-            <div v-if="!lineReading" title="节省带宽 = 1 − 压缩后 ÷ 原始"><span class="k">节省带宽</span><span class="v">{{ focusSavedText }}</span></div>
+          <div class="im-stats-grid" aria-label="本端带宽">
+            <div><span class="k">本端媒体上行</span><span class="v" data-rate="up">{{ uplinkText }}</span></div>
+            <div><span class="k">本端媒体下行</span><span class="v" data-rate="down">{{ downlinkText }}</span></div>
           </div>
-          <VideoPathStatus v-if="lineReading" v-model="selectedStatsId" :streams="publicLines" :reading="lineReading" />
-          <!-- 三种会议模式共用：本端各路上行 + 推流态；压缩明细已上移到上方网格。 -->
-          <div class="im-stats-stream">
-            <div v-if="!lineReading" class="im-stats-row" title="本机摄像头这一路的实际上行速率">
-              <span class="k">摄像头上行</span><span class="v">{{ rateText(cameraUpKbps) }}</span>
-            </div>
-            <div v-if="!lineReading" class="im-stats-row" title="本端编码器当前的实时目标码率">
-              <span class="k">本机编码器目标码率</span><span class="v">{{ cameraTargetKbps > 0 ? cameraTargetKbps + ' kbps' : '—' }}</span>
-            </div>
-            <div v-if="!lineReading" class="im-stats-row" title="本端编码器实测输出帧率">
-              <span class="k">实际帧率</span><span class="v">{{ cameraFps > 0 ? Math.round(cameraFps) + ' fps' : '—' }}</span>
-            </div>
-            <div v-if="!lineReading" class="im-stats-row" title="报给平台并实际发布的规格">
-              <span class="k">采集协商规格</span><span class="v">{{ publishSpecText }}</span>
-            </div>
-            <div class="im-stats-row" title="麦克风这一路上行速率">
-              <span class="k">麦克风上行</span><span class="v">{{ rateText(micUpKbps) }}</span>
-            </div>
-            <div v-if="sharing" class="im-stats-row" title="屏幕共享这一路上行速率">
-              <span class="k">共享上行</span><span class="v">{{ rateText(screenUpKbps) }}</span>
-            </div>
-            <div class="im-stats-row" :class="{ 'is-warn': publishFaulty }" title="本机推流连接的状态">
-              <span class="k">推流状态</span><span class="v">{{ publishLabelOf(publishState) }}</span>
-            </div>
+          <VideoPathStatus v-if="statsLine" v-model="selectedStatsId" :streams="publicLines" :selected="statsLine" :self-id="myId" />
+          <div v-else-if="focusSourceStream?.video && !focusSourceStream.transportMode && !focusSourceStream.videoStats" class="im-stats-row">
+            <span class="k">压缩比</span><span class="v">{{ legacyCompressionRatio }}</span>
           </div>
         </div>
       </aside>
@@ -468,9 +437,8 @@ import {
   type DesiredTrack,
 } from '@/utils/recordingSession'
 import VideoPathStatus from '@/components/VideoPathStatus.vue'
-import { compressionView, fpsText, measuredRateText, pickTransmittedKbps, rateText, rateTextCompact } from '@/utils/compression'
+import { compressionView, fpsText, measuredRateText, pickTransmittedKbps, rateTextCompact } from '@/utils/compression'
 import type { BrowserVideoSample } from '@/utils/videoObservations'
-import { publicVideoSpec } from '@/utils/videoSpec'
 import { findAudioMateId } from '@/utils/avMate'
 import { loadMediaPlayer, authHeaders, type MediaPlayer, type MediaStreamPlayer, type MediaFrame } from '@/utils/mediaPlayer'
 import {
@@ -592,10 +560,8 @@ const micMissing = ref(false)
 const selfVideoLive = ref(false)
 let selfLiveCleanup: (() => void) | null = null
 const sharing = ref(false)
-const elapsedMs = ref(0)
 const isFullscreen = ref(false)
 const net = ref<(NetProbe & { label: string; level: string }) | null>(null)
-let ticker: number | null = null
 let rateTimer: number | null = null
 let netTimer: number | null = null
 let retryTimer: number | null = null
@@ -882,16 +848,8 @@ function tileAvatarSrc(r: MemberRow): string {
   return avatarSrcFor(avatarKeyOf(r), r.avatar)
 }
 
-// 原型宫格每一格的名字行后面跟着这路的「分辨率 · 帧率」（18_meeting_grid.png：
-// 张三 920×1080p · 30 fps、李四 1920×1080p · 30 fps），关摄像头那位标「摄像头关闭 · 仅音频」。
-// 取的都是真实测到的值：远端取自帧头会话描述，本端取自轨道 settings；
-// 一帧都没收到时宁可留空，也不摆一个推断出来的数。
 function specText(r: MemberRow) {
   if (!r.cameraOn) return '摄像头关闭 · 仅音频'
-  if (r.isSelf) {
-    const s = selfVideoSpec.value
-    return s ? `${s.w}×${s.h}p · ${s.fps} fps` : ''
-  }
   const st = r.streamId ? streamStats.value[r.streamId] : null
   return st && st.w && st.h ? `${st.w}×${st.h}p · ${Math.round(st.fps)} fps` : ''
 }
@@ -964,8 +922,6 @@ const shareTrackLabel = computed(() => {
 // 上下行速率全部本地实测：上行取 RTCPeerConnection.getStats 的 outbound-rtp 字节增量，
 // 下行取三方播放器回吐的接收速率。平台不提供任何码率统计端点。
 const cameraUpKbps = ref(0)
-// 本机编码器目标码率（getStats targetBitrate），只有发送端拿得到。
-const cameraTargetKbps = ref(0)
 const micUpKbps = ref(0)
 const screenUpKbps = ref(0)
 // 实测帧率（outbound-rtp 的 framesPerSecond）。此前上报遥测时这一位硬写 0，
@@ -990,7 +946,6 @@ const statusLabel = computed(() => {
   return map[s] || s
 })
 const statusClass = computed(() => (meetingStore.state?.status === 'running' ? 'im-badge-run' : 'im-badge-idle'))
-const wsLabel = computed(() => (ws.connected.value ? '已连接' : '连接中断'))
 const publishState = ref('')
 const screenPublishState = ref('')
 // 判据与 title 同源（`utils/publishState.ts`）：以前这里是 `=== 'connected'`，
@@ -1005,15 +960,6 @@ const netTitle = computed(() =>
     ? `到本系统后端的实测往返（${net.value.samples} 次采样中位数），不代表卫星链路质量`
     : '网络探测失败',
 )
-
-const durationText = computed(() => {
-  const total = Math.floor(elapsedMs.value / 1000)
-  const h = Math.floor(total / 3600)
-  const m = Math.floor((total % 3600) / 60)
-  const sec = total % 60
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return h > 0 ? `${pad(h)}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`
-})
 
 const selfStyle = computed(() => ({
   transform: media.prefs.value?.mirrorVideo ? 'scaleX(-1)' : '',
@@ -1163,8 +1109,6 @@ async function probeNet() {
 }
 
 function startTicker() {
-  tickClock()
-  ticker = window.setInterval(tickClock, 1000)
   rateTimer = window.setInterval(sampleFocusRate, 1000)
   // 订阅失败的腿必须自己再来一次：attachRemoteStreams 只由 streams 列表变化驱动，
   // 对端稳定在播时列表不再变 —— 一次 502 之后那块瓦片就永远黑着（实测 2026-10-10 21:07）。
@@ -1173,18 +1117,6 @@ function startTicker() {
   // 码率遥测必须是**周期的**、不能挂在 watch 上：watch 只在值变化时触发，值恰好不变就漏报，
   // 而三方只认 4 秒内的新鲜样本。
   telemetryTimer = window.setInterval(() => void pushTelemetry(), 2000)
-}
-
-// 时长以服务端开会时刻为起点，页面刷新不会归零。
-function tickClock() {
-  const startedAt = meetingStore.state?.startedAt
-  if (!startedAt) {
-    elapsedMs.value = 0
-    return
-  }
-  const start = new Date(startedAt).getTime()
-  const now = ws.serverTime.value || Date.now()
-  elapsedMs.value = Math.max(0, now - start)
 }
 
 async function attachSelfMedia() {
@@ -1298,7 +1230,7 @@ async function publishCamera(): Promise<boolean> {
     onVideoSample: sample => { cameraSample.value = sample },
     mediaLabel: (vt.label || '本页摄像头').slice(0, 128),
     onState: (s) => (publishState.value = s),
-    onRate: (kbps, targetKbps, fps) => { cameraUpKbps.value = kbps; cameraTargetKbps.value = targetKbps; cameraFps.value = fps },
+    onRate: (kbps, _targetKbps, fps) => { cameraUpKbps.value = kbps; cameraFps.value = fps },
     onBytes: (b) => (uplinkBytes.value = b),
   })
   // 每次发布都会新建 publicationId；人脸框必须跟着绑到新发布上。
@@ -1360,12 +1292,7 @@ async function pushMediaState() {
   }
 }
 
-// 「原始速率」的唯一真源是**发布端自己实测上报**：订阅端算不出压缩前的编码码率，
-// 只能读服务端把这份上报转发成的该路 `transportMetrics.sourceVideoBitrateKbps`。
-// 摄像头与屏幕共享是两个独立发布，**逐路各报一条**（三方按 publicationId 分别存）——
-// 只报摄像头，"看别人共享屏幕"那一格就永远停在统计中。
-// 没测到（<=0）整条不进数组：发 0 会被上游当成"实测到 0"，比缺数更坏；
-// 后端 `UpdateSourceTelemetry` 还有同一道过滤，两条通道共用一条规则。
+// 摄像头和共享屏幕各自上报浏览器端的采集与发送样本，供接口调试。
 function telemetryItems(): TelemetryItem[] {
   const items: TelemetryItem[] = []
   const cam = whip.publicationIdOf()
@@ -1393,10 +1320,7 @@ function telemetryItems(): TelemetryItem[] {
   return items
 }
 
-// 2 秒一次：三方只认 4 秒内的新鲜样本，丢一次仍在门内。
-// 〔硬规则〕**不得只走 WS** —— WS 未连上/重连窗口里 send 是静默丢弃的（理由同 pushMediaState），
-// 而这一项一丢就是**所有订阅者**（含三方自家页面）永远停在「原始码率统计中」。
-// 两条通道共用同一份 payload，正确性以 REST 为准；WS 那条是冗余。
+// 每两秒通过 REST 和 WebSocket 上报同一批样本，覆盖 WebSocket 重连窗口。
 async function pushTelemetry() {
   const items = telemetryItems()
   if (!items.length) return
@@ -1808,8 +1732,6 @@ async function endAll() {
 }
 
 function stopTicker() {
-  if (ticker !== null) clearInterval(ticker)
-  ticker = null
   if (rateTimer !== null) clearInterval(rateTimer)
   rateTimer = null
   if (statBarTimer !== null) window.clearTimeout(statBarTimer)
@@ -2239,7 +2161,6 @@ const downlinkKbps = computed(() => subscribableStreams.value.reduce((total, str
   total + (stream.active ? (videoDown.value[stream.id] ?? 0) + (audioDown.value[stream.id] ?? 0) : 0), 0))
 const downlinkText = computed(() => measuredRateText(downlinkKbps.value))
 
-// 侧栏「会议信息卡」的数据源由下方 focusCompression 一带统一写入（含主画面三项派生口径）。
 
 // 传输状态：全部来自播放器真实回调（onFrame 的 PTS+session、onTraffic 的字节、WHEP 的 getStats），
 // 三方无码率/延迟端点。采集时间 = session.baseUnixNs + **微秒** PTS（帧在采集端的墙钟；
@@ -2392,73 +2313,10 @@ const focusResolution = computed(() => {
   const s = focusStat.value
   return s && s.w && s.h ? s.w + '×' + s.h : '—'
 })
-const focusFps = computed(() => (focusStat.value?.fps ? Math.round(focusStat.value.fps) + ' fps' : '—'))
+const focusFps = computed(() => fpsText(focusStat.value?.fps))
 const focusKbps = ref(0)
 
-// 点中自己那一格时，统计条说的是**本端这路发布**，不能借用别人那一路的数字。
-// 第 26 项：原始速率改口径 —— 先前这里拿「采集分辨率 × 帧率 × YUV420 1.5 字节」当原始速率，
-// 那是摄像机**未压缩基线**（1080p30 ≈ 746 Mbps），除上 600 kbps 的实传能得出上千比一，
-// 「节省带宽 99%」就是这么来的。三方会议页不这么算（逆向 assets/meeting.js 的 compressionText）：
-// 原始速率 = 发布方自己 getStats 实测的**编码码率**，且**只有真的存在压缩收益时才报倍率**，
-// 没经过二次压缩的那一路它直接写「直传（无 ROI 二次压缩）」。本端浏览器发布正是直传，
-// 所以原始=实测编码上行、倍率照三方落「直传」，不再编一个夸张数出来。
 const focusedIsSelf = computed(() => statIsSelf.value)
-const selfVideoSpec = computed(() => {
-  const t = selfStream.value?.getVideoTracks().find((x) => x.readyState === 'live')
-  const s = t?.getSettings()
-  if (!s?.width || !s?.height) return null
-  const spec = publicVideoSpec(s, media.prefs.value?.videoMaxFps)
-  if (!spec.fps) return null
-  return { w: spec.width, h: spec.height, fps: spec.fps }
-})
-// 抽屉只报**实际发布规格**（采集轨实测 + 归一后的档位）。设置页那两格是期望值，
-// 设备给不到时会降级——把期望也摆进来属于画蛇添足：这一格回答的是"现在发的是什么"。
-const publishSpecText = computed(() => {
-  const a = selfVideoSpec.value
-  return a ? `${a.w}×${a.h} @ ${a.fps} fps` : '—'
-})
-const focusNameText = computed(() => (focusedIsSelf.value ? myName.value : focusName.value))
-const focusResolutionText = computed(() => {
-  if (!focusedIsSelf.value) return focusResolution.value
-  const s = selfVideoSpec.value
-  return s ? s.w + '×' + s.h : '—'
-})
-const focusFpsText = computed(() => {
-  if (focusSourceStream.value?.videoStats) return fpsText(focusSourceStream.value.videoStats.cloudOutputFps)
-  return focusedIsSelf.value ? fpsText(cameraSample.value?.publishFps) : focusFps.value
-})
-
-// 主画面那一路的三项口径（悬浮统计条与侧栏信息卡共用这一处计算）：
-// 远端**优先用三方上报的发布码率** `streams[].sourceBitrateKbps`（契约 ADR-0002 ⑨ 定的顺序），
-// 它没值才退回派生口径（本端取采集轨 settings，远端取该路帧头回吐的实测分辨率/帧率）。
-const focusUpstreamRawKbps = computed(() => {
-  if (focusedIsSelf.value) return 0
-  const s = streams.value.find((x) => x.id === statStreamId.value)
-  return s && s.sourceBitrateKbps > 0 ? s.sourceBitrateKbps : 0
-})
-// 主画面那一路的三项口径（悬浮统计条与侧栏信息卡共用这一处计算）。
-// 原始速率只认**编码码率**这一个真源：本端取自己 getStats 的实测上行，
-// 远端取三方在该路发布记录里上报的 `sourceBitrateKbps`（就是它的 sourceVideoBitrateKbps）。
-// 上报没到（帧还没发/还没同步）就留 —，不再用「分辨率×帧率×1.5 字节」的未压缩基线顶上去 ——
-// 那个数会把压缩比推到几百比一，是第 26 项被指"夸张得像假的"的根因。
-const focusRawFromUpstream = computed(() => !focusedIsSelf.value && focusUpstreamRawKbps.value > 0)
-const focusRawKbps = computed(() => {
-  if (focusSourceStream.value?.videoStats) return focusSourceStream.value.videoStats.decodedFrameKbps ?? 0
-  if (focusedIsSelf.value) return cameraUpKbps.value
-  return focusUpstreamRawKbps.value
-})
-const focusRawTitle = computed(() => {
-  if (focusSourceStream.value?.videoStats) return '发布端解码后可见视频帧的字节数除以采样时间'
-  if (focusedIsSelf.value) return '原始速率 = 本机编码器压缩前实际输出的码率'
-  return focusRawFromUpstream.value
-    ? '原始速率 = 对方设备上报的编码码率'
-    : '对方还没上报编码码率，取到之前不猜'
-})
-// 主画面那一格对应的**服务端那一路**。本端按 ownerId + kind 定位自己发布的那一路
-// （StreamVo.Id 是我方别名 `st_…`，不是三方 publicationId，按 id 找找不到自己）：
-// 判据一律读服务端的 compressionKind，本页不再替它写死 'none' ——
-// 「我自己发的就没有压缩」是假判据：船端浏览器以 rk_browser_roi 发布时，
-// 后端对 browser_whip + cloudSoftwareRoi=true 明确回 cloudSoftwareRoi（types.go 的 CompressionKind）。
 const focusSelfStream = computed(() =>
   focusedIsSelf.value
     ? streams.value.find((x) => x.ownerId === myId.value && x.kind === (sharing.value && shareStream.value ? 'screen' : 'camera'))
@@ -2468,82 +2326,27 @@ const focusSourceStream = computed(() =>
     ? focusSelfStream.value
     : streams.value.find((x) => x.id === statStreamId.value))
 const selectedStatsId = ref('')
-const publicLines = computed(() => streams.value.filter(s => s.videoStats && (s.kind === 'camera' || s.kind === 'screen')))
+const publicLines = computed(() => streams.value.filter(s => s.transportMode && (s.kind === 'camera' || s.kind === 'screen')))
 watch(publicLines, lines => {
   if (selectedStatsId.value && !lines.some(s => s.id === selectedStatsId.value)) selectedStatsId.value = ''
 })
 const statsLine = computed(() => publicLines.value.find(s => s.id === selectedStatsId.value)
-  ?? (focusSourceStream.value?.videoStats ? focusSourceStream.value : publicLines.value[0]))
-const lineReading = computed(() => {
-  const s = statsLine.value
-  if (!s?.videoStats) return undefined
-  const own = s.ownerId === myId.value
-  const received = !own && s.active ? videoDown.value[s.id] ?? null : null
-  return {
-    name: (own ? '我' : s.ownerName) + ' · ' + (s.kind === 'screen' ? '屏幕共享' : '摄像头'),
-    stats: s.videoStats, own, received, mode: s.transportMode, target: s.targetBitrateKbps, strategy: s.encodingStrategy,
-    compression: compressionView({videoStats: s.videoStats, receivedVideoKbps: received, sourceKbps: 0,
-      transmittedKbps: 0, basis: own ? 'ingress' : 'egress', compressionKind: s.compressionKind}),
-  }
+  ?? publicLines.value.find(s => s.id === focusSourceStream.value?.id) ?? publicLines.value[0])
+// Older media adapters report per-endpoint rates in their original format.
+const legacyCompressionRatio = computed(() => {
+  const stream = focusSourceStream.value
+  if (!stream) return '—'
+  const measurement = pickTransmittedKbps({ isSelfPublished: focusedIsSelf.value,
+    ingressBitrateKbps: stream.ingressBitrateKbps, localReceivedKbps: focusKbps.value })
+  return compressionView({ ...measurement, compressionKind: stream.compressionKind,
+    sourceKbps: focusedIsSelf.value ? cameraUpKbps.value : stream.sourceBitrateKbps,
+    reportedRatio: stream.compressionRatio, reportedEstimate: stream.compressionEstimated }).ratioText
 })
-// 报不报压缩倍率以**后端判好的 compressionKind** 为准，不靠数值大小猜（第 26 项，口径同三方）；
-// 后端还没给出这一路时是 'unknown'，此时才退回数值守卫。
-const focusCompressionKind = computed(() => focusSourceStream.value?.compressionKind || 'unknown')
-// 三方在该路发布记录里直接上报的倍率：本端那两个数（编码码率、实传速率）凑不出倍率时的退路。
-// 报不报倍率仍以 compressionKind 为准，这个数只在 kind 说明确实有压缩时才用（口径同三方 compressionText）。
-const focusReportedRatio = computed(() => focusSourceStream.value?.compressionRatio ?? 0)
-const focusReportedEstimate = computed(() => focusSourceStream.value?.compressionEstimated === true)
-// 压缩后的实测速率没起来之前不做除法：拿 0 当分母只会得出一个假的无穷大。
-// 分母**从哪来**只有 `pickTransmittedKbps` 一处说了算：本端用进入分发面时的实测出站码率（同一条腿），
-// 远端用本机接收速率（跨腿）。本端那一格**不许回落成本机接收速率** —— 那是另一条腿的数。
-const focusTransmitted = computed(() =>
-  pickTransmittedKbps({
-    isSelfPublished: focusedIsSelf.value,
-    ingressBitrateKbps: focusSelfStream.value?.ingressBitrateKbps ?? 0,
-    localReceivedKbps: focusKbps.value,
-  }),
-)
-const focusCompressedKbps = computed(() => focusSourceStream.value?.videoStats ? (focusSourceStream.value.videoStats.cloudOutputKbps ?? 0) : focusTransmitted.value.transmittedKbps)
-const focusBasis = computed(() => focusTransmitted.value.basis)
-const focusCompression = computed(() =>
-  compressionView({
-    videoStats: focusSourceStream.value?.videoStats,
-    receivedVideoKbps: focusedIsSelf.value ? null : videoDown.value[statStreamId.value],
-    sourceKbps: focusRawKbps.value,
-    transmittedKbps: focusCompressedKbps.value,
-    basis: focusBasis.value,
-    compressionKind: focusCompressionKind.value,
-    reportedRatio: focusReportedRatio.value,
-    reportedEstimate: focusReportedEstimate.value,
-  }),
-)
-const focusRawText = computed(() => focusCompression.value.rawText)
-const focusRatioText = computed(() => focusCompression.value.ratioText)
-const focusSavedText = computed(() => focusCompression.value.savedText)
-// 换算收口在 utils/compression 的 rateText（含按量级切换 kbps/Mbps），这里不再自己除一次。
-const focusCompressedText = computed(() => focusSourceStream.value?.videoStats ? measuredRateText(focusSourceStream.value.videoStats.cloudOutputKbps) : rateText(focusCompressedKbps.value))
-// 侧栏「会议信息卡」的唯一数据源：会中页才有实测速率，写进 store 供全站读，离会由 store 清空。
-// 第8项：主画面那一路的原始/压缩后速率也一并写入（原始速率为 0 表示帧还没到，卡片显示 —），
-// 三项的算法与「这个数从哪来」那句说明都不在侧栏重复 —— 口径只持有在这一处。
-watch([uplinkKbps, downlinkKbps, cameraUpKbps, micUpKbps, focusRawKbps, focusCompressedKbps, focusRawTitle, focusBasis, focusSourceStream, lineReading], () => {
-  // 码率遥测不在这里发：那是**周期的**（2 秒一次 `pushTelemetry`，WS + REST 双通道），
-  // 而这条 watch 只在值变化时触发 —— 挂在它上面等于把"三方 4 秒新鲜门"押在"值一定会变"上。
-  meetingStore.setMediaStats({
-    upKbps: uplinkKbps.value,
-    downKbps: downlinkKbps.value,
-    cameraUpKbps: cameraUpKbps.value,
-    micUpKbps: micUpKbps.value,
-    videoStats: focusSourceStream.value?.videoStats,
-    lineReading: lineReading.value,
-    focusRawKbps: focusRawKbps.value,
-    focusCompressedKbps: focusCompressedKbps.value,
-    focusRawTitle: focusRawTitle.value,
-    focusCompressionKind: focusCompressionKind.value,
-    focusReportedRatio: focusReportedRatio.value,
-    focusReportedEstimate: focusReportedEstimate.value,
-    focusBasis: focusBasis.value,
-  })
-})
+
+watch([uplinkKbps, downlinkKbps], ([upKbps, downKbps]) => {
+  meetingStore.setMediaStats({ upKbps, downKbps })
+}, { immediate: true })
+
 // 相对帧延迟 = 以本次播放收到的第一个有效帧为基准的漂移量：本地钟多走了多少、源时间只走了多少，
 // 差出来的就是延迟在长（正）还是在追（负）。
 // 为什么不报"播放时刻 − 采集时刻"那个绝对量：它要采集端墙钟，而局域网 WHEP 这条腿没有我方容器帧头；
@@ -2615,7 +2418,7 @@ const focusAvSyncTitle = computed(() => {
   return `画面播放时刻 − 声音播放时刻${basis}：${Math.abs(r.d) <= 80 ? '基本同步' : r.d > 0 ? '音频早' : '音频晚'}`
 })
 
-// 接收码率只能自己按字节增量算：三方没有码率端点，"压缩后速率"就是这一路真正收到的速率。
+// 旧媒体适配器使用本机播放器字节计数测量所选远端视频的接收速率。
 let ratePrev = { id: '', bytes: 0, at: 0 }
 function sampleFocusRate() {
   const id = focusedStream.value?.id || ''
@@ -2628,7 +2431,6 @@ function sampleFocusRate() {
   }
   if (ratePrev.id === id && now > ratePrev.at && st.bytes >= ratePrev.bytes) {
     // Δbytes*8 ÷ Δms 就是 SI kbit/s（与三方 `samplePeerRates` 的采样公式逐字同形）。
-    // 此前这里又乘 1000 又除 1024，把下行系统性压低 2.4%，而压缩比正是拿它与上行相除。
     focusKbps.value = Math.round(((st.bytes - ratePrev.bytes) * 8) / (now - ratePrev.at))
   }
   ratePrev = { id, bytes: st.bytes, at: now }
@@ -3042,7 +2844,6 @@ onBeforeUnmount(() => {
 .im-stats-body { padding: 0 14px 14px; font-size: 13px; }
 .im-stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
 .im-stats-grid > div { display: flex; flex-direction: column; gap: 2px; padding: 8px; border-radius: var(--radius); background: rgba(127, 127, 127, 0.08); }
-.im-stats-grid > .im-net-quality { grid-column: 1 / -1; flex-direction: row; align-items: baseline; justify-content: space-between; }
 .im-stats-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed var(--border-color); }
 .im-stats .k { color: var(--text-secondary); }
 .im-stats .v { font-variant-numeric: tabular-nums; }
