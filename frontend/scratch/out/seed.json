@@ -1,0 +1,1 @@
+{"stage":"done","seed-camera.webm":{"bytes":1396758,"durSec":6.299},"mic-raw.webm":{"bytes":101639,"durSec":6.24},"id":"local-seed-1","tracks":[{"kind":"camera","hasVideo":true,"hasAudio":false,"dur":6.299,"bytes":1396758},{"kind":"microphone","hasVideo":false,"hasAudio":true,"dur":6.24,"bytes":101639}]}

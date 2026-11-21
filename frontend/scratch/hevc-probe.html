@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>PROBE-WAIT</title></head>
+<body>
+<pre id="out">running</pre>
+<script>
+// 只读探测本机 WebCodecs 能解哪种编码，不采集、不联网、不落任何凭据。
+// 编码清单与参数照抄三方托管播放器 media-player.js 的探测调用，否则测的就不是它那条路。
+const HEVC = ['hev1.1.6.L120.B0', 'hvc1.1.6.L120.B0', 'hev1.1.6.L120.80', 'hvc1.1.6.L120.80', 'hev1.1.6.L93.B0', 'hvc1.1.6.L93.B0']
+const H264 = ['avc1.640028', 'avc1.42E01E', 'avc1.64003E']
+
+async function firstSupported(list, w, h) {
+  for (const codec of list) {
+    try {
+      const r = await VideoDecoder.isConfigSupported({
+        codec, codedWidth: w, codedHeight: h,
+        optimizeForLatency: true, hardwareAcceleration: 'prefer-hardware',
+      })
+      if (r.supported) return codec
+    } catch (e) { /* 这一条不算，接着试下一条 */ }
+  }
+  return ''
+}
+
+async function run() {
+  const lines = []
+  if (!('VideoDecoder' in window) || typeof VideoDecoder.isConfigSupported !== 'function') {
+    lines.push('HEVC-NO webcodecs_absent')
+  } else {
+    for (const [label, list] of [['HEVC', HEVC], ['H264', H264]]) {
+      for (const [w, h] of [[1920, 1080], [1280, 720]]) {
+        const codec = await firstSupported(list, w, h)
+        lines.push(`${label}-${codec ? 'OK' : 'NO'} ${w}x${h} ${codec || '-'}`)
+      }
+    }
+  }
+  const verdict = lines.some((l) => l.startsWith('HEVC-OK')) ? 'HEVC-OK' : 'HEVC-NO'
+  document.getElementById('out').textContent = lines.join('\n')
+  // 标题给 list_pages/navigate_page 读回，正文给 wait_for 读 —— 两条通道都不依赖 evaluate。
+  document.title = `${verdict} ${lines.length}`
+  try {
+    await fetch('http://127.0.0.1:5199/result/hevc-probe', {
+      method: 'POST', mode: 'no-cors', body: lines.join('\n'),
+    }).catch(() => {})
+  } catch (e) { /* sink 没起也不影响标题与正文 */ }
+}
+void run()
+</script>
+</body>
+</html>

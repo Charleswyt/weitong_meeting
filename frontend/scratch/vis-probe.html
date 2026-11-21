@@ -1,0 +1,34 @@
+<!doctype html>
+<!--
+  一次性测量页：回答"Edge 窗口在后台（被别的窗口挡住/未获焦点）时，页面到底还算不算可见、rAF 还走不走"。
+  这决定了「下载合成视频」为什么没起跑：前台预检挡回，还是点击根本没落到按钮上。
+  结论同时写进 document.title（给 navigate_page 读回）和页面正文（给 wait_for 读）。
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>VIS-START</title>
+  </head>
+  <body>
+    <h1 id="a">RAF-PENDING</h1>
+    <script>
+      var st = document.getElementById('a')
+      document.title = 'VIS-' + document.visibilityState
+      st.textContent = 'STATE-' + document.visibilityState + ' hidden=' + document.hidden
+      var frames = 0
+      var t0 = performance.now()
+      function tick() {
+        frames++
+        var elapsed = performance.now() - t0
+        if (elapsed < 1500) {
+          requestAnimationFrame(tick)
+          return
+        }
+        var fps = Math.round((frames / elapsed) * 1000)
+        st.textContent = 'RAF-FRAMES-' + frames + ' FPS-' + fps + ' STATE-' + document.visibilityState
+        document.title = 'RAF-' + frames
+      }
+      requestAnimationFrame(tick)
+    </script>
+  </body>
+</html>

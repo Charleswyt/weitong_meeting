@@ -1,0 +1,154 @@
+# 复制为 config.yaml 后填真实值。config.yaml 含现场凭据，已 gitignore，绝不入库。
+# 取代原先的 .env：GoFrame 的 gdb 原生读 database.default.link，代码里不再有 .env 载入那段 hack。
+#
+# 每个键的作用都写在它自己头上，读这份文件就够了，不必去翻代码。
+# 六项能走环境变量覆盖：DEPLOYMENT_SIDE / SERVER_TIMEZONE / LOGGER_LEVEL /
+# THIRDPARTY_CONFERENCE_BASEURL / AUTH_AUTOLOGIN_ENABLED / AUTH_AUTOLOGIN_USERNAME。
+# 前三项是扁平键，走 gf 的 GetEffective（命令行 > 环境 > 本文件）；
+# 后三项是嵌套键，GetEffective 在这条路上读不到 YAML 值，由代码自己排优先级
+# （thirdparty/adapter.go、service.ResolveAutoLogin）—— 行为一样，仍是环境变量优先于本文件。
+# 其余键用 env 传是无效的，只认这份文件。
+# 监听地址刻意不开放成 env：容器里换对外端口用 -p <宿主端口>:8082 就够了，少一条真源。
+
+server:
+  # 进程监听地址。键名沿用 GoFrame 的 server.address（ghttp 只认这个键，**没有 server.port**）。
+  # 值可以是端口 "8082"、":8082"、"127.0.0.1:8082"，逗号分隔还能多地址监听；
+  # 不带冒号时 gf 自己补 ":"。容器里要换对外端口请用 -p 映射，这一项保持 :8082。
+  # 本机与边端后端同机对拍时改为 ":18082"（见 host-baseline），容器交付仍用 :8082。
+  address: ":8082"
+  # 读超时（请求体/头部读取的上限）。压到 10 秒而不是 GoFrame 默认的 60 秒：
+  # 那 60 秒是用户白等的时间，也是慢连接占坑的窗口。
+  # 写侧刻意不设上限：媒体代理与 WS 是长连接流，一刀切会把回放/订阅在半路掐断。
+  readTimeout: "10s"
+  # OpenAPI 3.0 描述文档的自暴露路径（GET 它拿到全量 JSON），由 gf 按已注册路由自动生成。
+  # 联调与生成前端类型时用；**这条路径不带鉴权**，别把它暴露到公网。
+  openapiPath: "/api.json"
+  # Swagger UI 页面路径，消费上面那份 JSON，给人看的接口页。同 openapiPath，无鉴权。
+  swaggerPath: "/swagger"
+  # 进程时区（SERVER_TIMEZONE 可覆盖）。落库时间戳按这个走，不跟宿主机时区 ——
+  # 边端宿机可能是 UTC，naive 时间被云端读成 +08 就差出 8 小时。
+  # SQLite 的 CURRENT_TIMESTAMP 恒为 UTC，所以时间列一律由 Go 侧写全，别加 DB 默认值。
+  timezone: "Asia/Shanghai"
+
+# 本实例部署在哪一侧（DEPLOYMENT_SIDE 可覆盖）。会中页据此标出参会者来自边端还是云端；
+# 三方没报某个参会者的端点类型（拿不到侧别）时按这一侧显示 —— 本目录是云端应用，默认 cloud。
+deployment:
+  side: "cloud"
+
+# 日志级别：进程日志打到哪一档。取值 all / debug / info / notice / warning / error /
+# critical / alert / emergency（写字符串即可，gf 自己换算）。现场用 info；
+# 排查三方链路或接口问题时临时改 debug，看完改回来。
+# 这一项只管"哪些级别的日志会打出来"；"每条 SQL 连参数都打"由下面 database.default.debug 单独控制。
+logger:
+  level: "info"
+
+database:
+  default:
+    # 驱动名，必须与 main.go 里 blank import 的 gf contrib 驱动一致，否则报 unknown driver。
+    type: "sqlite"
+    # 库文件位置（SERVER_TIMEZONE 之外没有 env 通道，只认这里）。
+    # 边端一个应用一个 .db 文件（shared/TECH_STACK.md 第 12 行定案：宿机不装 DM8），
+    # 文件在 data/ 下且已 gitignore —— 备份/替换/回滚就是拷一个文件。
+    # 形状是 gf sqlite contrib 认的 `sqlite::@file(<路径>)`，`?k=v` 逐项转成 DSN 的 _pragma=k(v)；
+    # 路径按进程工作目录（后端仓根）解析。
+    # WAL + busy_timeout 不是可选项：SQLite 是单写者，会中 cron 与 HTTP 请求并发写会撞 SQLITE_BUSY。
+    # SQLite 没有用户/口令概念 —— 这一项里不再有任何凭据。
+    # 注：将来若把同一份代码部署到云端，按 TECH_STACK 换回达梦 link 并把 dm 驱动加回 blank import，
+    # 别在边端形态下混用。
+    link: "sqlite::@file(data/conference.db)?journal_mode=WAL&busy_timeout=5000"
+    # SQL 日志开关。开成 true 会把执行的 SQL **连参数一起**打进日志 —— 灌口令种子那一步
+    # 就会把明文口令写进日志，所以模板默认 false；本地要调试 SQL 再临时开，别带着 true 上线。
+    debug: false
+
+thirdParty:
+  conference:
+    # 我方后端调用三方会议平台的**唯一地址出口**（internal/service/thirdparty/adapter.go 读它）。
+    # 边端/云端是两套三方平台，换侧只改这一行，代码里不许出现第二个地址。
+    # 三方是自签证书，适配层已跳过 TLS 校验（adapter.go 的 InsecureSkipVerify）——
+    # 那是"能连上"的代价，不是可省的安全设计：换成有正规证书的地址后应把校验收回来。
+    # **容器部署可用环境变量 `THIRDPARTY_CONFERENCE_BASEURL` 覆盖**，不必挂自己的 config.yaml。
+    # 云端：公网会议族 https://47.114.83.151/zwt-meeting/api/v1
+    # 边端船内：仍用 Ocean 根地址（如 https://10.x.x.x:18680），勿混用。
+    baseUrl: "https://47.114.83.151/zwt-meeting/api/v1"
+    # 本端设备的编号（取现场那台设备的 `zwt-device-id`，如 `RK3588-BJ4`）。
+    # 只在这一项配了的时候，边端入会才按 `endpointType=ship` 向三方申报（契约 §8：ship 时 deviceId 必填）；
+    # 空着会回落成岸端申报 —— 三方照我方申报的值记录，界面就会把本端显示成「云」（2026-10-10 实测）。
+    # **可用环境变量 `THIRDPARTY_CONFERENCE_DEVICE_ID` 覆盖**；每台设备不同，别把某台的号写进源码。
+    deviceId: ""
+
+jwt:
+  # 本系统自己签发的登录令牌（Bearer）的签名密钥。
+  # 这个占位串是**故意能被程序认出来的**：镜像把它当内置默认一起打包，
+  # 启动时若仍是这个值会打一条 WARN（见 internal/cmd/config.go），
+  # 因为拿占位串当签名密钥 = 谁都能伪造令牌。挂载自己的 config.yaml 时必须换掉。
+  # 换密钥会让已签发的令牌全部失效（在线用户被踢回登录页），所以只在维护窗口换。
+  secret: "<换成随机串>"
+  # 令牌有效期（小时），缺省按代码里的 24。过期后接口回 401，前端跳登录页。
+  expiresHours: 24
+
+# 登录相关的两组：免登录开关（临时方案）与口令的浏览器侧加密。
+auth:
+  # 免登录（2026-10-08 起的**临时方案**）：开着时打开页面就直接以 username 这个账号进入，
+  # 不再有登录页。想恢复登录只改下面 enabled: false，代码与前端都不用动。
+  #
+  # 为什么这里只有登录名、没有口令：那个账号连三方用的账号口令本来就按用户一行存在
+  # sys_user 表里（种子 field-credentials.sql 已随镜像打包），换入口读的是同一行数据。
+  # 再抄一份口令进配置就是第二个真源，也违反"口令不落进模板"。
+  #
+  # 为什么这件事不能配在前端：前端产物是构建期烘死的，容器运行时的环境变量改不动它，
+  # 所以"这台免不免登录、免的是谁"只能由后端定，前端只向后端要结果。
+  #
+  # 可填的登录名见《账号清单》（docs/账号清单.md，随版交付）。**边云两端不得填同一个账号** ——
+  # 同账号会让两端的日程过滤、录制目录 hxt/{时刻}/{登录账号}/{会议编号}/ 那一段，
+  # 以及三方那条按用户缓存的会话混成一坨。
+  #
+  # 两项都能被环境变量覆盖（AUTH_AUTOLOGIN_ENABLED / AUTH_AUTOLOGIN_USERNAME），环境变量优先；
+  # 环境变量给空串算"没给值"，仍按这里走。
+  #
+  # 风险要认下来：enabled: true 时**任何能连到这个端口的人都是这个账号**，不需要凭据。
+  # 多用户（邮箱登录）时必须 false，否则所有人共用 username 那一套日程/录制/三方令牌。
+  autoLogin:
+    enabled: false
+    username: "wangqiang"
+
+  # 登录口令在浏览器侧用 SM2 加密后送来（避免明文过网），服务端拿这把私钥解。
+  # **留空不是"随机生成一把"**：会改用代码里内置的演示密钥并打 WARN ——
+  # 演示密钥的值公开在仓库里，只够开发用，正式环境必须填现场自己生成的一把。
+  # 与 jwt.secret 同级敏感，只写进 gitignore 的 config.yaml，不要提交真实值。
+  sm2:
+    privateKey: ""
+    # 这把钥匙的版本号：公钥描述里带出去，前端登录时原样带回，不匹配直接拒（不是静默解错）。
+    # 所以换 privateKey 时**同时换 keyId**，让重启前取过旧公钥的页面明确失败、重新取一次。
+    keyId: "v1"
+
+  # 短信验证码通道（手机号登录 / 找回密码）。换通道只改 provider 与对应凭据，业务接口不动。
+  # 默认 console：不真正发短信，验证码进服务端日志，响应里带 debugCode 方便联调。
+  # 换成 smsbao 后填短信宝账号与 ApiKey（https://www.smsbao.com/，新账号有测试额度），正式再换别家也按此形状加实现。
+  # 使用前须给账号绑手机号：UPDATE sys_user SET MOBILE='13800138000' WHERE USERNAME='wangqiang';
+  sms:
+    provider: "console"   # console | smsbao
+    sign: "卫通会议"      # 短信【签名】；短信宝等通道要求正文含签名
+    smsbao:
+      user: "__REPLACE_ME__"
+      apiKey: "__REPLACE_ME__"
+
+  # 邮箱验证码登录 / 自助注册。发件人用 126 等 SMTP；password 是邮箱「客户端授权码」，不是网页登录口令。
+  # 默认 console：验证码进日志并回 debugCode。正式发信用 provider=smtp 并填授权码。
+  # 未注册邮箱：发 login 验证码 → 校验通过后自动建号（本地域账号；无三方口令则 linkSynced=false）。
+  # 也可给既有账号绑邮箱：UPDATE sys_user SET EMAIL='user@example.com' WHERE USERNAME='wangqiang';
+  # 邮箱登录后日程/录制按 userId 隔离。
+  email:
+    provider: "smtp"                # console | smtp（console=验证码进日志并回 debugCode，联调可用）
+    from: "weitongmeeting@126.com"  # 发件地址（须与授权码所属邮箱一致）
+    subject: "卫通会议登录验证码"
+    smtp:
+      host: "smtp.126.com"
+      port: 465                     # SSL
+      user: "weitongmeeting@126.com" # 通常与 from 相同
+      password: "__REPLACE_ME__"    # 126 客户端授权码；只写 gitignore 的 config.yaml，勿入库
+
+# 头像不再有本地目录：字节存库的 sys_user.avatar_data（见 internal/service/avatar.go、
+# contracts/api-contract.md §6.9），出口是 GET /api/v1/users/{id}/avatar。
+# 这里也不许有"前端访问地址/页面地址"这类键（原 meeting.edgeBaseUrl 已删）：
+# 前后端各自容器化，浏览器实际用到的协议、IP、映射端口只有浏览器知道，
+# 分享用的入会链接由前端按 location.origin 拼（frontend/src/utils/joinFlow.ts 的 joinUrlFor）。

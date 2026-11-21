@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>取帧吞吐探针（第一轮）</title>
+<style>
+  body{font:13px/1.6 ui-monospace,Consolas,monospace;background:#0b1220;color:#cbd5e1;margin:0;padding:16px}
+  pre{white-space:pre-wrap;margin:8px 0 0}
+  #bar{height:6px;background:#1e293b;border-radius:3px;overflow:hidden}
+  #bar>i{display:block;height:100%;width:0;background:#38bdf8;transition:width .1s}
+  .hint{color:#64748b}
+</style>
+</head>
+<body>
+<div id="bar"><i></i></div>
+<pre id="out">booting…</pre>
+<script type="module">
+// 第一轮探针：只量一件事 —— 从 MediaRecorder 产的 webm 里"按目标时刻取一帧"要多久。
+// 不碰真实录制数据、不 import 仓内源码。结论用 __probe 暴露，页面里也画一份。
+//
+// 为什么要先量这个：离线合成能不能比 1× 快，取决于"取帧 + 编码"的总墙钟。
+// 编码那半边（VideoEncoder 自写时间戳）基本确定可行；取帧这半边是未知数 ——
+// 若 14400 帧（16 分钟 @15fps）的取帧耗时与 1× 同阶，这条路就不划算。
+
+const out = document.getElementById('out')
+const bar = document.querySelector('#bar>i')
+const F = (n, d = 1) => Number(n).toFixed(d)
+const RESULT = { stage: 'boot', note: [] }
+window.__probe = RESULT
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const say = (s) => { out.textContent += '\n' + s }
+const prog = (r) => { bar.style.width = (Math.max(0, Math.min(1, r)) * 100).toFixed(1) + '%' }
+
+// 结果出口：这台机器上 evaluate_script 恒定回 {}（扩展侧故障），take_snapshot 又读不到 <pre> 文本，
+// 所以自己 POST 给本地接收器（scratch/probe-receiver.mjs）落成 JSON；
+// 顺带把摘要塞进 document.title 作兜底（list_pages 能读到标题）。
+const RECEIVER = 'http://127.0.0.1:5199/result'
+function report() {
+  try {
+    document.title = 'PROBE ' + RESULT.stage + (RESULT.measure
+      ? ' med=' + F(RESULT.measure.medianMs) + 'ms proj=' + F(RESULT.projection.minutes) + 'min'
+      : '')
+  } catch { /* 标题写不进不影响结果 */ }
+  fetch(RECEIVER, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify(RESULT) })
+    .then(() => say('结果已回报接收器'))
+    .catch(() => say('回报失败（接收器没在跑？）'))
+}
+
+function stats(arr) {
+  const a = arr.slice().sort((x, y) => x - y)
+  const at = (p) => a.length ? a[Math.min(a.length - 1, Math.floor(p * a.length))] : NaN
+  const sum = a.reduce((s, v) => s + v, 0)
+  return {
+    n: a.length,
+    meanMs: a.length ? sum / a.length : NaN,
+    medianMs: at(0.5), p95Ms: at(0.95), p99Ms: at(0.99), maxMs: a.length ? a[a.length - 1] : NaN,
+  }
+}
+
+// ── 1. 造一段源：与"本地录制"同形状（MediaRecorder 产的 webm）
+// 用 setInterval 而不是 rAF 驱动作画：后台/无头下 rAF 一帧都不发，会造出空源。
+async function makeSource(sec) {
+  const c = document.createElement('canvas')
+  c.width = 1280; c.height = 720
+  const g = c.getContext('2d')
+  let drawn = 0
+  const timer = setInterval(() => {
+    drawn++
+    const t = drawn / 15
+    const grd = g.createLinearGradient(0, 0, c.width, c.height)
+    grd.addColorStop(0, `hsl(${(t * 37) % 360} 55% 22%)`)
+    grd.addColorStop(1, `hsl(${(t * 37 + 80) % 360} 55% 12%)`)
+    g.fillStyle = grd; g.fillRect(0, 0, c.width, c.height)
+    g.fillStyle = '#e2e8f0'; g.font = '72px sans-serif'
+    g.fillText(`f${drawn}`, 60 + (drawn * 11) % 900, 340)
+    g.fillStyle = '#f87171'; g.fillRect(0, 660, (drawn * 3) % 1280, 36)
+  }, 1000 / 15)
+
+  const stream = c.captureStream(15)
+  const mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
+    .find((m) => MediaRecorder.isTypeSupported(m))
+  const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
+  const chunks = []
+  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data) }
+  const stopped = new Promise((r) => { rec.onstop = r })
+  rec.start(1000)
+  for (let i = 0; i < sec; i++) { await sleep(1000); prog((i + 1) / sec * 0.3) }
+  rec.stop()
+  await stopped
+  clearInterval(timer)
+  stream.getTracks().forEach((t) => t.stop())
+  const blob = new Blob(chunks, { type: rec.mimeType || mime || 'video/webm' })
+  return { blob, drawn, mime: rec.mimeType || mime }
+}
+
+// ── 2. 把源塞进 <video>，等可 seek
+async function loadVideo(blob) {
+  const v = document.createElement('video')
+  v.muted = true; v.preload = 'auto'; v.playsInline = true
+  v.src = URL.createObjectURL(blob)
+  await new Promise((res, rej) => {
+    const to = setTimeout(() => rej(new Error('metadata 超时')), 15000)
+    v.onloadedmetadata = () => { clearTimeout(to); res() }
+    v.onerror = () => { clearTimeout(to); rej(new Error('video error ' + (v.error && v.error.code))) }
+  })
+  // MediaRecorder 的 webm 是"直播流形"：直读 duration 常是 Infinity，必须 seek 到极远逼出来
+  if (!isFinite(v.duration) || v.duration === 0) {
+    await new Promise((res) => {
+      const to = setTimeout(res, 3000)
+      v.onseeked = () => { clearTimeout(to); res() }
+      v.currentTime = 1e6
+    })
+    v.onseeked = null
+    v.currentTime = 0
+    await sleep(50)
+  }
+  return v
+}
+
+// ── 3. 按目标时刻逐帧 seek 取帧
+async function seekOnce(v, t, timeoutMs) {
+  return new Promise((resolve) => {
+    let done = false
+    const finish = (ok) => {
+      if (done) return
+      done = true
+      clearTimeout(to)
+      v.removeEventListener('seeked', onSeeked)
+      resolve(ok)
+    }
+    const onSeeked = () => finish(true)
+    const to = setTimeout(() => finish(false), timeoutMs)
+    v.addEventListener('seeked', onSeeked)
+    v.currentTime = t
+  })
+}
+
+async function measure(v, ctx, stepSec, maxFrames) {
+  const dur = v.duration
+  const targets = []
+  for (let t = 0; t <= dur && targets.length < maxFrames; t += stepSec) targets.push(t)
+  const spans = []
+  let timeouts = 0
+  const t0 = performance.now()
+  for (let i = 0; i < targets.length; i++) {
+    const t = targets[i]
+    // 与当前位置几乎相同不会触发 seeked，直接算 0 成本跳过
+    if (Math.abs(v.currentTime - t) < 0.0005) { spans.push(0); continue }
+    const s = performance.now()
+    const ok = await seekOnce(v, t, 4000)
+    if (!ok) { timeouts++; continue }
+    // 取帧 + 画到合成尺寸的单格（这一步在真实合成里也要做）
+    try { ctx.drawImage(v, 0, 0, ctx.canvas.width, ctx.canvas.height) } catch (e) { RESULT.note.push('draw 失败 ' + e.name) }
+    spans.push(performance.now() - s)
+    if (i % 10 === 0) prog(0.3 + 0.7 * (i / targets.length))
+  }
+  const wall = performance.now() - t0
+  return { dur, frames: targets.length, timeouts, wallMs: wall, ...stats(spans) }
+}
+
+async function main() {
+  try {
+    say('① 造源（30s / 15fps / 1280×720）…')
+    const src = await makeSource(30)
+    RESULT.source = { mime: src.mime, drawnFrames: src.drawn, bytes: src.blob.size }
+    say(`   源：${src.mime} · 作画 ${src.drawn} 帧 · ${(src.blob.size / 1048576).toFixed(2)} MB`)
+    if (src.drawn < 30) say('   ⚠ 作画帧数过少：本页可能被节流（后台/无头），读数的代表性受限')
+
+    say('② 装载并逼出时长…')
+    const v = await loadVideo(src.blob)
+    say(`   duration=${F(v.duration, 3)}s · videoWidth=${v.videoWidth}×${v.videoHeight}`)
+    RESULT.video = { durationSec: v.duration, w: v.videoWidth, h: v.videoHeight }
+    RESULT.hidden = document.hidden
+    RESULT.visibility = document.visibilityState
+
+    const c = document.createElement('canvas')
+    c.width = 480; c.height = 270
+    const ctx = c.getContext('2d')
+
+    say('③ 按 1/15s 步进 seek 取帧…')
+    const m = await measure(v, ctx, 1 / 15, 600)
+    RESULT.measure = m
+    say(`   样本 ${m.frames} 帧（超时 ${m.timeouts}）· 墙钟 ${(m.wallMs / 1000).toFixed(1)}s`)
+    say(`   每帧 中位 ${F(m.medianMs, 1)}ms · 均值 ${F(m.meanMs, 1)}ms · p95 ${F(m.p95Ms, 1)}ms · 最大 ${F(m.maxMs, 1)}ms`)
+
+    // 外推到真实规模：16 分钟 @15fps = 14400 帧
+    const perFrame = m.medianMs
+    const proj16 = perFrame * 14400 / 1000 / 60
+    RESULT.projection = { framesAssumed: 14400, perFrameMsUsed: perFrame, minutes: proj16 }
+    say(`④ 外推：14400 帧（16 分钟 @15fps）≈ ${F(proj16, 1)} 分钟（用中位数）`)
+    say(`   对照：现有方案是 16 分钟，且必须前台`)
+
+    RESULT.stage = 'done'
+    say('DONE')
+  } catch (e) {
+    RESULT.stage = 'error'
+    RESULT.error = String(e && e.message || e)
+    say('ERROR ' + RESULT.error)
+  }
+  report()
+}
+main()
+</script>
+</body>
+</html>

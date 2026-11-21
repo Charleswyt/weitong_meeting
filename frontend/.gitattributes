@@ -1,0 +1,6 @@
+# 行尾策略：仓库内统一 LF。
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.svg text eol=lf
+*.ico binary

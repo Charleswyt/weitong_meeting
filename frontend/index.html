@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/icon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>卫通会议</title>
+  </head>
+  <body>
+    <!-- 启动要先问一次后端"这台免不免登录"（见 src/main.ts），这一行是等待期间的交代；
+         Vue 挂载时会把它整段换掉。没有它，后端起得慢时用户看到的是纯白屏，像页面死了。 -->
+    <div id="app">
+      <p style="margin: 40vh auto 0; text-align: center; color: #86909c; font: 14px/1.6 system-ui, sans-serif">正在进入会议服务…</p>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>本机录制夹具注入</title>
+<style>body{font:13px/1.6 ui-monospace,Consolas,monospace;background:#0b1220;color:#cbd5e1;padding:16px}pre{white-space:pre-wrap}</style>
+</head>
+<body><pre id="out">booting…</pre>
+<script type="module">
+// 往「本机录制」的真源（IndexedDB conference-local）里注入一条**由真实产物构成**的夹具。
+// 为什么需要：受控浏览器是干净 profile，里面没有本机录制，而回放问题只在真实浏览器里复现得了；
+// 反过来用户 Edge 的 evaluate_script 又用不了。两个限制夹起来，唯一的路就是造夹具（真字节、不造假数据）。
+// 源文件走探针接收器（GET /file/<名字>，127.0.0.1:5199），字节就是那份录制的原片。
+const out = document.getElementById('out')
+const RESULT = { stage: 'boot' }
+const say = (s) => { out.textContent += '\n' + s }
+const report = () => { fetch('http://127.0.0.1:5199/result/seed', { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify(RESULT) }).catch(() => {}) }
+const RECV = 'http://127.0.0.1:5199'
+const ID = 'local-seed-1'
+
+function openDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('conference-local', 3)
+    req.onupgradeneeded = () => {
+      const db = req.result
+      if (!db.objectStoreNames.contains('handles')) db.createObjectStore('handles')
+      if (!db.objectStoreNames.contains('recordings')) db.createObjectStore('recordings', { keyPath: 'id' })
+      if (!db.objectStoreNames.contains('blobs')) db.createObjectStore('blobs')
+      if (!db.objectStoreNames.contains('sessions')) db.createObjectStore('sessions', { keyPath: 'id' })
+      if (!db.objectStoreNames.contains('segments')) db.createObjectStore('segments', { keyPath: 'blobKey' }).createIndex('byTrack', 'trackId')
+    }
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+}
+function put(db, store, value, key) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(store, 'readwrite')
+    if (key === undefined) tx.objectStore(store).put(value)
+    else tx.objectStore(store).put(value, key)
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+  })
+}
+/**
+ * 用媒体元素量真实时长。**不能用 `onloadedmetadata` 直接读 `duration`**：这些产物是
+ * MediaRecorder 出的 webm，头里没有 Duration，直接读是 `Infinity`（实测）；
+ * 要"seek 到极远"把它逼出来（app 里 `probeBlobDurationSec` 同款手法）。
+ */
+function probeDuration(url) {
+  return new Promise((resolve) => {
+    const v = document.createElement('video')
+    v.preload = 'metadata'
+    let done = false
+    const finish = (n) => { if (done) return; done = true; clearTimeout(t); resolve(n) }
+    const read = () => { if (isFinite(v.duration) && v.duration > 0) finish(Number(v.duration.toFixed(3))) }
+    const t = setTimeout(() => finish(null), 8000)
+    v.onloadedmetadata = () => {
+      if (isFinite(v.duration) && v.duration > 0) read()
+      else v.currentTime = 1e7
+    }
+    v.ondurationchange = read
+    v.onerror = () => finish(null)
+    v.src = url
+  })
+}
+
+async function main() {
+  const files = [
+    { name: 'seed-camera.webm', enc: 'seed-camera.webm', owner: '夹具', kind: 'camera', hasVideo: true, hasAudio: false, mime: 'video/webm;codecs=vp9' },
+    { name: 'mic-raw.webm', enc: 'mic-raw.webm', owner: '夹具', kind: 'microphone', hasVideo: false, hasAudio: true, mime: 'audio/webm;codecs=opus' },
+  ]
+  const lanes = []
+  for (const f of files) {
+    const blob = await (await fetch(`${RECV}/file/${encodeURIComponent(f.enc)}`)).blob()
+    const url = URL.createObjectURL(blob)
+    const dur = await probeDuration(url)
+    lanes.push({ ...f, blob, bytes: blob.size, dur })
+    RESULT[f.name] = { bytes: blob.size, durSec: dur }
+    say(`${f.name}: ${blob.size} 字节 · ${dur ?? '?'}s`)
+  }
+  const db = await openDb()
+  const now = Date.now()
+  const tracks = lanes.map((l, i) => {
+    const rid = `fixture-${l.kind}-${i}`
+    return {
+      recordingId: rid,
+      ownerId: 'fixture-owner',
+      ownerName: l.owner,
+      kind: l.kind,
+      mediaLabel: l.kind === 'microphone' ? '默认麦克风' : '摄像头',
+      hasVideo: l.hasVideo,
+      hasAudio: l.hasAudio,
+      startOffsetSec: 0,
+      endOffsetSec: l.dur ?? 0,
+      closedAtMs: now,
+      closeReason: 'session_end',
+      mime: l.mime,
+      fileName: l.name,
+      ...(l.hasVideo ? { width: 1280, height: 720, frameRate: 15 } : {}),
+      ...(l.hasAudio ? { sampleRate: 48000, channelCount: 1 } : {}),
+      segments: [{ seq: 0, offsetSec: 0, durationSec: l.dur ?? 0, sizeBytes: l.bytes, blobKey: `${rid}#0`, mime: l.mime }],
+    }
+  })
+  for (let i = 0; i < lanes.length; i++) {
+    const l = lanes[i]
+    const rid = tracks[i].recordingId
+    await put(db, 'blobs', l.blob, `${rid}#0`)
+    await put(db, 'segments', {
+      blobKey: `${rid}#0`, trackId: rid, seq: 0, offsetSec: 0,
+      durationSec: l.dur ?? 0, sizeBytes: l.bytes, mime: l.mime,
+    })
+  }
+  const durationSec = Math.max(...tracks.map((t) => t.endOffsetSec))
+  await put(db, 'recordings', {
+    id: ID,
+    title: '夹具 本机录制（画面+声音 各一路）',
+    meetingNo: 'FIXTURE',
+    fileName: 'fixture',
+    startedAt: now,
+    durationSec,
+    sizeBytes: lanes.reduce((a, l) => a + l.bytes, 0),
+    schema: 2,
+    tracks,
+    dirPath: null,
+    dirHandle: false,
+    partial: false,
+    storage: 'local',
+  })
+  RESULT.id = ID
+  RESULT.tracks = tracks.map((t) => ({ kind: t.kind, hasVideo: t.hasVideo, hasAudio: t.hasAudio, dur: t.endOffsetSec, bytes: t.segments[0].sizeBytes }))
+  RESULT.stage = 'done'
+  say(`已写入 ${ID}（${tracks.length} 路，${durationSec.toFixed(1)}s）`)
+  report()
+}
+main().catch((e) => { RESULT.stage = 'error'; RESULT.error = String((e && e.message) || e); say('ERROR ' + RESULT.error); report() })
+</script>
+</body>
+</html>

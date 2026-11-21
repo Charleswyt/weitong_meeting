@@ -1,0 +1,211 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>RECOVERY probe</title>
+<body style="background:#111;color:#ddd;font:13px ui-monospace,monospace;padding:14px">
+<pre id="o">running…</pre>
+<script type="module">
+// 崩溃自愈的真库验证（工作 A）。跑的是仓内真源模块，不是副本：
+//   phase=seed  → 用真 API 造一条"开录后没点停止"的会话（含一路字节缺失的陷阱）
+//   然后真的重载页面（= 浏览器崩过一次），
+//   phase=check → 让启动自愈把它重建回列表，逐条断言。
+// 结论 POST 给 scratch/probe-receiver.mjs（5199），同时也写进 <pre>。
+const LR = await import('/src/utils/localRecorder.ts')
+const RC = await import('/src/utils/recordingRecovery.ts')
+
+const out = []
+const log = (k, v) => { out.push(`${k}=${JSON.stringify(v)}`); document.getElementById('o').textContent = out.join('\n') }
+// 卡住/抛错都要能被读到：每一步都 log，异常既进 <pre> 也 POST 出去
+window.addEventListener('error', (e) => log('WINDOW_ERROR', e.message + ' @ ' + e.filename + ':' + e.lineno))
+window.addEventListener('unhandledrejection', (e) => log('REJECTION', String((e.reason && e.reason.message) || e.reason)))
+const phase = new URLSearchParams(location.search).get('phase') || 'seed'
+const PROBE_MEETING = 'REC-PROBE'
+
+/** 一路的清单头（真形状：RecordedTrack 去掉 segments） */
+function headOf(recordingId, closed) {
+  return {
+    recordingId,
+    ownerId: `probe-${recordingId}`,
+    ownerName: '探针甲',
+    kind: 'camera',
+    mediaLabel: '探针摄像头',
+    hasVideo: true,
+    hasAudio: false,
+    startOffsetSec: 2.0,
+    endOffsetSec: closed ? 8.5 : null,
+    closedAtMs: closed ? 1700000000000 : null,
+    closeReason: closed ? 'publisher_left' : '',
+    mime: 'video/webm;codecs=vp9',
+    fileName: `${recordingId}.webm`,
+  }
+}
+
+/** 直接开一次库看升级结果（不带版本号 = 当前版本，不会触发升级） */
+function dbNames() {
+  return new Promise((resolve) => {
+    const req = indexedDB.open('conference-local')
+    req.onsuccess = () => {
+      const db = req.result
+      const r = { version: db.version, stores: [...db.objectStoreNames] }
+      db.close()
+      resolve(r)
+    }
+    req.onerror = () => resolve({ error: String(req.error) })
+    req.onblocked = () => resolve({ blocked: true })
+  })
+}
+
+/** 清掉上一次探针留下的会话与片记录（只动这两张新表和探针会议号的条目，别碰这台库里的既有录制） */
+function wipeProbeState() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('conference-local')
+    req.onerror = () => reject(req.error)
+    req.onsuccess = () => {
+      const db = req.result
+      const tx = db.transaction(['sessions', 'segments', 'recordings', 'blobs'], 'readwrite')
+      tx.objectStore('sessions').clear()
+      tx.objectStore('segments').clear()
+      const seen = []
+      const cur = tx.objectStore('recordings').openCursor()
+      cur.onsuccess = () => {
+        const c = cur.result
+        if (!c) return
+        if (c.value.meetingNo === PROBE_MEETING) {
+          seen.push(c.value.id)
+          for (const t of c.value.tracks || []) for (const s of t.segments || []) tx.objectStore('blobs').delete(s.blobKey)
+          c.delete()
+        }
+        c.continue()
+      }
+      tx.oncomplete = () => { db.close(); resolve(seen.length) }
+      tx.onerror = () => reject(tx.error)
+    }
+  })
+}
+
+async function seed() {
+  log('wiped_probe_rows', await wipeProbeState())
+  // 先碰一次库：这一步会真的走 v3 升级（老库里有数据也不能被升级弄坏，见 check 里的旧条目数）
+  const before = await LR.listLocalRecordings()
+  log('before_count', before.length)
+
+  log('db_names', await dbNames())
+  log('crashed_before_seed', (await LR.listCrashedSessions(LR.SESSION_STALE_MS)).length)
+
+  const t0 = Date.now() - 60000
+  const keepId = `${PROBE_MEETING}-keep`
+  const lostId = `${PROBE_MEETING}-lostbytes`
+  const session = {
+    id: LR.makeLocalRecordingId(t0),
+    t0,
+    meetingNo: PROBE_MEETING,
+    title: '自愈探针场次',
+    open: true,
+    // 心跳刻意压旧：这就是"上次崩在这儿"的证据
+    heartbeatAt: Date.now() - LR.SESSION_STALE_MS - 1000,
+    tracks: { [keepId]: headOf(keepId, true), [lostId]: headOf(lostId, false) },
+  }
+  await LR.putSession(session)
+  log('putSession_ok', true)
+
+  // keep 这一路：三片，字节与清单记录同事务落库（真函数）
+  for (let i = 0; i < 3; i++) {
+    await LR.putSegmentWithRecord(
+      { blobKey: `${keepId}#${i}`, trackId: keepId, seq: i, offsetSec: 2 + i * 2, durationSec: 2, sizeBytes: 100 + i, mime: 'video/webm' },
+      new Blob([new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, i])], { type: 'video/webm' }),
+    )
+    log('segment_written_' + i, true)
+  }
+  // lost 这一路：**只写清单记录、不写字节** —— 自愈必须把它整路丢掉而不是重建出一条播不开的条目
+  await LR.idbPutValue('segments', {
+    blobKey: `${lostId}#0`, trackId: lostId, seq: 0, offsetSec: 2, durationSec: 2, sizeBytes: 7, mime: 'video/webm',
+  })
+  log('record_without_bytes_written', true)
+
+  // 第二个用例：**心跳还新的会话**（= 另一个标签页此刻正在录）不许被重建
+  const liveId = `${PROBE_MEETING}-livesession`
+  const liveTrack = `${PROBE_MEETING}-livetrack`
+  await LR.putSession({
+    id: liveId, t0: Date.now(), meetingNo: PROBE_MEETING, title: '还在录的那场',
+    open: true, heartbeatAt: Date.now(), tracks: { [liveTrack]: headOf(liveTrack, false) },
+  })
+  await LR.putSegmentWithRecord(
+    { blobKey: `${liveTrack}#0`, trackId: liveTrack, seq: 0, offsetSec: 0, durationSec: 2, sizeBytes: 11, mime: 'video/webm' },
+    new Blob([new Uint8Array([1, 2, 3])], { type: 'video/webm' }),
+  )
+  log('live_session_seeded', true)
+  // 重载前就该看得见两条待判会话：一条心跳过期（要重建）、一条心跳还新（不许动）
+  const crashed = await LR.listCrashedSessions(LR.SESSION_STALE_MS)
+  log('seeded_id', session.id)
+  log('crashed_visible_before_reload', crashed.length)
+  return { crashed: session.id, live: liveId }
+}
+
+async function check(id, liveId) {
+  // 探针页没有真在跑的录制器会跳心跳，所以这里手动把"还在录的那场"的心跳刷新一次 ——
+  // 这就是产品里 `startBeating()` 每条录制自己按定时器跳的那件事。
+  const liveTrack = `${PROBE_MEETING}-livetrack`
+  await LR.putSession({
+    id: liveId, t0: Date.now() - 8000, meetingNo: PROBE_MEETING, title: '还在录的那场',
+    open: true, heartbeatAt: Date.now(), tracks: { [liveTrack]: headOf(liveTrack, false) },
+  })
+  log('live_heartbeat_refreshed', true)
+
+  const rows = await RC.ensureRecordingsRecovered()
+  log('recovered_rows', rows.length)
+  log('recovered_ids', rows.map((r) => r.id === id))
+  log('live_session_not_recovered', !(await LR.getLocalRecording(liveId)))
+
+  const meta = await LR.getLocalRecording(id)
+  log('meta_exists', !!meta)
+  if (!meta) return
+  const tracks = meta.tracks || []
+  log('track_count', tracks.length)
+  log('kept_track', tracks[0]?.recordingId)
+  log('kept_segment_count', tracks[0]?.segments.length)
+  // 三片到 8.5s 为止：末片 offset6+dur2=8；这一路当时干净关过尾，终值取清单里的 8.5
+  log('end_offset', tracks[0]?.endOffsetSec)
+  log('close_reason_kept', tracks[0]?.closeReason)
+  log('closed_at_kept', tracks[0]?.closedAtMs)
+  log('partial', meta.partial)
+  log('schema', meta.schema)
+  log('durationSec', meta.durationSec)
+  log('sizeBytes', meta.sizeBytes)
+  log('fileName', meta.fileName)
+  // 每片都得真读得到字节（重建时逐片验过，这里再读一遍证明键没写错）
+  const readable = []
+  for (const s of tracks[0]?.segments || []) readable.push(!!(await LR.getSegmentBlob(s.blobKey)))
+  log('all_segments_readable', readable.every(Boolean))
+
+  // 会话头必须已置成"不再开放"，否则下次进页面会再重建一条
+  const crashed = await LR.listCrashedSessions(LR.SESSION_STALE_MS)
+  log('crashed_after_rebuild', crashed.length)
+
+  // 重跑一次不许登记出第二条：条目已在，只该关会话头（幂等）
+  const again = await RC.rebuildRecoveredRecording({
+    id, open: true, heartbeatAt: 0, t0: meta.startedAt, meetingNo: meta.meetingNo, title: meta.title, tracks: {},
+  })
+  log('second_rebuild_returns_null', again === null)
+  const all = await LR.listLocalRecordings()
+  log('total_rows_with_same_id', all.filter((r) => r.id === id).length)
+}
+
+let seeded = null
+const q = new URLSearchParams(location.search)
+try {
+  if (phase === 'seed') {
+    seeded = await seed()
+  } else {
+    await check(q.get('id') || '', q.get('live') || '')
+  }
+} catch (e) {
+  log('PHASE_ERROR', String((e && e.message) || e))
+  log('PHASE_ERROR_NAME', String((e && e.name) || ''))
+}
+
+await fetch('http://127.0.0.1:5199/result/recovery-probe-' + phase, {
+  method: 'POST',
+  headers: { 'content-type': 'text/plain' },
+  body: JSON.stringify({ phase, id: seeded ? seeded.crashed : q.get('id'), live: seeded ? seeded.live : q.get('live'), lines: out }),
+})
+document.title = `RECOVERY ${phase} done`
+</script>

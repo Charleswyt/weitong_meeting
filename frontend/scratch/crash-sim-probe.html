@@ -1,0 +1,280 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CRASHSIM probe</title>
+<body style="background:#111;color:#ddd;font:13px ui-monospace,monospace;padding:14px">
+<pre id="o">running…</pre>
+<script type="module">
+// 真录制中途"死掉"的复现验法（工作 A 的产品路径，不是存储层的替身）。
+//   phase=record → 用真 TrackRecorderSession 录一场**真 MediaRecorder** 的（合成画面轨 + 振荡器音频轨，
+//                    不需要摄像头授权），跑若干秒后**刻意不调 finish()**，然后真的重载页面 = 那场崩了；
+//   phase=check  → 启动自愈应把它重建回列表，并把那一路的分片拼成一个真能播的 webm dump 到盘上。
+// 为什么用定时器而不是 rAF 出帧：这台浏览器是后台标签页，rAF 实测 0 帧（见项目记忆）。
+const LR = await import('/src/utils/localRecorder.ts')
+const RC = await import('/src/utils/recordingRecovery.ts')
+const TR = await import('/src/utils/trackRecorder.ts')
+
+const out = []
+const log = (k, v) => { out.push(`${k}=${JSON.stringify(v)}`); document.getElementById('o').textContent = out.join('\n') }
+window.addEventListener('error', (e) => log('WINDOW_ERROR', e.message + ' @ ' + e.filename + ':' + e.lineno))
+window.addEventListener('unhandledrejection', (e) => log('REJECTION', String((e.reason && e.reason.message) || e.reason)))
+
+const q = new URLSearchParams(location.search)
+const phase = q.get('phase') || 'record'
+const HOLD_MS = Number(q.get('hold') || 9000)
+const MEETING = 'CRASHSIM'
+
+/** 合成一路"摄像头"：canvas.captureStream(fps) + 定时器画帧（后台页 rAF 不发帧） */
+function syntheticVideo(fps = 10) {
+  const canvas = document.createElement('canvas')
+  canvas.width = 320
+  canvas.height = 240
+  const ctx = canvas.getContext('2d')
+  let n = 0
+  const iv = window.setInterval(() => {
+    n++
+    ctx.fillStyle = `hsl(${(n * 12) % 360} 70% 45%)`
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctx.fillStyle = '#fff'
+    ctx.font = '40px sans-serif'
+    ctx.fillText(String(n % 10), 20, 60)
+  }, Math.round(1000 / fps))
+  const track = canvas.captureStream(fps).getVideoTracks()[0]
+  return { track, stop: () => { window.clearInterval(iv); track?.stop() } }
+}
+
+/** 合成一路"麦克风"：振荡器 440Hz，保证编码器每片都有数据 */
+function syntheticAudio() {
+  const AudioCtor = window.AudioContext || window.webkitAudioContext
+  const ac = new AudioCtor()
+  const dest = ac.createMediaStreamDestination()
+  const osc = ac.createOscillator()
+  const gain = ac.createGain()
+  gain.gain.value = 0.2
+  osc.connect(gain).connect(dest)
+  osc.start()
+  return { track: dest.stream.getAudioTracks()[0], stop: () => { try { osc.stop() } catch {} ; void ac.close() } }
+}
+
+/** 清掉两张新表里**别的探针**留下的会话，并摘掉两个探针会议号的条目（不碰这台库里的既有真实录制） */
+function wipeProbeState() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('conference-local')
+    req.onerror = () => reject(req.error)
+    req.onsuccess = () => {
+      const db = req.result
+      const tx = db.transaction(['sessions', 'segments', 'recordings', 'blobs'], 'readwrite')
+      tx.objectStore('sessions').clear()
+      tx.objectStore('segments').clear()
+      let n = 0
+      const cur = tx.objectStore('recordings').openCursor()
+      cur.onsuccess = () => {
+        const c = cur.result
+        if (!c) return
+        if (c.value.meetingNo === MEETING || c.value.meetingNo === 'REC-PROBE') {
+          n++
+          for (const t of c.value.tracks || []) for (const s of t.segments || []) tx.objectStore('blobs').delete(s.blobKey)
+          c.delete()
+        }
+        c.continue()
+      }
+      tx.oncomplete = () => { db.close(); resolve(n) }
+      tx.onerror = () => reject(tx.error)
+    }
+  })
+}
+
+async function record() {
+  log('wiped_probe_rows', await wipeProbeState())
+  const video = syntheticVideo()
+  const audio = syntheticAudio()
+  log('synthetic_tracks', [!!video.track, !!audio.track])
+
+  const session = new TR.TrackRecorderSession({ t0: Date.now(), userName: 'crashsim', meetingNo: MEETING, title: '崩溃模拟场次' })
+  const opened = session.open('probe-cam', {
+    ownerId: 'probe-1', ownerName: '探针甲', kind: 'camera', mediaLabel: '合成摄像头+振荡器',
+    video: { track: video.track }, audioTracks: [audio.track],
+  })
+  log('opened', !!opened)
+  if (!opened) return null
+  const trackId = opened.recordingId
+
+  await new Promise((r) => window.setTimeout(r, HOLD_MS))
+
+  // 这就是"崩了"：不 finish()，只把已落库的读数记下来，然后整页重载
+  const segs = await LR.listSegmentRecords(trackId)
+  log('segments_in_db_before_crash', segs.length)
+  // 记 id 而不是只记条数：库里可能留着**别的探针**的陈旧会话，只数条数会把它们算成这一场
+  const crashed = await LR.listCrashedSessions(LR.SESSION_STALE_MS)
+  log('crashed_ids_while_alive', crashed.map((s) => s.id))
+  log('this_session_seen_as_crashed_while_alive', crashed.some((s) => s.id === session.recordingId))
+  document.title = `CRASHSIM recorded ${trackId}`
+  const id = session.recordingId
+  log('session_id', id)
+  await fetch('http://127.0.0.1:5199/result/crashsim-record', {
+    method: 'POST', headers: { 'content-type': 'text/plain' },
+    body: JSON.stringify({ phase, sessionId: id, trackId, segs: segs.length, lines: out }),
+  })
+  return { trackId, session: id }
+}
+
+/**
+ * 正常收尾那一支也要验：本次改动动了 onChunk / finalizeClosed / finish 三处，
+ * 只测崩溃路径会把"点停止还能登记成功"这个主干留在未验证状态。
+ * finish() 里没有目录句柄时只会把 dirWritten 判成 false，不会弹原生选择器，所以能自动化跑。
+ */
+async function finishPhase() {
+  log('wiped_probe_rows', await wipeProbeState())
+  const video = syntheticVideo()
+  const audio = syntheticAudio()
+  const session = new TR.TrackRecorderSession({ t0: Date.now(), userName: 'crashsim', meetingNo: MEETING, title: '正常收尾场次' })
+  const opened = session.open('probe-cam', {
+    ownerId: 'probe-1', ownerName: '探针甲', kind: 'camera', mediaLabel: '合成摄像头+振荡器',
+    video: { track: video.track }, audioTracks: [audio.track],
+  })
+  // 第二路：**只有声音**的一路（原型里"会议声音"那一栏就是这种东西）。
+  // D3 的正形是"一条录制 = 若干路，逐路各一个文件"，只开一路测不出这个循环。
+  const mic = syntheticAudio()
+  const openedMic = session.open('probe-mic', {
+    ownerId: 'probe-2', ownerName: '探针乙', kind: 'microphone', mediaLabel: '振荡器',
+    audioTracks: [mic.track],
+  })
+  log('opened', !!opened)
+  log('opened_second_lane', !!openedMic)
+  if (!opened) return null
+  const trackId = opened.recordingId
+  const sid = session.recordingId
+  await new Promise((r) => window.setTimeout(r, HOLD_MS))
+  video.stop(); audio.stop(); mic.stop()
+  const result = await session.finish()
+  log('finish_returned', !!result)
+  log('result_recordingId_is_session_id', result?.recordingId === sid)
+  log('result_dirWritten', result?.dirWritten)
+  log('result_partial', result?.partial)
+  log('result_track_count', result?.tracks.length)
+  log('result_durationSec', result?.durationSec)
+
+  const meta = await LR.getLocalRecording(sid)
+  log('meta_registered', !!meta)
+  log('meta_schema', meta?.schema)
+  log('meta_partial', meta?.partial)
+  log('meta_tracks', (meta?.tracks || []).length)
+  log('meta_segments_total', (meta?.tracks || []).reduce((a, t) => a + t.segments.length, 0))
+  // 工作 B：解码参数必须是**采集侧实测值**（合成轨是 canvas 320×240@10 + 振荡器 48000Hz）
+  const t0 = (meta?.tracks || [])[0]
+  log('width', t0?.width)
+  log('height', t0?.height)
+  log('frameRate', t0?.frameRate)
+  log('sampleRate', t0?.sampleRate)
+  log('channelCount', t0?.channelCount)
+  log('top_level_mime_gone', meta && !('mime' in meta))
+  log('container_of_tracks', LR.containerOf(meta?.tracks || []))
+  const after = await LR.listCrashedSessions(LR.SESSION_STALE_MS)
+  log('session_closed_after_finish', !after.some((s) => s.id === sid))
+  log('crashed_ids_after_finish', after.map((s) => s.id))
+  // 自愈不许在正常收尾后再动它一次
+  const again = await RC.ensureRecordingsRecovered()
+  log('recovery_added_nothing', again.length === 0 || !again.some((r) => r.id === sid))
+  log('rows_with_this_id', (await LR.listLocalRecordings()).filter((r) => r.id === sid).length)
+  return { trackId, session: sid }
+}
+
+/**
+ * D3 的接线取证：列表页那个"下载这一场"过去读 `blobs[条目id]`（schema 2 从不写那个键）所以恒失败。
+ * 这里不碰界面，直接对**库里真有的那条**调用同一个函数，看它按清单拼出了几路、有没有读不到字节的。
+ * （downloadBlob 的副作用是造一个 <a> 点一下，在无头实例里没有真实下载去向，不影响这里的计数断言。）
+ */
+async function downloadPhase() {
+  const rows = (await LR.listLocalRecordings()).filter((r) => r.meetingNo === MEETING && (r.tracks || []).length)
+  log('candidate_rows', rows.length)
+  if (!rows.length) return null
+  const meta = rows.sort((a, b) => b.startedAt - a.startedAt)[0]
+  log('picked', meta.id)
+  log('tracks_in_manifest', meta.tracks.length)
+  const withSegments = meta.tracks.filter((t) => t.segments.length > 0)
+  log('tracks_with_segments', withSegments.length)
+  const { ok, failed } = await TR.downloadLocalRecordingTracks(meta)
+  log('downloaded_ok', ok)
+  log('downloaded_failed', failed)
+  log('ok_matches_manifest', ok === withSegments.length && failed === 0)
+  return { session: meta.id }
+}
+
+async function check() {
+  // 等陈旧窗口
+  const waitSec = Number(q.get('wait') || 0)
+  if (waitSec > 0) {
+    log('waiting_for_stale_s', waitSec)
+    await new Promise((r) => window.setTimeout(r, waitSec * 1000))
+  }
+  const before = await LR.listCrashedSessions(LR.SESSION_STALE_MS)
+  // 不靠外部传 id：改动源文件时 vite HMR 会重载并重跑探针页，自己造出**另一场**新录制，
+  // 传进来的 id 就对不上库里那条了（本轮真踩过）。直接取这场探针会议里 t0 最新的陈旧会话。
+  const mine = before.filter((s) => s.meetingNo === MEETING).sort((a, b) => b.t0 - a.t0)[0]
+  log('stale_ids', before.map((s) => s.id))
+  log('picked', mine?.id || 'NONE')
+  if (!mine) return
+  const sessionId = mine.id
+  const trackId = Object.keys(mine.tracks)[0] || ''
+  const rows = await RC.ensureRecordingsRecovered()
+  log('recovered_rows', rows.length)
+  log('recovered_ids', rows.map((r) => r.id))
+  const meta = rows.find((r) => r.id === sessionId)
+  log('ours_recovered', !!meta)
+  if (!meta) return
+  log('recovered_id', meta.id)
+  log('meeting_no', meta.meetingNo)
+  log('partial', meta.partial)
+  log('schema', meta.schema)
+  log('dirHandle', meta.dirHandle)
+  log('track_count', (meta.tracks || []).length)
+  const t = (meta.tracks || []).find((x) => x.recordingId === trackId) || (meta.tracks || [])[0]
+  log('track_matched', !!t && t.recordingId === trackId)
+  log('segment_count', t?.segments.length)
+  log('has_video', t?.hasVideo)
+  log('has_audio', t?.hasAudio)
+  log('close_reason', t?.closeReason)
+  log('end_offset', t?.endOffsetSec)
+  log('closed_at_is_null', t?.closedAtMs === null)
+  // 工作 B：崩溃重建出来的条目也必须带着解码参数（它存在会话头的路级白名单里，不靠现场读容器）
+  log('width', t?.width)
+  log('height', t?.height)
+  log('frameRate', t?.frameRate)
+  log('sampleRate', t?.sampleRate)
+  log('channelCount', t?.channelCount)
+  log('top_level_mime_gone', !('mime' in meta))
+  log('container_of_tracks', LR.containerOf(meta.tracks || []))
+  log('durationSec', meta.durationSec)
+  log('sizeBytes', meta.sizeBytes)
+  const after = await LR.listCrashedSessions(LR.SESSION_STALE_MS)
+  log('crashed_ids_after_rebuild', after.map((s) => s.id))
+  log('ours_no_longer_open', !after.some((s) => s.id === sessionId))
+
+  // 拼成真文件：能拼出来才说明"重建出的清单指向的字节是真能读的"
+  if (t) {
+    const blob = await TR.assembleTrackBlob(t)
+    log('assembled_bytes', blob ? blob.size : 0)
+    if (blob) {
+      await fetch('http://127.0.0.1:5199/file/crashsim-recovered.webm', {
+        method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: blob,
+      })
+      log('dumped', true)
+    }
+  }
+}
+
+let made = null
+try {
+  if (phase === 'record') made = await record()
+  else if (phase === 'finish') made = await finishPhase()
+  else if (phase === 'download') made = await downloadPhase()
+  else await check()
+} catch (e) {
+  log('PHASE_ERROR', String((e && e.message) || e))
+  log('PHASE_ERROR_NAME', String((e && e.name) || ''))
+}
+
+await fetch('http://127.0.0.1:5199/result/crashsim-' + phase, {
+  method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify({ phase, made, lines: out }),
+})
+document.title = `CRASHSIM ${phase} done`
+</script>

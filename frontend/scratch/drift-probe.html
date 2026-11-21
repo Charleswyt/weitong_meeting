@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>墙钟 offset vs 容器时间码 漂移探针</title>
+<style>body{font:13px/1.6 ui-monospace,Consolas,monospace;background:#0b1220;color:#cbd5e1;padding:16px}pre{white-space:pre-wrap}</style>
+</head>
+<body><pre id="out">booting…</pre>
+<script type="module">
+// 只回答一件事：**清单里的墙钟段长，与分片容器里的编码器时间码，差多少？**
+//
+// 为什么重要：生产里每片的 offset/duration 全部来自 Date.now()-t0（trackRecorder.ts:299-308），
+// 而离线合成导出要**按清单 offset 对齐多路**。若两者漂移，交付件就会音画错位。
+//
+// 判据（先按"增量"比，绝对值差不计 —— 它含首片延迟与帧边界，属设计如此）：
+//   Σ(墙钟相邻到达间隔)  vs  容器内末帧时间码
+// 跑两遍：A 对照组（正常节奏）、B 制造编码器排队（在 ondataavailable 里 busy-wait 数片）。
+import { demuxWebM } from '../src/utils/offlineExport/webmDemuxer'
+
+const out = document.getElementById('out')
+const say = (s) => { out.textContent += '\n' + s }
+const F = (n, d = 1) => Number(n).toFixed(d)
+const RESULT = { stage: 'boot', runs: [] }
+window.__probe = RESULT
+const SINK = 'http://127.0.0.1:5199'
+const report = () => {
+  try {
+    document.title = 'DRIFT ' + RESULT.stage + ' ' + RESULT.runs.map((r) => `${r.name}:${r.deltaMs}ms`).join(' ')
+  } catch {}
+  fetch(SINK + '/result/drift', { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify(RESULT) }).catch(() => {})
+}
+
+async function oneRun(name, sec, stallChunks) {
+  const W = 640, H = 360
+  const c = document.createElement('canvas'); c.width = W; c.height = H
+  const g = c.getContext('2d')
+  let drawn = 0
+  const vstream = c.captureStream(0)           // 手动出帧：与生产的远端画面路同形
+  const vtrack = vstream.getVideoTracks()[0]
+
+  // 音频尽力而为：隐藏页里 AudioContext 可能起不来，那就只测视频，并如实记下
+  let ac = null, audioNote = 'none'
+  try {
+    ac = new AudioContext()
+    if (ac.state === 'suspended') await ac.resume()
+    audioNote = ac.state
+  } catch (e) { audioNote = 'error ' + e.name }
+  const tracks = [vtrack]
+  let osc = null
+  if (ac && ac.state === 'running') {
+    const dest = ac.createMediaStreamDestination()
+    osc = ac.createOscillator(); osc.frequency.value = 440
+    const gn = ac.createGain(); gn.gain.value = 0.2
+    osc.connect(gn); gn.connect(dest); osc.start()
+    tracks.push(...dest.stream.getAudioTracks())
+  }
+
+  const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp9', 'video/webm']
+    .find((m) => MediaRecorder.isTypeSupported(m))
+  const rec = new MediaRecorder(new MediaStream(tracks), mime ? { mimeType: mime } : undefined)
+  const chunks = []
+  const arrivals = []          // 每片：墙钟到达时刻（相对 t0）+ 字节数
+  const t0 = Date.now()
+  let pushing = true
+  rec.ondataavailable = (e) => {
+    const i = arrivals.length
+    arrivals.push({ i, wallMs: Date.now() - t0, size: e.data.size })
+    if (e.data.size) chunks.push(e.data)
+    // B 组：前几片里 busy-wait —— 阻塞主线程，逼编码器排队（也让出帧停一会儿）
+    if (stallChunks && i < stallChunks) {
+      const until = Date.now() + 400
+      while (Date.now() < until) { /* 故意空转 */ }
+    }
+  }
+  rec.start(2000)              // 与生产一致的 timeslice
+
+  // 出帧：生产是 rAF 驱动 + 按 fps 节流（trackRecorder.ts:379-383）；这里用定时器，
+  // 因为隐藏页 rAF 一帧都不发。定时器也会被节流 —— 那正是我们要观察的真实条件之一。
+  const fps = 15
+  const timer = setInterval(() => {
+    if (!pushing) return
+    drawn++
+    g.fillStyle = `hsl(${(drawn * 5) % 360} 55% 25%)`; g.fillRect(0, 0, W, H)
+    g.fillStyle = '#e2e8f0'; g.font = '40px sans-serif'; g.fillText(String(drawn), 40, 180)
+    vtrack.requestFrame()
+  }, 1000 / fps)
+
+  await new Promise((r) => setTimeout(r, sec * 1000))
+  pushing = false
+  clearInterval(timer)
+  const stopped = new Promise((r) => { rec.onstop = r })
+  try { rec.stop() } catch {}
+  await stopped
+  if (osc) { try { osc.stop() } catch {} }
+  tracks.forEach((t) => t.stop())
+  if (ac) await ac.close().catch(() => {})
+
+  const blob = new Blob(chunks, { type: rec.mimeType || mime || 'video/webm' })
+  const buf = await blob.arrayBuffer()
+  const d = demuxWebM(buf)
+  let containerTotalMs = 0, videoFrames = 0, keyframes = 0
+  const vt = [...d.tracks.values()].find((t) => t.type === 1)
+  if (vt) {
+    const fs = d.frames.get(vt.number) ?? []
+    videoFrames = fs.length
+    keyframes = fs.filter((f) => f.key).length
+    containerTotalMs = fs.length ? fs[fs.length - 1].tsMs : 0
+  }
+  // Σ 墙钟相邻到达间隔 = 末片到达 − 首片到达（去掉首片之前的等待，与容器内首帧对齐）
+  const wallSpanMs = arrivals.length > 1 ? arrivals[arrivals.length - 1].wallMs - arrivals[0].wallMs : 0
+  const r = {
+    name, mime: rec.mimeType || mime, hidden: document.hidden, audioNote,
+    drawnFrames: drawn, chunks: arrivals.length, bytes: blob.size,
+    arrivals: arrivals.map((a) => a.wallMs),
+    containerTotalMs,
+    containerDurationSec: d.durationSecHint ?? null,
+    videoFrames, keyframes,
+    wallSpanMs,
+    deltaMs: Math.round(wallSpanMs - containerTotalMs),
+    demuxMs: d.ms,
+  }
+  RESULT.runs.push(r)
+  say(`${name}: 片 ${r.chunks} · 作画 ${drawn} 帧 · 容器 ${videoFrames} 帧/${keyframes} 关键帧`)
+  say(`   墙钟跨度 ${wallSpanMs}ms · 容器末帧时间码 ${F(containerTotalMs)}ms · **差 ${r.deltaMs}ms**`)
+  await fetch(SINK + '/file/drift-' + name + '.webm', { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: blob }).catch(() => {})
+  return r
+}
+
+async function main() {
+  try {
+    say(`hidden=${document.hidden}（隐藏页 rAF 不发帧、定时器被压到 ~1/s —— 这正是要观察的真实条件之一）`)
+    await oneRun('A-control', 20, 0)
+    await oneRun('B-stall', 20, 4)
+    RESULT.stage = 'done'
+  } catch (e) {
+    RESULT.stage = 'error'; RESULT.error = String(e && e.message || e); say('ERROR ' + RESULT.error)
+  }
+  say('DONE')
+  report()
+}
+main()
+</script>
+</body>
+</html>

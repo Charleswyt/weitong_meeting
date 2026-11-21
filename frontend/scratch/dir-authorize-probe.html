@@ -1,0 +1,63 @@
+<!doctype html>
+<!--
+  第 36 项探针：用户已经在设置页给系统「视频」文件夹授过权，但 Videos 下没有 hxt 目录 —— 为什么？
+  这里不猜：用生产模块自己的 API（getRecordingDirName / writeRecordingAt）走一遍，
+  把"有没有句柄""写不写得进去""写进去落在哪"三件事如实报出来。
+  探针只写一个 hxt/_probe/.../probe.txt，验完手工删掉。
+-->
+<html lang="zh">
+  <head><meta charset="utf-8" /><title>探针 授权目录</title></head>
+  <body style="font: 14px/1.7 system-ui; padding: 24px; max-width: 760px">
+    <h3>授权目录写入探针</h3>
+    <button id="go" style="padding: 10px 18px">查句柄并试写一次</button>
+    <pre id="out" style="white-space: pre-wrap; margin-top: 16px; font-size: 12px"></pre>
+    <script type="module">
+      const $ = (id) => document.getElementById(id)
+      const say = (s) => { $('out').textContent += s + '\n'; return s }
+      window.addEventListener('error', (e) => say('未捕获错误：' + e.message))
+      window.addEventListener('unhandledrejection', (e) => say('Promise 被拒：' + (e.reason?.message || e.reason)))
+      say('探针脚本已加载，正在 import 生产模块…')
+      const LR = await import('/src/utils/localRecorder.ts')
+      say('生产模块已加载，writeRecordingAt=' + typeof LR.writeRecordingAt)
+
+      $('go').onclick = async () => {
+        say('按钮被点到')
+        const lines = []
+        const name = await LR.getRecordingDirName()
+        lines.push('授权目录名 = ' + (name === null ? '（IndexedDB 里没有句柄）' : name))
+
+        // 先走修复后的入口：在**这一次点击的手势窗口内**把 readwrite 权限要到手
+        const state = await LR.ensureRecordingDirAccess()
+        lines.push('ensureRecordingDirAccess() = ' + state)
+
+        const parts = ['hxt', '_probe', 'agent-probe', '999999']
+        const ok = await LR.writeRecordingAt(parts, 'probe.txt', new Blob(['probe ' + Date.now()], { type: 'text/plain' }))
+        lines.push('writeRecordingAt(' + parts.join('/') + '/probe.txt) = ' + ok)
+
+        // 顺手把权限状态单独量一遍：写失败时最常见的两种原因是"没句柄"和"权限要重新授"
+        const db = await new Promise((res, rej) => {
+          const r = indexedDB.open('conference-local', 2)
+          r.onsuccess = () => res(r.result)
+          r.onerror = () => rej(r.error)
+        })
+        const handle = await new Promise((res) => {
+          const tx = db.transaction('handles', 'readonly')
+          const req = tx.objectStore('handles').getAll()
+          req.onsuccess = () => res(req.result)
+          req.onerror = () => res([])
+        })
+        const h = handle[0]
+        lines.push('handles 表条目数 = ' + handle.length + '，kind=' + (h?.kind ?? '—') + '，name=' + (h?.name ?? '—'))
+        if (h) {
+          const q = h.queryPermission ? await h.queryPermission({ mode: 'readwrite' }) : '（无 queryPermission）'
+          lines.push('queryPermission(readwrite) = ' + q)
+        }
+        const text = lines.join('\n')
+        say(text)
+        document.title = (ok ? 'PROBE-OK ' : 'PROBE-FAIL ') + (name || 'nohandle')
+        $('go').disabled = true
+      }
+      if (new URLSearchParams(location.search).get('auto') === '1') setTimeout(() => $('go').click(), 300)
+    </script>
+  </body>
+</html>

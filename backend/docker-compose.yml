@@ -1,0 +1,95 @@
+# 开发环境编排 —— 前后端同一个 compose，浏览器只访问 web 那一个端口。
+#
+# 为什么把前端也容器化：nginx 把 /api、/ws、/assets/media-player.js 反代到后端之后，
+# 浏览器看到的是**同一个源**，而分享会议链接正是前端按浏览器地址拼的
+# （frontend/src/utils/joinFlow.ts 的 joinUrlFor）—— 同源才拼得对，也和现场形态一致。
+#
+# 用法（在本文件所在目录）：
+#   docker compose build                                  # 建两个镜像
+#   docker compose run --rm db-init                       # 首次：初始化数据库（建表 + 灌测试账号）
+#   docker compose up -d                                  # 起服务
+#   docker compose logs -f backend web                    # 看日志
+#   docker compose down                                   # 停（数据在卷里，不会丢）
+#   浏览器开 http://localhost:15175
+#
+# 先 db-init 再 up：库还没建就起服务，日志会刷一片 no such table。
+# 端口、挂载、环境变量逐项含义见 ../docs/部署-边端镜像.md。
+#
+# 注意 web 的构建上下文是同级的 frontend 仓（../frontend）—— 工作区约定本来就是
+# "clone 一仓 + 同级 clone 它的依赖仓"，只单独 clone backend 时 web 这个服务构建不了。
+
+name: conference-dev
+
+# 三处挂载共用，写一次免得两个 service 各写一遍跑偏。
+x-mounts: &mounts
+  - &conf
+    type: bind
+    source: ./manifest/config/config.yaml
+    target: /app/manifest/config/config.yaml
+    read_only: true
+
+  - &data
+    type: volume
+    source: conference-data
+    target: /app/data
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # 开发机是 amd64；现场那份 arm64 用 docker build --platform linux/arm64 单独出。
+      # 不在这里改平台，否则 compose 起来的东西和发出去的包就不是一个东西。
+    image: conference-backend:dev
+    container_name: conference-backend-dev
+    restart: unless-stopped
+    ports:
+      # 宿主机端口:容器端口。宿主机 8082 被占（比如本仓 go run . 还挂着）就只改左边：
+      # HOST_PORT=18082 docker compose up -d。容器内监听地址不需要动，
+      # 这也是它不开放成环境变量的原因 —— 少一条真源。
+      - "${HOST_PORT:-8082}:8082"
+    environment:
+      # 本实例部署在哪一侧：三方没报某个参会者的端点类型时按这一侧显示。
+      # 代码默认已是 edge，这里显式写出来是让这份文件本身就是配置文档。
+      DEPLOYMENT_SIDE: "${DEPLOYMENT_SIDE:-edge}"
+      # 进程时区，同时决定落库时间戳的时区。跨时区部署才需要动。
+      SERVER_TIMEZONE: "${SERVER_TIMEZONE:-Asia/Shanghai}"
+    volumes: *mounts
+
+  web:
+    build:
+      # 同级的前端仓。工作区约定本来就是"clone 一仓 + 同级 clone 依赖仓"，
+      # 所以这里跨仓引用是合规的；只单独 clone backend 时这个服务构建不了。
+      context: ../frontend
+      dockerfile: Dockerfile
+    image: conference-frontend:dev
+    container_name: conference-frontend-dev
+    restart: unless-stopped
+    ports:
+      # 宿主机这一侧固定用 15175，**不用前端 dev server 的 5175**：那个端口是宿主机上
+      # `pnpm dev` 的，撞上要么容器起不来，要么你以为在测容器、其实测的是 dev server。
+      # 要换号就改冒号左边（容器内始终是 80）。
+      - "15175:80"
+    environment:
+      # nginx 的反代目标。compose 网络里后端服务名就是 backend，不用写 IP；
+      # 要把前端单独指向另一台后端时改这里（例：BACKEND_UPSTREAM=10.0.0.5:8082）。
+      BACKEND_UPSTREAM: "${BACKEND_UPSTREAM:-backend:8082}"
+    depends_on:
+      - backend
+
+  # 一次性初始化，用 profile 隔开，docker compose up 不会带上它，要显式 run。
+  db-init:
+    profiles: ["init"]
+    image: conference-backend:dev
+    container_name: conference-backend-init
+    # 镜像的 ENTRYPOINT 是 /app/conference，所以这里的 command 就是传给它的子命令。
+    # 建表、灌账号、口令换哈希都在这一条里跑完，现场不需要知道中间有几步。
+    command: ["db-init"]
+    volumes: *mounts
+    # 账号种子不用挂：它已烘进镜像（manifest/sql/field-credentials.sql）。
+    # 构建时这份种子必须在原地（它被 gitignore，不在版本库里）。
+
+volumes:
+  # 数据库文件的落点。备份/回滚就是把里面的 conference.db 拷走
+  # （拷之前先 down，或先执行一次 PRAGMA wal_checkpoint 把 -wal 合并回主文件）。
+  conference-data:

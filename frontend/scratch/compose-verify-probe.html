@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>合成产物验证探针</title>
+<style>body{font:13px/1.6 ui-monospace,Consolas,monospace;background:#0b1220;color:#cbd5e1;padding:16px}pre{white-space:pre-wrap}</style>
+</head>
+<body><pre id="out">booting…</pre>
+<script type="module">
+// 只回答一件事：交到用户手里的那份合成件，到底能不能「显示时长 / 拖动进度条 / 有声音」。
+// 取文件走探针接收器（GET /file/<name>，同机 127.0.0.1:5199，允许跨源），结果 POST 回 /result/composeverify 落盘。
+// 为什么不用 app 页里跑：这台机器上 user-browser-use 的 evaluate_script 恒回 {}，只有本页这条通道能带出数字。
+const out = document.getElementById('out')
+const RESULT = { stage: 'boot', file: new URLSearchParams(location.search).get('f') || '' }
+const say = (s) => { out.textContent += '\n' + s }
+const report = () => { fetch('http://127.0.0.1:5199/result/composeverify', { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify(RESULT) }).catch(() => {}) }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+async function main() {
+  const name = RESULT.file
+  if (!name) { RESULT.stage = 'error'; RESULT.error = '缺 ?f=<文件名>'; say('ERROR 缺文件名'); report(); return }
+  const url = 'http://127.0.0.1:5199/file/' + encodeURIComponent(name)
+  const blob = await (await fetch(url)).blob()
+  RESULT.bytes = blob.size
+  RESULT.type = blob.type
+  say(`${name} · ${blob.size} 字节 · type=${blob.type || '(空)'}`)
+  // 容器头四个字节（fMP4 的 moof 与渐进 MP4 的区别在顶层 box，不在这里，另由 node 侧核）
+  const head = [...new Uint8Array(await blob.slice(0, 12).arrayBuffer())].map((b) => b.toString(16).padStart(2, '0')).join(' ')
+  RESULT.head = head
+
+  // —— 画面侧：时长能不能直读、能不能 seek 到指定位置 ——
+  const v = document.createElement('video')
+  v.playsInline = true
+  v.preload = 'auto'
+  v.style.maxWidth = '90vw'
+  document.body.appendChild(v)
+  const objUrl = URL.createObjectURL(blob)
+  const metaOk = await new Promise((resolve) => {
+    const t = setTimeout(() => resolve(false), 8000)
+    v.onloadedmetadata = () => { clearTimeout(t); resolve(true) }
+    v.onerror = () => { clearTimeout(t); resolve(false) }
+    v.src = objUrl
+  })
+  const seekTo = (t) => new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), 5000)
+    v.onseeked = () => { clearTimeout(timer); resolve(Number(v.currentTime.toFixed(3))) }
+    try { v.currentTime = t } catch { clearTimeout(timer); resolve(null) }
+  })
+  if (!metaOk) {
+    RESULT.video = { metaOk: false, error: v.error ? v.error.code + ' ' + v.error.message : 'no metadata' }
+    say('画面：拿不到 metadata → ' + JSON.stringify(RESULT.video))
+  } else {
+    RESULT.video = {
+      metaOk: true,
+      duration: isFinite(v.duration) ? Number(v.duration.toFixed(3)) : String(v.duration),
+      seekableEnd: v.seekable.length ? Number(v.seekable.end(v.seekable.length - 1).toFixed(3)) : null,
+      w: v.videoWidth, h: v.videoHeight,
+    }
+    // seek 到 50% 与 90%：落点偏差就是"能不能拖进度条"的直接证据
+    const d = isFinite(v.duration) ? v.duration : 0
+    RESULT.video.seek50 = d ? await seekTo(+(d * 0.5).toFixed(3)) : null
+    RESULT.video.seek90 = d ? await seekTo(+(d * 0.9).toFixed(3)) : null
+    // 真的在解码吗：play 一会儿看帧数与 currentTime
+    try { v.muted = true; await v.play() } catch (e) { RESULT.video.playErr = e.name }
+    const t0 = v.currentTime
+    await sleep(1800)
+    const q = v.getVideoPlaybackQuality ? v.getVideoPlaybackQuality() : null
+    RESULT.video.frames = q ? q.totalVideoFrames : null
+    RESULT.video.advanced = Number((v.currentTime - t0).toFixed(3))
+    RESULT.video.paused = v.paused
+    say(`画面：dur=${RESULT.video.duration}s 尺寸=${RESULT.video.w}x${RESULT.video.h} seekable=${RESULT.video.seekableEnd} 拖到50%→${RESULT.video.seek50} 拖到90%→${RESULT.video.seek90} 解码帧数=${RESULT.video.frames} 1.8秒推进=${RESULT.video.advanced}s`)
+  }
+
+  // —— 声音侧：整份文件解出来量峰值/RMS ——
+  try {
+    const ac = new AudioContext()
+    const ab = await blob.arrayBuffer()
+    const audio = await ac.decodeAudioData(ab.slice(0))
+    let peak = 0, sumSq = 0, n = 0
+    for (let c = 0; c < audio.numberOfChannels; c++) {
+      const d = audio.getChannelData(c)
+      for (let i = 0; i < d.length; i++) { const a = Math.abs(d[i]); if (a > peak) peak = a; sumSq += d[i] * d[i]; n++ }
+    }
+    RESULT.audio = {
+      seconds: Number(audio.duration.toFixed(3)), sampleRate: audio.sampleRate, channels: audio.numberOfChannels,
+      peak: Number(peak.toFixed(4)), rms: Number(Math.sqrt(sumSq / Math.max(1, n)).toFixed(4)),
+    }
+    RESULT.audio.verdict = peak > 0.001 ? '有声音' : '**静音**'
+    await ac.close().catch(() => {})
+    say(`声音：${RESULT.audio.verdict} · ${RESULT.audio.seconds}s · ${RESULT.audio.sampleRate}Hz · ${RESULT.audio.channels}ch · peak=${RESULT.audio.peak} rms=${RESULT.audio.rms}`)
+  } catch (e) {
+    RESULT.audio = { error: String((e && e.name) || e) + ': ' + String((e && e.message) || '') }
+    say('声音：解不开 → ' + JSON.stringify(RESULT.audio))
+  }
+  RESULT.stage = 'done'
+  say('DONE')
+  report()
+}
+main().catch((e) => { RESULT.stage = 'error'; RESULT.error = String((e && e.message) || e); say('ERROR ' + RESULT.error); report() })
+</script>
+</body>
+</html>

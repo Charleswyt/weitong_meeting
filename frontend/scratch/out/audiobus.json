@@ -1,0 +1,1 @@
+{"stage":"done","src":{"bytes":1870573},"A":{"ctxState":"running","playErr":null,"tracks":1,"recorded":{"seconds":3.96,"peak":0.0706,"rms":0.004,"bytes":64029},"verdict":"有声音"},"B":{"ctxState":"running","playErr":null,"tracks":1,"recorded":{"seconds":4.02,"peak":0.0706,"rms":0.004,"bytes":64995},"verdict":"有声音"}}

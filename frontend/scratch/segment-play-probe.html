@@ -1,0 +1,63 @@
+<!doctype html>
+<!--
+  一次性诊断页（scratch/ 被 gitignore，不进仓库）。
+
+  存在的理由：真实本地录制的回放页停在「正在准备…」，时钟不前进，宫格合成也就没起跑。
+  这里不猜 —— 直接用**被测模块自己的 API**（/src/utils/localRecorder.ts）把最新一条 schema 2
+  清单的第一段画面分片从 IndexedDB 取出来，喂给 <video>，把每一步的读数写进标题（给
+  navigate_page 读回）和正文（给 wait_for 读）。全程不涉及口令与令牌。
+-->
+<html lang="zh">
+  <head><meta charset="utf-8" /><title>SEGP-START</title></head>
+  <body style="font: 14px/1.7 system-ui; padding: 20px; white-space: pre-wrap">
+    <div id="out">SEGP-RUNNING</div>
+    <video id="v" playsinline muted preload="auto"></video>
+    <script type="module">
+      const $ = (id) => document.getElementById(id)
+      // 每行单独一个节点：连接器读元素文本会截断整块容器，拆开后才能直接读到最后一句结论。
+      const say = (s) => {
+        const d = document.createElement('div')
+        d.className = 'line'
+        d.textContent = s
+        $('out').appendChild(d)
+        document.title = 'SEGP:' + s.slice(0, 120)
+      }
+
+      try {
+        const REC = await import('/src/utils/localRecorder.ts')
+        const items = await REC.listLocalRecordings()
+        const meta = items.filter((x) => x.schema === 2 && (x.tracks || []).length)
+          .sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0))[0]
+        if (!meta) { say('NO-META count=' + items.length); throw new Error('no meta') }
+        const vt = meta.tracks.find((t) => t.hasVideo)
+        say('META id=' + meta.id + ' tracks=' + meta.tracks.length + ' dirPath=' + (meta.dirPath || '-'))
+        say('LANE ' + vt.recordingId + ' segs=' + vt.segments.length + ' start=' + vt.startOffsetSec + ' end=' + vt.endOffsetSec + ' mime=' + vt.mime)
+
+        const s0 = vt.segments[0]
+        say('SEG0 key=' + s0.blobKey + ' offset=' + s0.offsetSec + ' dur=' + s0.durationSec + ' bytes=' + s0.sizeBytes)
+        const blob = await REC.getSegmentBlob(s0.blobKey)
+        if (!blob) { say('BLOB-MISSING key=' + s0.blobKey); throw new Error('no blob') }
+        say('BLOB ok size=' + blob.size + ' type=' + (blob.type || '(empty)'))
+
+        // 字节层先验：EBML 魔数 + 声明时长。这一步不吃媒体元素、不受标签页可见性影响，
+        // 用来把"分片本身坏了"和"<video> 在后台不加载"这两件事分开。
+        const head = new Uint8Array(await blob.slice(0, 64).arrayBuffer())
+        const hex = Array.from(head.slice(0, 4), (b) => b.toString(16).padStart(2, '0')).join('')
+        say('BYTES first4=' + hex + ' ebml=' + (hex === '1a45dfa3' ? 'YES' : 'NO') + ' declaredBytes=' + s0.sizeBytes + ' actual=' + blob.size)
+
+        const v = $('v')
+        const verdict = await new Promise((res) => {
+          const to = setTimeout(() => res('TIMEOUT rs=' + v.readyState + ' ns=' + v.networkState + ' err=' + (v.error ? v.error.name + '/' + v.error.code : 'none') + ' src=' + (v.currentSrc ? 'set' : 'empty')), 15000)
+          v.onloadeddata = () => { clearTimeout(to); res('LOADED rs=' + v.readyState + ' dur=' + v.duration + ' vw=' + v.videoWidth + ' vh=' + v.videoHeight) }
+          v.onerror = () => { clearTimeout(to); res('ERR ' + (v.error ? v.error.name + '/' + v.error.code : '?')) }
+          v.src = URL.createObjectURL(blob)
+          v.load()
+        })
+        say('DECODE ' + verdict)
+        document.title = 'SEGP-DONE ' + verdict.slice(0, 60)
+      } catch (e) {
+        say('THROW ' + e.name + ' ' + String(e.message).slice(0, 80))
+      }
+    </script>
+  </body>
+</html>

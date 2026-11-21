@@ -1,0 +1,71 @@
+<!doctype html>
+<!--
+  一次性读数页：把本机清单里每一条录制的"引擎会拿到的时长"原样打出来。
+  为什么需要它：宫格合成的截断疑点要判"传进 composeGrid 的 durationSec 到底是几"，
+  而那个数 = max(1, meta.durationSec)（见 RecordingPlaybackView.buildEngine）。
+  连接器这一轮 evaluate_script 不回传值、页面又在后台，所以让页面自己把结果写成可见文本，
+  由 wait_for 读回 —— 这条通道在窗口最小化/页面 hidden 时仍然工作。
+-->
+<html lang="zh-CN">
+  <head><meta charset="utf-8" /><title>LOCALS</title></head>
+  <body>
+    <pre id="o">LOADING</pre>
+    <script>
+      (function () {
+        var o = document.getElementById('o')
+        function put(lines) {
+          o.textContent = lines.join('\n')
+          document.title = 'LOCALS-' + lines.length
+        }
+        function tag(s) {
+          // 结论走标题：navigate_page 会把 Title 原样回传，而 wait_for 会把长文本截断。
+          document.title = s.slice(0, 120)
+        }
+        var req = indexedDB.open('conference-local', 2)
+        req.onerror = function () { put(['OPENFAIL ' + req.error]) }
+        req.onsuccess = function () {
+          var db = req.result
+          var g = db.transaction('recordings', 'readonly').objectStore('recordings').getAll()
+          g.onerror = function () { put(['GETFAIL ' + g.error]) }
+          g.onsuccess = function () {
+            var all = g.result || []
+            all.sort(function (a, b) { return (a.startedAt || 0) - (b.startedAt || 0) })
+            var lines = ['COUNT ' + all.length]
+            all.forEach(function (x) {
+              var segs = (x.tracks || []).reduce(function (n, t) { return n + (t.segments || []).length }, 0)
+              var span = 0
+              ;(x.tracks || []).forEach(function (t) {
+                ;(t.segments || []).forEach(function (s) {
+                  var e = (s.offsetSec || 0) + (s.durationSec || 0)
+                  if (e > span) span = e
+                })
+              })
+              lines.push(
+                'DUR ' + Math.max(1, Math.round(x.durationSec || 0))
+                + ' RAW ' + (x.durationSec || 0)
+                + ' SPAN ' + span.toFixed(1)
+                + ' TRK ' + (x.tracks || []).length
+                + ' SEG ' + segs
+                + ' SC ' + (x.schema || 1)
+                + ' ' + new Date(x.startedAt || 0).toLocaleTimeString('sv-SE')
+                + ' ' + x.id,
+              )
+            })
+            put(lines)
+            tag('DURS ' + all.map(function (x) { return Math.max(1, Math.round(x.durationSec || 0)) }).join(','))
+            // 再挑一条"够长、且带画面"的：前台复现整场合成时用它，长到足以证明不是只跑了开头几秒。
+            var cands = all.filter(function (x) {
+              return (x.tracks || []).some(function (t) { return t.hasVideo }) && Math.round(x.durationSec || 0) >= 30
+            })
+            cands.sort(function (a, b) { return (a.durationSec || 0) - (b.durationSec || 0) })
+            var pick = cands[0]
+            if (pick) {
+              document.title = 'PICK ' + Math.round(pick.durationSec) + 's id=' + pick.id
+                + ' trk=' + (pick.tracks || []).length + ' dir=' + (pick.dirPath ? 'Y' : 'N')
+            }
+          }
+        }
+      })()
+    </script>
+  </body>
+</html>

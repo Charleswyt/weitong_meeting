@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>MP4 交付格式可用性探针（AAC + avcC）</title>
+<style>body{font:13px/1.6 ui-monospace,Consolas,monospace;background:#0b1220;color:#cbd5e1;padding:16px}pre{white-space:pre-wrap}</style>
+</head>
+<body><pre id="out">booting…</pre>
+<script type="module">
+// 为什么这一轮：产物验出"有画面无声音"，根因是播放器解不了 Opus（WebM 里的音频我解出来峰值 0.70，是真的）。
+// 归档上交要对方随手能播 ⇒ 交付格式必须是 MP4 / H.264 / **AAC**。
+// 这一轮只回答两件承载性事实：① 这台浏览器能不能编 AAC（mp4a.40.2）；② 能不能给出
+// MP4 封装必需的 avcC（H.264）与 AudioSpecificConfig（AAC）—— 给了才谈得上自己封 MP4。
+const out = document.getElementById('out')
+const say = (s) => { out.textContent += '\n' + s }
+const RESULT = { stage: 'boot' }
+window.__probe = RESULT
+const report = () => {
+  try {
+    document.title = 'CODECS ' + RESULT.stage + ' v=' + (RESULT.video && RESULT.video.negotiated) + ' a=' + (RESULT.audio && RESULT.audio.negotiated)
+  } catch {}
+  fetch('http://127.0.0.1:5199/result/codecs', { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify(RESULT) }).catch(() => {})
+}
+const hex = (u8, n = 12) => [...u8.slice(0, n)].map((b) => b.toString(16).padStart(2, '0')).join(' ')
+const yieldTask = () => new Promise((r) => setTimeout(r, 0))
+
+async function probeVideo() {
+  const cands = ['avc1.640028', 'avc1.42E01E', 'avc1.42001E', 'avc1.42001f']
+  const W = 640, H = 360
+  const c = document.createElement('canvas'); c.width = W; c.height = H
+  const g = c.getContext('2d')
+  const r = { candidates: [] }
+  let chosen = null
+  for (const codec of cands) {
+    try {
+      const s = await VideoEncoder.isConfigSupported({ codec, width: W, height: H, bitrate: 800000, framerate: 15 })
+      r.candidates.push(codec + '=' + s.supported)
+      if (s.supported && !chosen) chosen = codec
+    } catch (e) { r.candidates.push(codec + '=ERR ' + e.name) }
+  }
+  if (!chosen) { r.error = '没有可用 H.264 编码器'; return r }
+  r.requested = chosen
+  let desc = null, negotiated = null, n = 0
+  const enc = new VideoEncoder({
+    output: (ch, meta) => {
+      n++
+      if (!negotiated) negotiated = meta && meta.decoderConfig && meta.decoderConfig.codec
+      if (meta && meta.decoderConfig && meta.decoderConfig.description && !desc) {
+        desc = new Uint8Array(meta.decoderConfig.description)
+      }
+    },
+    error: (e) => { r.error = String(e && e.message || e) },
+  })
+  enc.configure({ codec: chosen, width: W, height: H, bitrate: 800000, framerate: 15 })
+  for (let i = 0; i < 30; i++) {
+    g.fillStyle = `hsl(${i * 12} 60% 30%)`; g.fillRect(0, 0, W, H)
+    const vf = new VideoFrame(c, { timestamp: Math.round(i * 1e6 / 15), duration: 66666 })
+    enc.encode(vf, { keyFrame: i % 15 === 0 }); vf.close()
+  }
+  await enc.flush()
+  r.negotiated = negotiated || chosen
+  r.chunks = n
+  r.avcC = desc ? { bytes: desc.length, head: hex(desc) } : null
+  return r
+}
+
+async function probeAudio() {
+  const cands = ['mp4a.40.2', 'aac', 'opus']
+  const r = { candidates: [] }
+  let chosen = null
+  for (const codec of cands) {
+    try {
+      const s = await AudioEncoder.isConfigSupported({ codec, sampleRate: 48000, numberOfChannels: 2, bitrate: 128000 })
+      r.candidates.push(codec + '=' + s.supported)
+      if (s.supported && !chosen) chosen = codec
+    } catch (e) { r.candidates.push(codec + '=ERR ' + e.name) }
+  }
+  if (!chosen) { r.error = '没有可用音频编码器'; return r }
+  r.requested = chosen
+  let desc = null, negotiated = null, n = 0
+  const enc = new AudioEncoder({
+    output: (ch, meta) => {
+      n++
+      if (!negotiated) negotiated = meta && meta.decoderConfig && meta.decoderConfig.codec
+      if (meta && meta.decoderConfig && meta.decoderConfig.description && !desc) {
+        desc = new Uint8Array(meta.decoderConfig.description)
+      }
+    },
+    error: (e) => { r.error = String(e && e.message || e) },
+  })
+  enc.configure({ codec: chosen, sampleRate: 48000, numberOfChannels: 2, bitrate: 128000 })
+  const SR = 48000, N = 960
+  const planar = new Float32Array(N * 2)
+  for (let k = 0; k < 50; k++) {
+    for (let i = 0; i < N; i++) {
+      const v = 0.3 * Math.sin((2 * Math.PI * 440 * (k * N + i)) / SR)
+      planar[i] = v; planar[N + i] = v
+    }
+    enc.encode(new AudioData({
+      format: 'f32-planar', sampleRate: SR, numberOfFrames: N, numberOfChannels: 2,
+      timestamp: Math.round((k * N / SR) * 1e6), data: planar.slice(0),
+    }))
+    if (enc.encodeQueueSize > 16) await yieldTask()
+  }
+  await enc.flush()
+  r.negotiated = negotiated || chosen
+  r.chunks = n
+  r.asc = desc ? { bytes: desc.length, head: hex(desc) } : null
+  return r
+}
+
+async function main() {
+  try {
+    RESULT.video = await probeVideo()
+    say('视频: 请求 ' + RESULT.video.requested + ' · 协商 ' + RESULT.video.negotiated
+      + ' · ' + RESULT.video.chunks + ' 块 · avcC ' + (RESULT.video.avcC ? RESULT.video.avcC.bytes + 'B [' + RESULT.video.avcC.head + ']' : '**无**'))
+    say('  候选: ' + (RESULT.video.candidates || []).join(' '))
+    RESULT.audio = await probeAudio()
+    say('音频: 请求 ' + RESULT.audio.requested + ' · 协商 ' + RESULT.audio.negotiated
+      + ' · ' + RESULT.audio.chunks + ' 块 · ASC ' + (RESULT.audio.asc ? RESULT.audio.asc.bytes + 'B [' + RESULT.audio.asc.head + ']' : '**无**'))
+    say('  候选: ' + (RESULT.audio.candidates || []).join(' '))
+    RESULT.stage = 'done'
+  } catch (e) {
+    RESULT.stage = 'error'; RESULT.error = String(e && e.message || e); say('ERROR ' + RESULT.error)
+  }
+  say('DONE')
+  report()
+}
+main()
+</script>
+</body>
+</html>

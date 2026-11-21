@@ -1,0 +1,38 @@
+{
+  "meeting": "meeting_1790600078_ev1-TRdK",
+  "streams": 6,
+  "lanes": 2,
+  "containers": 2,
+  "remoteBytes": 0,
+  "cols": 1,
+  "durationSec": 387.605,
+  "kind": "ok",
+  "coveredSec": 385.53333333333336,
+  "wallSec": 17.6895,
+  "specDurationSec": 387.605,
+  "selectedSpanSec": 385.48400000000004,
+  "wouldBeMarkedPartial": true,
+  "blobSize": 103383204,
+  "reasons": [],
+  "placeholders": 0,
+  "droppedAudioLanes": [],
+  "skippedAnomalousLanes": [],
+  "laneWindows": [
+    "  王强 · 声音 v=false a=true containers=199-385",
+    "  王强 · 画面 v=true a=false containers=202-258"
+  ],
+  "progress": [
+    "progress encode 1% covered=2s frames=30/5783",
+    "progress encode 11% covered=42s frames=630/5783",
+    "progress encode 21% covered=80s frames=1200/5783",
+    "progress encode 31% covered=118s frames=1770/5783",
+    "progress encode 41% covered=158s frames=2370/5783",
+    "progress encode 51% covered=196s frames=2940/5783",
+    "progress encode 61% covered=234s frames=3510/5783",
+    "progress encode 71% covered=272s frames=4080/5783",
+    "progress encode 81% covered=312s frames=4680/5783",
+    "progress encode 91% covered=350s frames=5250/5783"
+  ],
+  "visibility": "hidden",
+  "ua": "Edg/154.0.0.0"
+}

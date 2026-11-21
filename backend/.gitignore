@@ -1,0 +1,23 @@
+bin/
+temp/
+output/
+data/
+# docker save 出来的镜像包（发给现场的产物，几十 MB，绝不入库）
+dist/
+.idea/
+.vscode/
+*.exe
+*.log
+.env
+.env.local
+
+# 三方真实口令按用户一一对应注入数据库；此文件只用于灌库，绝不入库
+manifest/sql/seed-credentials.sql
+
+# 含数据库连接串口令：按用户决定写进配置文件而非 .env，故必须排除在版本库外。
+# **整个目录兜住，只放行模板** —— 本地起第二/第三实例会复制出 config-cloud.yaml、
+# 复原现场会留 config.yaml.bak-* 这类同目录兄弟件，它们同样带着 jwt.secret 与 SM2 私钥；
+# 按精确文件名或按扩展名钉都会漏（`.bak-20261013` 就没有 `.yaml` 尾巴），
+# 漏出去的那一个就是"未跟踪但没被忽略"，谁跑一次 `git add -A` 直接把密钥交进历史（2026-10-13 实测踩过）。
+manifest/config/*
+!manifest/config/config.yaml.example

@@ -1,0 +1,21 @@
+{
+  "meeting": "meeting_1790600078_ev1-TRdK",
+  "streams": 6,
+  "lanes": 4,
+  "containers": 6,
+  "remoteBytes": 0,
+  "cols": 2,
+  "durationSec": 387.605,
+  "kind": "failed",
+  "coveredSec": 0,
+  "wallSec": 0.8036000000238419,
+  "blobSize": 0,
+  "reasons": [
+    "no_decodable_video_track"
+  ],
+  "placeholders": 0,
+  "droppedAudioLanes": [],
+  "skippedAnomalousLanes": [],
+  "visibility": "visible",
+  "ua": "Edg/154.0.0.0"
+}

@@ -1,0 +1,56 @@
+# 现场部署编排（板卡上用；镜像由 tar 导入，本文件不构建）
+#
+# 放在 /opt/conference/docker-compose.yml，与 conf/、data/ 同级。
+# 首次部署：
+#   docker load -i conference-backend-edge-arm64.tar
+#   docker load -i conference-frontend-edge-arm64.tar
+#   docker compose run --rm db-init      # 初始化数据库（建表 + 灌测试账号），跑完自动退出
+#   docker compose up -d
+# 日常：
+#   docker compose ps / logs -f backend / restart / down
+
+name: conference
+
+services:
+  backend:
+    image: conference-backend:edge-arm64
+    container_name: conference-backend
+    restart: unless-stopped
+    ports:
+      # 冒号左边是对外端口，被占就改左边（例 18082:8082），右边 8082 不要动
+      - "8082:8082"
+    environment:
+      # edge=船端 / cloud=岸端，影响会中页对参会者来源的显示
+      DEPLOYMENT_SIDE: edge
+      # 落库时间戳的时区，跨时区运营才改
+      SERVER_TIMEZONE: Asia/Shanghai
+    volumes:
+      # 现场配置（要改哪几项见部署文档）。不挂则用镜像内置默认，启动日志会 WARN
+      - /opt/conference/conf/config.yaml:/app/manifest/config/config.yaml:ro
+      # 数据库目录，必须挂到本地磁盘（不能放网络盘）；不挂则数据随容器删除而丢
+      - /opt/conference/data:/app/data
+
+  web:
+    image: conference-frontend:edge-arm64
+    container_name: conference-frontend
+    restart: unless-stopped
+    ports:
+      # 现场用户浏览器访问的就是这个端口，按现场定（例 8081:80）
+      - "8083:80"
+    environment:
+      # 前端 nginx 把 /api、/ws、/assets/media-player.js 转发到这里；
+      # backend 是上面服务的名字，同一份编排里不用改
+      BACKEND_UPSTREAM: backend:8082
+    depends_on:
+      - backend
+
+  # 只在首次部署跑一次：建表 + 灌入镜像内置的测试账号，跑完自动退出
+  db-init:
+    profiles: ["init"]
+    image: conference-backend:edge-arm64
+    container_name: conference-db-init
+    # 镜像的 ENTRYPOINT 是 /app/conference，这里的 command 就是传给它的子命令
+    command: ["db-init"]
+    volumes:
+      - /opt/conference/conf/config.yaml:/app/manifest/config/config.yaml:ro
+      - /opt/conference/data:/app/data

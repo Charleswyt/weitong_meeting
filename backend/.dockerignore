@@ -1,0 +1,32 @@
+# 构建上下文里**绝不能出现**的东西，逐条都是凭据或本机状态，不是"瘦身"：
+#
+# 1) 现场配置带连接串与三方端点，属部署产物不属镜像
+manifest/config/config.yaml
+manifest/config/*.local.yaml
+
+# 2) 口令种子**要**进镜像（2026-09-29 定）：库里那 6 个是测试账号，不涉及安全，
+#    烘进镜像后现场少一个交付件、少一步"漏灌就登不进去"。它仍不进 git（.gitignore 照旧生效）。
+#    注意：因此镜像构建不再是"干净 clone 就能跑"，得有这份被 gitignore 的种子在原地。
+
+# 3) 达梦时期的历史档案：语法在 SQLite 上跑不通，别让它们随镜像流出去
+manifest/sql/create.sql
+manifest/sql/bootstrap.sql
+manifest/sql/alter_*.sql
+
+# 4) 本机数据库文件与日志：WAL 的 -shm/-wal 伴生文件混进镜像会带出半截状态
+data/
+# docker save 出来的镜像包与临时件，不该进构建上下文
+dist/
+*.db
+*.db-wal
+*.db-shm
+*.log
+
+# 5) 版本库与本机工具目录
+.git
+.gitignore
+.idea
+.vscode
+tests/regression/
+scratch/
+*.tar

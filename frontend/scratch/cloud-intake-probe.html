@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>云端入料取证探针</title>
+<style>body{font:13px/1.6 ui-monospace,Consolas,monospace;background:#0b1220;color:#cbd5e1;padding:16px}pre{white-space:pre-wrap}</style>
+</head>
+<body><pre id="out">booting…</pre>
+<script type="module">
+// 取证目标（云端合并下载的入料格式）：
+//  ① 多条云端录制里 moov 是否总在 mdat 之前（faststart）⇒ 决定能不能边拉边解析
+//  ② HLS 的分片是 TS(0x47/188B) 还是 fMP4(styp|ftyp) ⇒ 决定解复用器要写哪一种
+// 只读每个文件的前几 KB（读完就 reader.cancel()），不整条下载。
+const out = document.getElementById('out')
+const say = (s) => { out.textContent += '\n' + s }
+const RESULT = { stage: 'boot', attempts: [], files: [] }
+window.__probe = RESULT
+const SINK = 'http://127.0.0.1:5199'
+const report = () => {
+  try { document.title = 'CLOUD ' + RESULT.stage + ' ' + RESULT.files.map((f) => f.verdict).join(' | ').slice(0, 120) } catch {}
+  fetch(SINK + '/result/cloud-intake', { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify(RESULT) }).catch(() => {})
+}
+// 令牌可能在 sessionStorage（原口径：登录态只活在一个标签会话）或 localStorage（用户 2026-09-30 改成不按标签隔离）——两边都读
+const tok = () => sessionStorage.getItem('token') || localStorage.getItem('token') || ''
+const auth = () => ({ Authorization: 'Bearer ' + tok() })
+
+/** 只读前 n 字节就取消 —— 后端是整条 io.Copy，我们不看后面的 */
+async function head(url, n) {
+  const r = await fetch(url, { headers: auth() })
+  const ct = r.headers.get('content-type') || ''
+  if (!r.ok || ct.includes('application/json')) {
+    return { status: r.status, ct, body: (await r.text()).slice(0, 400) }
+  }
+  const reader = r.body.getReader()
+  const parts = []
+  let got = 0
+  while (got < n) {
+    const { value, done } = await reader.read()
+    if (done) break
+    parts.push(value); got += value.length
+  }
+  try { await reader.cancel() } catch {}
+  const buf = new Uint8Array(got)
+  let p = 0
+  for (const v of parts) { buf.set(v.subarray(0, Math.min(v.length, got - p)), p); p += v.length; if (p >= got) break }
+  const fourcc = (o) => String.fromCharCode(buf[o], buf[o + 1], buf[o + 2], buf[o + 3])
+  const u32 = (o) => ((buf[o] << 24) | (buf[o + 1] << 16) | (buf[o + 2] << 8) | buf[o + 3]) >>> 0
+  return { status: r.status, ct, bytes: got, first4: [...buf.slice(0, 4)].map((b) => b.toString(16).padStart(2, '0')).join(' '), fourcc: fourcc(4) }
+}
+/** 顺序读顶层 box，给到 limit 字节为止，返回顺序与各 box 大小 */
+function boxOrder(buf, limit) {
+  const u32 = (o) => ((buf[o] << 24) | (buf[o + 1] << 16) | (buf[o + 2] << 8) | buf[o + 3]) >>> 0
+  const out = []
+  let p = 0
+  while (p + 8 <= Math.min(buf.length, limit)) {
+    const size = u32(p)
+    const type = String.fromCharCode(buf[p + 4], buf[p + 5], buf[p + 6], buf[p + 7])
+    out.push({ type, size })
+    if (size < 8) break
+    p += size
+  }
+  return out
+}
+
+async function tryList(url) {
+  const r = await fetch(url, { headers: auth() })
+  const t = await r.text()
+  RESULT.attempts.push({ url, status: r.status, ct: r.headers.get('content-type'), head: t.slice(0, 600) })
+  say(`· ${url} → ${r.status} ${(r.headers.get('content-type') || '').slice(0, 30)}`)
+  return t
+}
+
+async function main() {
+  try {
+    RESULT.hasToken = !!tok()
+    RESULT.origin = location.origin
+    say(`token=${RESULT.hasToken ? '有' : '**没有**'} origin=${location.origin}`)
+    if (!RESULT.hasToken) throw new Error('没有登录态：sessionStorage.token 为空')
+
+    const base = '/api/v1/recordings'
+    // 列表接口的确切参数没见过，多试几种；返回原文里就能看出形状
+    const listRaw = await tryList(base + '/list?pageNum=1&pageSize=50')
+    if (listRaw.includes('"code":4') || listRaw.length < 20) await tryList(base + '/list?page=1&size=50')
+    RESULT.listHead = listRaw.slice(0, 1200)
+
+    // 从返回文本里捞 recordingId / meetingId（不确定字段名，正则兜底）
+    const ids = [...new Set([...listRaw.matchAll(/"(?:recordingId|recording_id|id)"\s*:\s*"([^"]{6,})"/g)].map((m) => m[1]))].slice(0, 6)
+    const mids = [...new Set([...listRaw.matchAll(/"(?:meetingId|meeting_id|meetingNo)"\s*:\s*"([^"]{4,})"/g)].map((m) => m[1]))].slice(0, 4)
+    RESULT.ids = ids; RESULT.meetingIds = mids
+    say(`捞到 recordingId ${ids.length} 个 · meetingId ${mids.length} 个`)
+
+    // ① MP4：看顶层 box 顺序
+    for (const id of ids.slice(0, 3)) {
+      const h = await head(`${base}/${id}/download`, 8192)
+      const f = { kind: 'mp4', id, ...h, verdict: '?' }
+      if (h.status === 200 && h.ct && !h.ct.includes('json')) {
+        const r2 = await fetch(`${base}/${id}/download`, { headers: auth() })
+        const rd = r2.body.getReader(); const parts = []; let got = 0
+        while (got < 8192) { const { value, done } = await rd.read(); if (done) break; parts.push(value); got += value.length }
+        try { await rd.cancel() } catch {}
+        const buf = new Uint8Array(got); let p = 0
+        for (const v of parts) { buf.set(v.subarray(0, Math.min(v.length, got - p)), p); p += v.length; if (p >= got) break }
+        f.boxes = boxOrder(buf, got)
+        const names = f.boxes.map((x) => x.type)
+        f.verdict = names[0] === 'ftyp' && names[1] === 'moov' ? 'moov在前(faststart)' : names.join('>').slice(0, 40)
+      } else {
+        f.verdict = '非 200 或非二进制：' + JSON.stringify(h).slice(0, 200)
+      }
+      RESULT.files.push(f)
+      say(`MP4 ${id}: ${f.verdict}`)
+    }
+
+    // ② HLS：先拿清单，再取第一个分片的前 1KB 判 TS / fMP4
+    for (const id of ids.slice(0, 3)) {
+      const r = await fetch(`${base}/${id}/playlist.m3u8`, { headers: auth() })
+      const pl = await r.text()
+      const seg = (pl.match(/^(?!#)(\S+)\s*$/m) || [])[1]
+      const f = { kind: 'hls', id, status: r.status, playlistHead: pl.slice(0, 300), segment: seg || null, verdict: '?' }
+      if (seg) {
+        const sh = await head(seg.startsWith('http') ? seg : new URL(seg, location.origin).href, 2048)
+        f.segmentHead = sh
+        if (sh.first4 === '47 ') f.verdict = 'TS(0x47)'
+        else if (sh.fourcc === 'styp' || sh.fourcc === 'ftyp') f.verdict = 'fMP4(' + sh.fourcc + ')'
+        else f.verdict = '未知 头=' + sh.first4
+      }
+      RESULT.files.push(f)
+      say(`HLS ${id}: ${f.verdict}${f.segment ? ' seg=' + f.segment.slice(-28) : ' 无分片行'}`)
+    }
+
+    RESULT.stage = 'done'
+  } catch (e) {
+    RESULT.stage = 'error'; RESULT.error = String(e && e.message || e); say('ERROR ' + RESULT.error)
+  }
+  say('DONE')
+  report()
+}
+main()
+</script>
+</body>
+</html>

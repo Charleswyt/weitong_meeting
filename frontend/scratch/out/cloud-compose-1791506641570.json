@@ -1,0 +1,43 @@
+{
+  "meeting": "meeting_1790604187_6IdJ56Ee",
+  "streams": 43,
+  "lanes": 3,
+  "containers": 43,
+  "remoteBytes": 0,
+  "cols": 1,
+  "durationSec": 1976.517,
+  "kind": "ok",
+  "coveredSec": 1976.5333333333333,
+  "wallSec": 239.7962000000477,
+  "specDurationSec": 1976.517,
+  "selectedSpanSec": 1976.517,
+  "markedUnderOldRule": false,
+  "markedUnderNewRule": false,
+  "newRuleSeconds": null,
+  "specDurationShouldBe": 1976.517,
+  "blobSize": 530001610,
+  "reasons": [],
+  "placeholders": 0,
+  "droppedAudioLanes": [],
+  "skippedAnomalousLanes": [],
+  "laneWindows": [
+    "  张明 · 声音 v=false a=true containers=0-519|818-1425|1432-1480|1484-1507|1510-1515|1519-1523|1526-1532|1535-1555|1558-1603|1607-1634|1637-1730|1734-1760|1765-1834|1837-1842|1845-1974",
+    "  张明 · 画面 v=true a=false containers=3-524|821-1431|1436-1484|1487-1510|1514-1517|1522-1526|1529-1534|1538-1557|1562-1605|1610-1637|1640-1734|1738-1762|1768-1835|1841-1843|1849-1977",
+    "  王强 · 声音 v=false a=true containers=1432-1480|1484-1507|1510-1515|1519-1523|1526-1532|1535-1555|1558-1603|1607-1634|1637-1730|1735-1761|1765-1833|1837-1843|1846-1974"
+  ],
+  "progress": [
+    "progress encode 0% covered=2s frames=30/29648",
+    "progress encode 10% covered=188s frames=2820/29648",
+    "progress encode 20% covered=386s frames=5790/29648",
+    "progress encode 30% covered=584s frames=8760/29648",
+    "progress encode 40% covered=782s frames=11730/29648",
+    "progress encode 50% covered=980s frames=14700/29648",
+    "progress encode 60% covered=1178s frames=17670/29648",
+    "progress encode 70% covered=1374s frames=20610/29648",
+    "progress encode 80% covered=1572s frames=23580/29648",
+    "progress encode 90% covered=1770s frames=26550/29648",
+    "progress encode 100% covered=1968s frames=29520/29648"
+  ],
+  "visibility": "hidden",
+  "ua": "Edg/154.0.0.0"
+}

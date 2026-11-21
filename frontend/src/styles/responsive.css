@@ -1,0 +1,73 @@
+/* 多端自适应：安全区、触控、弹层。断点与 useViewport 一致。 */
+
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --mobile-nav-h: 56px;
+  --mobile-top-h: 52px;
+}
+
+/* 触控：可点区域别挤成 24px 方块 */
+@media (hover: none) and (pointer: coarse) {
+  .im-btn,
+  .im-icon-btn,
+  .nav-item,
+  .launch-item,
+  .hm-btn {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* Element Plus 弹窗：窄屏铺满可用宽度，上下留呼吸 */
+@media (max-width: 767px) {
+  .el-overlay-dialog {
+    display: flex !important;
+    align-items: flex-end !important;
+    justify-content: center !important;
+    padding: 0 !important;
+  }
+
+  .el-dialog {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    border-radius: 16px 16px 0 0 !important;
+    max-height: min(92vh, 100dvh);
+  }
+
+  .el-dialog.is-align-center {
+    margin: 0 !important;
+  }
+
+  .el-dialog__body {
+    max-height: min(70vh, 70dvh);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .el-message-box {
+    width: calc(100vw - 32px) !important;
+    max-width: 400px;
+  }
+
+  .el-message {
+    min-width: 0 !important;
+    max-width: calc(100vw - 24px);
+  }
+
+  .compose-float {
+    left: 12px !important;
+    right: 12px !important;
+    bottom: calc(12px + var(--safe-bottom) + var(--mobile-nav-h)) !important;
+    width: auto !important;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .el-dialog {
+    width: min(560px, 92vw) !important;
+    max-width: 92vw !important;
+  }
+}

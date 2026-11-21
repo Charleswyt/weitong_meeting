@@ -1,0 +1,103 @@
+<!doctype html><meta charset="utf-8"><title>stall-cal</title>
+<body><pre id="log" style="font:12px monospace;white-space:pre-wrap"></pre>
+<script type="module">
+// P1 标定：停摆预算到底该给多少，用"两次进度回调之间最长隔了多久"来量。
+// 内核每投 `fpsOut*2` 帧报一次进度，所以这个间隔就是看门狗实际看到的"多久没有前进"。
+// 跑法：/scratch/stall-cal-probe.html?m=<会议id>&fps=15&cap=120&mode=grid
+const stamp = Date.now()
+const log = (m) => { document.getElementById('log').textContent += m + '\n'; document.title = 'SC ' + m.slice(0, 40) }
+const post = async (body) => {
+  try { await fetch('http://127.0.0.1:5199/result/stall-cal-' + stamp, { method: 'POST', body }) } catch (e) { log('POST FAIL ' + e.message) }
+}
+const q = new URLSearchParams(location.search)
+try {
+  if (!localStorage.getItem('token')) {
+    const j = await (await fetch('/api/v1/auth/auto-login', { method: 'POST' })).json()
+    localStorage.setItem('token', (j?.data ?? j)?.token || '')
+  }
+  const { getPlayback } = await import('/src/api/recording.ts')
+  const { cloudStreamsToTracks } = await import('/src/utils/cloudReplay.ts')
+  const { buildLanesFromCloud } = await import('/src/utils/offlineCompose/cloudIntake.ts')
+  const { composeOffline } = await import('/src/utils/offlineCompose/composeOffline.ts')
+  const { probeEngineCapabilities } = await import('/src/utils/offlineCompose/engine.ts')
+  const { autoCols } = await import('/src/utils/composeLayout.ts')
+
+  const meeting = q.get('m') || 'meeting_1790602635_X-MjWr0-'
+  const fpsOut = Number(q.get('fps') || 15)
+  const cap = Number(q.get('cap') || 120)
+  const mode = q.get('mode') || 'grid'
+  const only = q.get('only') || ''
+
+  const pb = await getPlayback(meeting)
+  let streams = pb.data?.streams || []
+  if (only) streams = streams.filter((s) => (s.displayName || '').includes(only))
+  const { tracks } = cloudStreamsToTracks(streams)
+  const intake = buildLanesFromCloud(tracks.filter((t) => t.hasVideo), streams)
+  const lanes = intake.lanes.filter((l) => l.hasVideo)
+  const caps = await probeEngineCapabilities(fpsOut)
+  const spec = {
+    lanes, mode, cols: autoCols(lanes.length), cellWidth: 480, fpsOut,
+    durationSec: Math.min(cap, Math.max(...lanes.flatMap((l) => l.containers.map((c) => c.endSec)))),
+  }
+  const gaps = []
+  const visibilityAtStart = document.visibilityState
+  let hiddenMs = 0
+  let hiddenSince = document.visibilityState === 'hidden' ? performance.now() : 0
+  const watchVis = () => {
+    if (document.visibilityState === 'hidden') hiddenSince = performance.now()
+    else if (hiddenSince) { hiddenMs += performance.now() - hiddenSince; hiddenSince = 0 }
+  }
+  document.addEventListener('visibilitychange', watchVis)
+  const t0 = performance.now()
+  let last = t0
+  // ?cancelAfter=<ms> 时量"从置取消位到任务真回来"要多久 —— 用户点停止之后界面无所谓"再等一下"
+  const cancelAfter = Number(q.get('cancelAfter') || 0)
+  let cancelAt = 0
+  let returnedAt = 0
+  const isCancelled = () => {
+    if (!cancelAfter) return false
+    if (performance.now() - t0 < cancelAfter) return false
+    if (!cancelAt) cancelAt = performance.now()
+    return true
+  }
+  const out = await composeOffline(spec, {
+    onProgress: () => { const n = performance.now(); gaps.push(n - last); last = n },
+    isCancelled,
+  }, caps)
+  returnedAt = performance.now()
+  // 模型预测 vs 实测：`calibrated` 要翻成 true，依据只能是"预测与实测对得上"，
+  // 而不是"我们在另一种页面态下量过一组微基准"
+  const { estimateCost, MEASURED_THROUGHPUT } = await import('/src/utils/offlineCompose/costModel.ts')
+  const { buildLayout } = await import('/src/utils/composeLayout.ts')
+  const lay = buildLayout({
+    lanes: lanes.map((l) => ({ id: l.id, hasVideo: true, kind: l.kind, durationSec: spec.durationSec })),
+    mode, cols: spec.cols, focusId: null,
+  })
+  const cost = estimateCost({
+    lanes: lanes.map((l) => ({
+      id: l.id, hasVideo: true, width: l.width ?? 1280, height: l.height ?? 720, frameRate: l.frameRate ?? 15,
+    })),
+    videoLaneIds: lanes.map((l) => l.id),
+    durationSec: spec.durationSec, layout: lay, fpsOut,
+  }, MEASURED_THROUGHPUT)
+  const wallSec = (returnedAt - t0) / 1000
+  gaps.sort((a, b) => a - b)
+  const pick = (p) => gaps.length ? Math.round(gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * p))]) : 0
+  const verdict = {
+    // 标定读数的资格判据：hidden 页测出来的吞吐不算数（§9.3 那条 ⚠️ 就是这么来的）
+    visibilityAtStart, visibilityEnd: document.visibilityState, hiddenMs: Math.round(hiddenMs),
+    visiblePage: visibilityAtStart === 'visible' && document.visibilityState === 'visible' && hiddenMs < 500,
+    meeting, mode, fpsOut, cap, lanes: lanes.length, cols: spec.cols,
+    canvas: `${out.engine}:${out.kind}`, kind: out.kind,
+    coveredSec: +out.coveredSec.toFixed(1), wallSec: +wallSec.toFixed(1),
+    predictedSec: cost.estOfflineSec, predictedVsMeasured: +(cost.estOfflineSec / Math.max(0.1, wallSec)).toFixed(2),
+    predictedDecodeSec: cost.estDecodeSec, predictedEncodeSec: cost.estEncodeSec,
+    bytes: out.blob ? out.blob.size : 0, reasons: out.reasons,
+    progressCalls: gaps.length,
+    cancelLatencyMs: cancelAt ? Math.round(returnedAt - cancelAt) : null,
+    gapMedianMs: pick(0.5), gapP95Ms: pick(0.95), gapMaxMs: gaps.length ? Math.round(gaps[gaps.length - 1]) : 0,
+  }
+  log(JSON.stringify(verdict))
+  await post(JSON.stringify(verdict))
+} catch (e) { log('FATAL ' + (e?.stack || e)) }
+</script>

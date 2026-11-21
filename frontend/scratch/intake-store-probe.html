@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8" /><title>intake-store-probe</title>
+<style>body{font:14px/1.6 system-ui;margin:16px;background:#0f172a;color:#e2e8f0}pre{white-space:pre-wrap}</style>
+</head>
+<body>
+<h3>入料 + 队列 + 选引擎 端到端探针（不碰 UI）</h3>
+<pre id="out">准备中…</pre>
+<script type="module">
+/**
+ * 验的是**新接线的那一段**：本地录制清单 → buildLanesFromRecording → store.dispatch
+ * → pickComposeEngine → composeOffline（含 OPFS 落盘）→ 队列终态。
+ * 读结果走 document.title + POST /result/intake-store（evaluate_script 本机恒返回 {}）。
+ * autoDownload 关掉：探针不该往用户的下载目录扔文件。
+ */
+import { createPinia, setActivePinia } from 'pinia'
+import { listLocalRecordings } from '/src/utils/localRecorder.ts'
+import { buildLanesFromRecording } from '/src/utils/offlineCompose/intake.ts'
+import { useComposeStore } from '/src/store/compose.ts'
+
+const out = document.getElementById('out')
+const RECEIVER = 'http://127.0.0.1:5199'
+const R = { stages: {} }
+const say = (s) => { out.textContent = s; document.title = s.split('\n').filter(Boolean).slice(-1)[0].slice(0, 120) }
+async function report(k, v) {
+  R.stages[k] = v
+  say(Object.entries(R.stages).map(([a, b]) => `${a}: ${JSON.stringify(b).slice(0, 320)}`).join('\n'))
+  try { await fetch(`${RECEIVER}/result/intake-store`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify(R) }) } catch { /* 接收器没起不影响读数 */ }
+}
+const capSec = Number(new URLSearchParams(location.search).get('sec') || 60)
+
+setActivePinia(createPinia())
+const store = useComposeStore()
+const recs = await listLocalRecordings()
+await report('store', { recordings: recs.length, first: recs.slice(0, 3).map((r) => ({ id: r.id, tracks: (r.tracks || []).length })) })
+
+const pick = recs.find((r) => (r.tracks || []).some((t) => t.hasVideo && (t.segments || []).length))
+if (!pick) { await report('stopped', { why: 'no_local_recording_on_this_origin' }); throw new Error('这个源里没有本地录制') }
+
+const intake = await buildLanesFromRecording(pick)
+await report('intake', {
+  recordingId: pick.id, tracks: (pick.tracks || []).length,
+  lanes: intake.lanes.length, video: intake.lanes.filter((l) => l.hasVideo).length, audio: intake.lanes.filter((l) => l.hasAudio).length,
+  damaged: intake.damagedLanes, multiContainer: intake.multiContainerLanes,
+})
+if (!intake.lanes.some((l) => l.hasVideo)) { await report('stopped', { why: 'no_video_lane' }); throw new Error('没有可用画面路') }
+
+const durationSec = Math.min(capSec, Math.max(...intake.lanes.flatMap((l) => l.containers.map((c) => c.endSec))))
+const spec = { lanes: intake.lanes, mode: 'grid', cols: undefined, focusId: null, fpsOut: 15, cellWidth: 480, durationSec, audioChunkSec: 15 }
+const dispatched = await store.dispatch({ id: `probe-${pick.id}`, label: '探针这一场', spec, autoDownload: false })
+await report('dispatched', { engine: dispatched.engine, duplicate: dispatched.duplicate })
+
+await store.idle()
+const t = store.tasks.find((x) => x.id === `probe-${pick.id}`)
+const o = t?.result
+await report('task', {
+  state: t?.state, engine: o?.engine, kind: o?.kind,
+  coveredSec: o && Math.round(o.coveredSec * 10) / 10, durationSec: o && Math.round(o.durationSec * 10) / 10,
+  blobMB: o && o.blob ? Math.round(o.blob.size / 104857.6) / 10 : 0,
+  isDiskFile: !!(o && o.blob && typeof File !== 'undefined' && o.blob instanceof File),
+  failureCode: o?.failureCode ?? null, reasons: o?.reasons ?? [],
+  droppedAudio: o?.droppedAudioLanes ?? [], unusableVideo: o?.unusableVideoLanes ?? [],
+  ratio: t?.ratio, queued: store.queuedCount,
+})
+say('完成')
+
+/**
+ * 第二段：多容器路由。再入会的**真形状只在同一场次内**（同一个 LocalRecording 里同人同通路的两条录制，
+ * 第二条的时刻是接着会议起点算的）。跨场次拼两条不算再入会：两条清单各自从 0 计时刻，
+ * 并出来的容器区间互相重叠，路由判据就失真了（上一版探针就栽在这）。
+ * 盘上没有再入会样本时，用两场的真录制拼一格并把第二条整体后移 —— 字节是真的、配对是造的，
+ * 读数里如实标 synthetic，这一格只验内核按区间取容器这件事。
+ */
+let realHit = null
+for (const r of recs) {
+  const g = new Map()
+  for (const t of r.tracks || []) {
+    if (!t.hasVideo || !(t.segments || []).length) continue
+    const k = `${t.ownerId}\u0000${t.kind}`
+    if (!g.has(k)) g.set(k, [])
+    g.get(k).push(t)
+  }
+  const hit = [...g.entries()].find(([, v]) => v.length > 1)
+  if (hit) { realHit = { rec: r, key: hit[0], tracks: hit[1] }; break }
+}
+let mergedRec = null, synthetic = false
+if (realHit) {
+  mergedRec = realHit.rec
+} else {
+  const cam = recs.map((r) => (r.tracks || []).find((t) => t.hasVideo && (t.segments || []).length)).filter(Boolean)
+  if (cam.length >= 2) {
+    const [t1, t2raw] = cam
+    const shift = t1.segments.reduce((m, s) => Math.max(m, s.offsetSec + s.durationSec), 0) + 2
+    const t2 = {
+      ...t2raw,
+      ownerId: t1.ownerId, kind: t1.kind,
+      startOffsetSec: (t2raw.startOffsetSec || 0) + shift,
+      segments: t2raw.segments.map((s) => ({ ...s, offsetSec: s.offsetSec + shift })),
+    }
+    mergedRec = { id: 'merged-synth', tracks: [t1, t2] }
+    synthetic = true
+  }
+}
+if (!mergedRec) {
+  await report('multi', { why: 'no two-track lane available' })
+} else {
+  const mi = await buildLanesFromRecording(mergedRec)
+  const lane = mi.lanes.find((l) => l.hasVideo)
+  const firstEnd = lane?.containers[0]?.endSec ?? 0
+  await report('multi-intake', {
+    synthetic, lanes: mi.lanes.length, containers: lane?.containers.length,
+    spans: lane?.containers.map((c) => [Math.round(c.startSec * 10) / 10, Math.round(c.endSec * 10) / 10]),
+  })
+  if (lane && lane.containers.length > 1) {
+    const dsec = Math.min(capSec + firstEnd, lane.containers[lane.containers.length - 1].endSec)
+    const mstore = useComposeStore()
+    const d = await mstore.dispatch({
+      id: `probe-merged-${synthetic ? 'synth' : 'real'}-${Date.now()}`,
+      label: '多容器这一格',
+      spec: { lanes: [lane], mode: 'grid', fpsOut: 15, cellWidth: 480, durationSec: dsec, audioChunkSec: 15 },
+      autoDownload: false,
+    })
+    await mstore.idle()
+    const mt = mstore.tasks.at(-1)
+    const mo = mt?.result
+    await report('multi-task', {
+      engine: d.engine, state: mt?.state, kind: mo?.kind,
+      coveredSec: mo && Math.round(mo.coveredSec * 10) / 10, wantSec: Math.round(dsec * 10) / 10,
+      // 这一条才是"第二个容器真被取到了"的判据：覆盖必须越过第一个容器的末端
+      reachesSecondContainer: !!mo && mo.coveredSec > firstEnd + 0.5,
+      blobMB: mo && mo.blob ? Math.round(mo.blob.size / 104857.6) / 10 : 0,
+      unusableVideo: mo?.unusableVideoLanes, droppedAudio: mo?.droppedAudioLanes, reasons: mo?.reasons,
+    })
+  }
+}
+say('两段完成')
+</script>
+</body></html>

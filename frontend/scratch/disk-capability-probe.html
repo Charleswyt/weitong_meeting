@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8" /><title>disk-cap-probe</title>
+<style>body{font:14px/1.6 system-ui;margin:16px;background:#0f172a;color:#e2e8f0}pre{white-space:pre-wrap}</style>
+</head>
+<body>
+<h3>OPFS 落盘能力逐步骤探针（追"间歇回落到内存目标"的原因）</h3>
+<pre id="out">准备中…</pre>
+<script type="module">
+/**
+ * `createDiskTarget` 的 try 把整串步骤裹在一起，回落时只知道"失败了"不知道**哪一步**。
+ * 这里逐步单独跑，一次就能定位是 getDirectory / entries / getFileHandle / createWritable(seekable)
+ * 还是 removeEntry（残留页占着同名文件的写句柄时 removeEntry 会抛）出问题。
+ * 读结果走 document.title + POST /result/disk-cap。
+ */
+import { createDiskTarget } from '/src/utils/offlineCompose/diskTarget.ts'
+
+const out = document.getElementById('out')
+const RECEIVER = 'http://127.0.0.1:5199'
+const R = {}
+async function say(k, v) {
+  R[k] = v
+  const s = Object.entries(R).map(([a, b]) => `${a}: ${JSON.stringify(b).slice(0, 300)}`).join('\n')
+  out.textContent = s; document.title = s.split('\n').filter(Boolean).slice(-1)[0].slice(0, 120)
+  try { await fetch(`${RECEIVER}/result/disk-cap`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify(R) }) } catch { /* 接收器没起不影响读数 */ }
+}
+const err = (e) => ({ name: e?.name, message: String(e?.message ?? e).slice(0, 160) })
+
+let dir
+try { dir = await navigator.storage.getDirectory(); say('1.getDirectory', { ok: true }) } catch (e) { say('1.getDirectory', { ok: false, ...err(e) }); throw e }
+
+const names = []
+try {
+  for await (const [name, entry] of dir.entries()) names.push(`${name}:${entry.kind}${entry.kind === 'file' ? `#${Math.round((await (await dir.getFileHandle(name)).getFile()).size / 1048576)}MB` : ''}`)
+  say('2.entries', { ok: true, files: names })
+} catch (e) { say('2.entries', { ok: false, ...err(e), partial: names }) }
+
+const t = `captest-${Date.now().toString(36)}`
+let fh
+try { fh = await dir.getFileHandle(t, { create: true }); say('3.getFileHandle', { ok: true }) } catch (e) { say('3.getFileHandle', { ok: false, ...err(e) }); throw e }
+
+let w
+try { w = await fh.createWritable({ seekable: true }); say('4.createWritable.seekable', { ok: true }) } catch (e) { say('4.createWritable.seekable', { ok: false, ...err(e) }) }
+
+if (w) {
+  try {
+    await w.write({ type: 'write', position: 0, data: new Uint8Array(100).fill(1) })
+    await w.write({ type: 'write', position: 250, data: new Uint8Array(10).fill(2) })
+    await w.close()
+    const f = await fh.getFile()
+    say('5.positional.write', { ok: true, size: f.size, expect: 260 })
+  } catch (e) { say('5.positional.write', { ok: false, ...err(e) }) }
+}
+
+try { await dir.removeEntry(t); say('6.removeEntry.fresh', { ok: true }) } catch (e) { say('6.removeEntry.fresh', { ok: false, ...err(e) }) }
+
+// 残留的 compose-* 能不能删 —— 这是 createDiskTarget 开头那步 sweepStale 会不会整体抛的判据
+for (const n of names.filter((x) => x.startsWith('compose-'))) {
+  const key = n.split(':')[0]
+  try { await dir.removeEntry(key); say(`7.sweep.${key.slice(0, 26)}`, { ok: true }) } catch (e) { say(`7.sweep.${key.slice(0, 26)}`, { ok: false, ...err(e) }) }
+}
+
+const h = await createDiskTarget(`cap-${Date.now().toString(36)}`)
+say('8.createDiskTarget', h ? { ok: true, fileName: h.fileName } : { ok: false, fellBackToMemory: true })
+if (h) {
+  // 只验句柄形状与 abort 的清理：真正写文件要等 Output，那不是这一格要答的问题
+  say('9.handle.shape', { hasFinish: typeof h.finish === 'function', bytesWritten: h.bytesWritten() })
+  try { await h.abort(); say('10.abort.cleanup', { ok: true }) } catch (e) { say('10.abort.cleanup', { ok: false, ...err(e) }) }
+}
+say('done', { ok: true })
+
+/**
+ * 11-14：跨页争用的那一格。另一个 tab 正在写（或刚写完还拿着 File）时，
+ * 本次合成**不许**因为清扫删不掉就退回内存目标，也**不许**把对方那份删掉。
+ * 这一格就是"间歇回落"的复现条件 —— 修之前它会报 fellBackToMemory:true。
+ */
+const LOCK = `compose-locktest-${Date.now().toString(36)}.mp4`
+let lockW = null
+try {
+  const lf = await dir.getFileHandle(LOCK, { create: true })
+  lockW = await lf.createWritable({ seekable: true })
+  await lockW.write({ type: 'write', position: 0, data: new Uint8Array(10).fill(7) })
+  say('11.otherPageHoldsWriter', { ok: true, locked: LOCK })
+} catch (e) { say('11.otherPageHoldsWriter', { ok: false, ...err(e) }) }
+
+const h2 = await createDiskTarget(`lock-proof-${Date.now().toString(36)}`)
+say('12.createDiskTarget.whileLocked', h2 ? { ok: true, fileName: h2.fileName } : { ok: false, fellBackToMemory: true })
+
+let otherSurvived = false
+try { await dir.getFileHandle(LOCK); otherSurvived = true } catch { otherSurvived = false }
+say('13.lockedFileSurvived', { ok: otherSurvived })
+
+if (h2) await h2.abort()
+if (lockW) { try { await lockW.close() } catch { /* 已经关过就够了 */ } }
+try { await dir.removeEntry(LOCK); say('14.cleanup', { ok: true }) } catch (e) { say('14.cleanup', { ok: false, ...err(e) }) }
+say('locked-proof-done', { ok: true })
+</script>
+</body></html>

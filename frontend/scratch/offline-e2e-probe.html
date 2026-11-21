@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>离线合成 S2 端到端探针</title>
+<style>
+  body{font:13px/1.6 ui-monospace,Consolas,monospace;background:#0b1220;color:#cbd5e1;margin:0;padding:16px}
+  pre{white-space:pre-wrap;margin:8px 0 0}
+  #bar{height:6px;background:#1e293b;border-radius:3px;overflow:hidden}
+  #bar>i{display:block;height:100%;width:0;background:#38bdf8;transition:width .2s}
+</style>
+</head>
+<body>
+<div id="bar"><i></i></div>
+<pre id="out">booting…</pre>
+<script type="module">
+/**
+ * S2 端到端探针：**真的写出一个 MP4**，用来答 go/no-go 的②与③（标定探针答不了这两条）。
+ *
+ * 链路按生产的形状走：CustomSource(范围读) → VideoSampleSink.samples(顺序解，取到即画即 close)
+ *   → canvas 宫格 → CanvasSource(VideoEncoder) → Mp4OutputFormat(fastStart) → 字节回收。
+ *
+ * 五件事，缺一条都不能把默认切成离线：
+ *  ① 产物是不是合法渐进 MP4（dump 到盘上后用 `validate-mp4.mjs` + Windows 播放器判据验，
+ *     这台机器没有 ffprobe；⚠️ 浏览器自己读自己的产物**不算**证据 —— `mvhd` 那次就是只信浏览器栽的）；
+ *  ② 音画都真的在里面（逐轨样本数 > 0，不是"能打开但只有一条声轨"）；
+ *  ③ 墙钟与内容时长的比（"更快"承诺值的唯一来源）；
+ *  ④ `fastStart:'reserve'` 能不能用（要 maximumPacketCount；上一轮 OOM 的新马甲就是 'in-memory'）；
+ *  ⑤ 中途取消：产物要能如实标"只到第 N 秒"，不许盖上完整时长。
+ *
+ * 用法（本地起 dev server 后在**可见**的 Edge 里开）：
+ *   /scratch/offline-e2e-probe.html                     默认 120 秒、fastStart 'reserve'
+ *   ?sec=180&fastStart=false&cancel=0.4                换参数；cancel 是"跑到几成时取消"
+ *   ?lane=1                                            用清单里第 N 条画面路
+ */
+import {
+  Input, CustomSource, ALL_FORMATS, VideoSampleSink, AudioSampleSink,
+  Output, Mp4OutputFormat, BufferTarget, CanvasSource, Quality, AudioSampleSource,
+} from 'mediabunny'
+// 用生产真源算时间轴与几何 —— 探针不另写一套算法，否则测出来的不是要上线的那条链路
+import { buildTimeline } from '/src/utils/offlineCompose/timeline.ts'
+import { buildLayout } from '/src/utils/composeLayout.ts'
+
+const RECEIVER = 'http://127.0.0.1:5199'
+const BASE = 'http://127.0.0.1:5200/'
+const Q = new URLSearchParams(location.search)
+const MAX_SEC = Number(Q.get('sec') || 120)
+const FAST_START = (Q.get('fastStart') || 'reserve')
+const CANCEL_AT = Number(Q.get('cancel') || 0)
+const LANE_IDX = Number(Q.get('lane') || 0)
+const FPS_OUT = Number(Q.get('fpsOut') || 15)
+const CELL_W = Number(Q.get('cellW') || 480)
+
+const out = document.getElementById('out')
+const R = { startedAt: new Date().toISOString(), params: { MAX_SEC, FAST_START, CANCEL_AT, LANE_IDX, FPS_OUT, CELL_W }, stages: {} }
+function say(s) { out.textContent = s; document.title = s.split('\n').filter(Boolean).slice(-1)[0].slice(0, 120) }
+function progress(p) { document.querySelector('#bar>i').style.width = `${Math.round(p * 100)}%` }
+async function report(stage, payload) {
+  R.stages[stage] = payload
+  say(Object.entries(R.stages).map(([k, v]) => `${k}: ${JSON.stringify(v).slice(0, 300)}`).join('\n'))
+  try { await fetch(`${RECEIVER}/result/e2e-s2`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify(R) }) }
+  catch (e) { R.notes = (R.notes || []).concat(`receiver: ${e.name}`) }
+}
+const mb = (n) => Math.round(n / 1048576 * 10) / 10
+const heap = () => (performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null)
+
+async function rangeSource(url) {
+  const head = await fetch(url, { method: 'HEAD' })
+  const size = Number(head.headers.get('x-total-bytes') || head.headers.get('content-length') || 0)
+  if (!size) throw new Error('拿不到文件长度')
+  const log = { bytes: 0, calls: 0, maxSpan: 0 }
+  const source = new CustomSource({
+    getSize: () => size,
+    read: async (start, end) => {
+      const res = await fetch(url, { headers: { Range: `bytes=${start}-${end - 1}` } })
+      const buf = new Uint8Array(await res.arrayBuffer())
+      log.bytes += buf.length; log.calls++; log.maxSpan = Math.max(log.maxSpan, buf.length)
+      return buf
+    },
+    maxCacheSize: 8 << 20,
+    prefetchProfile: 'fileSystem',
+  })
+  return { source, log, size }
+}
+
+const targets = await (await fetch(`${BASE}__targets__.json`)).json()
+// 只用**能解码**的视频路当源：坏件（多 EBML 头那条）由 §十 单独处理，不许混进标定
+const videoLanes = targets.singles.filter((s) => s.kind !== 'microphone')
+const lane = videoLanes[LANE_IDX] || videoLanes[0]
+if (!lane) { say('没有可用的视频路'); throw new Error('no video lane') }
+const audioLane = targets.singles.find((s) => s.kind === 'microphone' && s.group === lane.group)
+await report('source', { file: lane.file.split('/').slice(-2).join('/'), kind: lane.kind, wallEndSec: lane.durationSec, fileMB: mb(lane.bytes), audio: audioLane?.file.split('/').pop() ?? null })
+
+const url = `${BASE}${encodeURI(lane.file)}`
+const { source, log, size } = await rangeSource(url)
+const input = new Input({ source, formats: ALL_FORMATS })
+const vt = (await input.getVideoTracks())[0]
+const at = (await input.getAudioTracks())[0]
+if (!vt) { say('这条源没有视频轨'); throw new Error('no video track') }
+const containerDur = await vt.computeDuration().catch(() => null)
+const capSec = Math.min(MAX_SEC, containerDur ?? MAX_SEC)
+// 输出节拍由生产的 timeline 决定：源是 18.8fps、输出 15fps，两者不是一回事 ——
+// 第一版探针直接拿 samples() 把源帧全喂给只预留 1800 包的轨道，编码器当场拒绝
+// （"has already reached the maximum packet count"）。这正是 `samplesAtTimestamps` 存在的理由。
+const WITH_AUDIO = Q.get('audio') === '1' && !!at
+const layout = buildLayout({ lanes: [{ id: 'main', hasVideo: true }], mode: 'grid', cellWidth: CELL_W })
+const plan = buildTimeline(
+  [{ id: 'main', hasVideo: true, hasAudio: WITH_AUDIO, runs: [{ startSec: 0, endSec: capSec }] }],
+  FPS_OUT,
+)
+const frameTs = plan.frameTimestamps
+const expectedFrames = frameTs.length
+await report('timeline', {
+  planDurationSec: plan.durationSec, expectedVideoPackets: plan.expectedVideoPackets,
+  expectedAudioPackets: plan.expectedAudioPackets, expectedSampleFetches: plan.expectedSampleFetches,
+  canvas: [layout.canvasWidth, layout.canvasHeight], withAudio: WITH_AUDIO,
+})
+await report('intake', {
+  containerDuration: containerDur, capSec, expectedFrames,
+  coded: [vt.codedWidth, vt.codedHeight], codec: vt.codec,
+  config: (await vt.getDecoderConfig?.()) ? { hasDescription: !!(await vt.getDecoderConfig?.())?.description } : null,
+})
+
+// —— 输出侧：画布 + 编码 + 封装 ——
+const canvas = new OffscreenCanvas(layout.canvasWidth, layout.canvasHeight)
+const ctx = canvas.getContext('2d')
+const BITRATE = Number(Q.get('bps') || 2_000_000)
+// ⚠️ `new Quality(2_000_000)` 里的裸数字**不是码率**，是被当成 0–1 的质量档（官方允许越界值
+// "for extreme behavior"）—— 第一版就这么写出了 6.6 Mbps 的 480×270 产物。
+// 要可预测体积必须显式传对象：{ bitrate, bitrateMode:'constant' }。
+const videoSource = new CanvasSource(canvas, {
+  codec: 'avc',
+  bitrate: new Quality({ bitrate: BITRATE, bitrateMode: 'constant' }),
+  keyFrameInterval: 2,
+})
+const audioSource = WITH_AUDIO ? new AudioSampleSource({ codec: 'aac' }) : null
+const target = new BufferTarget()
+const output = new Output({ format: new Mp4OutputFormat({ fastStart: FAST_START === 'false' ? false : FAST_START }), target })
+// 'reserve' 要求**所有轨**都给 maximumPacketCount（漏一条就报错，正是上一轮"报绿不报错"要防的）
+const videoTrackMeta = { framerate: FPS_OUT }
+const audioTrackMeta = { sampleRate: 48000, channelCount: 2 }
+if (FAST_START !== 'false') {
+  videoTrackMeta.maximumPacketCount = expectedFrames
+  if (audioSource) audioTrackMeta.maximumPacketCount = Math.ceil((capSec * 48000) / 1024)
+}
+output.addVideoTrack(videoSource, videoTrackMeta)
+if (audioSource) output.addAudioTrack(audioSource, audioTrackMeta)
+
+let cancelledAt = null
+const t0 = performance.now()
+const heaps = []
+let drawn = 0, audioSamples = 0, placeholder = 0
+try {
+  await output.start()
+  const vSink = new VideoSampleSink(vt)
+  const aSink = WITH_AUDIO ? new AudioSampleSink(at) : null
+  // 音频这侧先用"自然节拍转投"，够量出容器合法性；分块混音是生产链路 S5 的事（?audio=1 才跑）
+  const audioIter = aSink ? aSink.samples(0, capSec)[Symbol.asyncIterator]() : null
+  let idx = 0
+  // samplesAtTimestamps 按传入顺序产出、缺帧处给 null ⇒ 那一格画占位，绝不拿上一帧冒充
+  for await (const s of vSink.samplesAtTimestamps(frameTs)) {
+    const t = frameTs[idx]
+    if (CANCEL_AT && idx >= Math.floor(expectedFrames * CANCEL_AT)) { cancelledAt = idx; break }
+    ctx.fillStyle = '#0b1220'; ctx.fillRect(0, 0, canvas.width, canvas.height)
+    if (s) {
+      // VideoSample 不是 CanvasImageSource（drawImage 会直接 TypeError），必须走它自己的 draw()；
+      // 源尺寸取 visibleRect（编码网格里的可见区域），不是 codedWidth/Height
+      const vw = s.visibleRect?.width || layout.canvasWidth
+      const vh = s.visibleRect?.height || layout.canvasHeight
+      const scale = Math.min(canvas.width / vw, canvas.height / vh)
+      const w = Math.round(vw * scale / 2) * 2, h = Math.round(vh * scale / 2) * 2
+      s.draw(ctx, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h)
+      s.close()
+    } else { placeholder++ }
+    idx++
+    drawn++
+    await videoSource.add(t, 1 / FPS_OUT)
+    if (audioIter && (idx & 1) === 0) {
+      const a = (await audioIter.next()).value
+      if (a) { audioSamples++; await audioSource.add(a); a.close?.() }
+    }
+    if (idx % 300 === 0) { heaps.push(heap()); say(`合成 ${idx}/${expectedFrames} 帧 · 堆 ${heap()}MB`); progress(idx / expectedFrames) }
+  }
+  await output.finalize()
+} catch (e) {
+  await report('error', { name: e.name, message: String(e.message).slice(0, 300), drawn, cancelledAt })
+  try { await output.cancel?.() } catch { /* 已经坏了，不再掩盖 */ }
+  await input.dispose?.()
+  say(`失败：${e.name} ${String(e.message).slice(0, 200)}`)
+  throw e
+}
+const wallSec = (performance.now() - t0) / 1000
+const bytes = target.buffer.byteLength
+await report('compose', {
+  fastStart: FAST_START, cancelledAt, drawnFrames: drawn, placeholder, audioSamplesAdded: audioSamples,
+  wallSec: Math.round(wallSec * 10) / 10, expectedFrames,
+  /** 内容秒数按**实际画出来的帧**算，取消时不许盖完整时长 */
+  contentSec: Math.round((drawn / FPS_OUT) * 10) / 10,
+  bytesMB: mb(bytes), kbps: Math.round(bytes * 8 / Math.max(1, drawn / FPS_OUT) / 1000),
+  speedVsRealtime: Math.round(((drawn / FPS_OUT) / wallSec) * 100) / 100,
+  peakHeapMb: heaps.length ? Math.max(...heaps) : heap(),
+  bytesPulledMB: mb(log.bytes), cacheMaxSpanKB: Math.round(log.maxSpan / 1024),
+})
+
+// 产物回盘：这台机器没有 ffprobe，必须用本地校验器 + Windows 播放器判据（浏览器自读不算证据）
+await fetch(`${RECEIVER}/file/e2e-out-${FAST_START}${cancelledAt ? '-cancel' : ''}.mp4`, {
+  method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: target.buffer,
+}).then(() => report('dumped', { ok: true })).catch((e) => report('dumped', { error: e.name }))
+
+// 自读一遍（只能算"结构可解析"，不能算"播放器认"）
+try {
+  const re = new Input({ source: new CustomSource({ getSize: () => bytes, read: async (a, b) => new Uint8Array(target.buffer, a, b - a) }), formats: ALL_FORMATS })
+  const rv = (await re.getVideoTracks())[0], ra = (await re.getAudioTracks())[0]
+  await report('selfRead', {
+    duration: rv ? await rv.computeDuration().catch((e) => `err ${e.name}`) : null,
+    videoPackets: rv ? (await rv.computePacketStats?.(1e9).catch(() => null))?.count ?? null : null,
+    audioPresent: !!ra,
+    audioPackets: ra ? (await ra.computePacketStats?.(1e9).catch(() => null))?.count ?? null : null,
+    coded: rv ? [rv.codedWidth, rv.codedHeight] : null,
+  })
+  await re.dispose?.()
+} catch (e) { await report('selfRead', { error: `${e.name}: ${String(e.message).slice(0, 160)}` }) }
+
+await input.dispose?.()
+R.finishedAt = new Date().toISOString()
+await report('done', { ok: true })
+say(`完成 ${drawn} 帧 / ${Math.round(wallSec)} 秒墙钟，产物已 dump → scratch/out/e2e-out-*.mp4`)
+</script>
+</body>
+</html>

@@ -1,0 +1,110 @@
+<!doctype html><meta charset="utf-8"><title>cloud-compose</title>
+<body><pre id="log" style="font:12px monospace;white-space:pre-wrap"></pre>
+<script type="module">
+const lines = []
+const log = (m) => { lines.push(m); document.getElementById('log').textContent += m + '\n'; document.title = 'CC ' + (window.__stage || '') }
+const stamp = Date.now()
+const post = async (path, body, isFile) => {
+  try {
+    await fetch('http://127.0.0.1:5199' + path, { method: 'POST', body })
+    log('posted ' + path + (isFile ? ' (file)' : ''))
+  } catch (e) { log('POST FAIL ' + path + ' :: ' + e.message) }
+}
+window.__stage = 'boot'
+try {
+  // 令牌：探针页与 app 同源，直接走免登录端点拿一个（不打印内容）
+  if (!localStorage.getItem('token')) {
+    const r = await fetch('/api/v1/auth/auto-login', { method: 'POST' })
+    const j = await r.json()
+    if (j?.data?.token) localStorage.setItem('token', j.data.token)
+    log('token? ' + !!localStorage.getItem('token'))
+  }
+  const { getPlayback } = await import('/src/api/recording.ts')
+  const { cloudStreamsToTracks } = await import('/src/utils/cloudReplay.ts')
+  const { buildLanesFromCloud } = await import('/src/utils/offlineCompose/cloudIntake.ts')
+  const { composeOffline } = await import('/src/utils/offlineCompose/composeOffline.ts')
+  const { probeEngineCapabilities } = await import('/src/utils/offlineCompose/engine.ts')
+  const { autoCols } = await import('/src/utils/composeLayout.ts')
+  const { partialSeconds, lanesTimelineEndSec } = await import('/src/utils/offlineCompose/engine.ts')
+
+  const meeting = new URLSearchParams(location.search).get('m') || 'meeting_1790600078_ev1-TRdK'
+  window.__stage = 'playback'
+  const pb = await getPlayback(meeting)
+  const streams = pb.data?.streams || []
+  log('streams ' + streams.length + ' 带下载地址 ' + streams.filter(s => s.downloadUrl).length)
+
+  const only = new URLSearchParams(location.search).get('only')
+  const { tracks: allTracks } = cloudStreamsToTracks(streams)
+  // ?only=王强 模拟"用户没勾满所有路"：只留名字含该串的路
+  const tracks = only ? allTracks.filter(t => (t.ownerName || '').includes(only)) : allTracks
+  if (only) log('过滤 only=' + only + ' 留下 ' + tracks.length + ' 格')
+  const intake = buildLanesFromCloud(tracks, streams)
+  window.__stage = 'lanes'
+  log('lanes ' + intake.lanes.length + ' 空手 ' + intake.emptyLanes.length + ' 容器总数 '
+    + intake.lanes.reduce((a, l) => a + l.containers.length, 0) + ' remoteBytes ' + intake.remoteBytes)
+  for (const l of intake.lanes) log('  ' + l.label + ' v=' + l.hasVideo + ' a=' + l.hasAudio
+    + ' containers=' + l.containers.map(c => c.startSec.toFixed(0) + '-' + c.endSec.toFixed(0)).join('|'))
+  if (!intake.lanes.some(l => l.hasVideo)) { log('NO VIDEO'); await post('/result/cloud-compose-' + stamp, JSON.stringify({ fatal: 'no-video' })); throw new Error('no video') }
+
+  window.__stage = 'caps'
+  const caps = await probeEngineCapabilities(15)
+  log('offlineCapable=' + caps.offlineCapable + ' avcEncode=' + caps.avcEncodeSupported + ' maxCanvas=' + caps.maxCanvasPixels)
+
+  const videoLanes = intake.lanes.filter(l => l.hasVideo)
+  const selectedEnd = Math.max(0, ...intake.lanes.flatMap(l => l.containers.map(c => c.endSec)))
+  const wholeEnd = Math.max(0, ...streams.map(x => (x.offsetSeconds || 0) + (x.durationSeconds || 0)))
+  // 回放页那条算法用的是 eng.duration（整场跨度），不是被勾选路的跨度 —— 这里照它
+  const durationSec = wholeEnd
+  log('被勾选路跨度=' + selectedEnd.toFixed(1) + ' 整场跨度(送进 spec)=' + wholeEnd.toFixed(1))
+  const spec = { lanes: intake.lanes, mode: 'grid', cols: autoCols(videoLanes.length), cellWidth: 480, fpsOut: 15, durationSec }
+  log('spec cols=' + spec.cols + ' durationSec=' + durationSec.toFixed(1))
+
+  const t0 = performance.now()
+  let lastPct = -10
+  let peakFramesInFlight = 0
+  window.__stage = 'run'
+  const outcome = await composeOffline(spec, {
+    onProgress: (p) => {
+      const pct = Math.round((p.ratio || 0) * 100)
+      if (pct - lastPct >= 10) { lastPct = pct; window.__stage = 'run' + pct; log('progress ' + p.phase + ' ' + pct + '% covered=' + (p.coveredSec || 0).toFixed(0) + 's frames=' + p.doneFrames + '/' + p.expectedFrames) }
+      const inflight = (p.doneFrames || 0)
+      if (inflight > peakFramesInFlight) peakFramesInFlight = inflight
+    },
+    cancel: () => {},
+    isCancelled: () => false,
+  }, caps)
+  const wallSec = (performance.now() - t0) / 1000
+  window.__stage = 'done'
+  log('OUTCOME kind=' + outcome.kind + ' covered=' + outcome.coveredSec.toFixed(1) + '/' + outcome.durationSec.toFixed(1)
+    + ' wall=' + wallSec.toFixed(1) + 's speedup=' + (outcome.durationSec / Math.max(0.1, wallSec)).toFixed(2)
+    + ' bytes=' + (outcome.blob ? outcome.blob.size : 0) + ' reasons=' + JSON.stringify(outcome.reasons))
+  log('placeholders=' + outcome.placeholderLanes.length + ' droppedAudio=' + JSON.stringify(outcome.droppedAudioLanes)
+    + ' skipped=' + JSON.stringify(outcome.skippedAnomalousLanes) + ' unusable=' + JSON.stringify(outcome.unusableVideoLanes || []))
+
+  if (outcome.blob && outcome.blob.size > 1000) {
+    await post('/file/cloud-compose-' + stamp + '.mp4', outcome.blob, true)
+  }
+  await post('/result/cloud-compose-' + stamp, JSON.stringify({
+    meeting, streams: streams.length, lanes: intake.lanes.length, containers: intake.lanes.reduce((a, l) => a + l.containers.length, 0),
+    remoteBytes: intake.remoteBytes, cols: spec.cols, durationSec,
+    kind: outcome.kind, coveredSec: outcome.coveredSec, wallSec,
+    specDurationSec: durationSec, selectedSpanSec: selectedEnd,
+    // 旧口径（拿整场跨度当分母）与新口径（内核自己规划的那条轴）各算一次，摆在一起看
+    markedUnderOldRule: durationSec > 0 && outcome.coveredSec < durationSec - 2,
+    markedUnderNewRule: partialSeconds(outcome) !== null,
+    newRuleSeconds: partialSeconds(outcome),
+    specDurationShouldBe: lanesTimelineEndSec(intake.lanes),
+    blobSize: outcome.blob ? outcome.blob.size : 0,
+    reasons: outcome.reasons, placeholders: outcome.placeholderLanes.length,
+    droppedAudioLanes: outcome.droppedAudioLanes, skippedAnomalousLanes: outcome.skippedAnomalousLanes,
+    laneWindows: lines.filter(x => x.startsWith('  ')),
+    progress: lines.filter(x => x.startsWith('progress')),
+    visibility: document.visibilityState, ua: navigator.userAgent.match(/Edg\/[\d.]+/)?.[0],
+  }, null, 2))
+  log('DONE')
+} catch (e) {
+  window.__stage = 'err'
+  log('FATAL ' + (e && e.stack ? e.stack : e))
+  await post('/result/cloud-compose-' + stamp, JSON.stringify({ fatal: String(e && e.message || e), stack: String(e && e.stack || '').slice(0, 900) }))
+}
+</script>

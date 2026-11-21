@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>离线编解码吞吐探针（第一轮 b）</title>
+<style>
+  body{font:13px/1.6 ui-monospace,Consolas,monospace;background:#0b1220;color:#cbd5e1;margin:0;padding:16px}
+  pre{white-space:pre-wrap;margin:8px 0 0}
+  #bar{height:6px;background:#1e293b;border-radius:3px;overflow:hidden}
+  #bar>i{display:block;height:100%;width:0;background:#38bdf8}
+</style>
+</head>
+<body>
+<div id="bar"><i></i></div>
+<pre id="out">booting…</pre>
+<script type="module">
+// 第一轮 b：量"离线编码 + 顺序解码"本身的吞吐，不碰任何源文件、不用定时器。
+//
+// 为什么要这一轮：第一轮已证明 <video> seek 取帧 = 108ms/帧（外推 26 分钟，淘汰）。
+// 剩下的路（乙）是 demux 源文件 + VideoDecoder 顺序解码 + VideoEncoder 重编。
+// 其中"解码与编码的快慢"是决定性的那一半，而它不需要源文件就能量：
+// 自己编一段，再自己解回来。
+//
+// 关键机关：VideoFrame 的 timestamp 由**我方**给。所以可以让 60 秒的内容在几秒墙钟内编完 ——
+// 这正是 MediaRecorder 做不到、也是整条路能打破 1× 的原因。
+//
+// 让出主线程用 MessageChannel 而不是 setTimeout：后台标签页会把定时器压到 ~1 次/秒，
+// MessageChannel 的任务不受这个节流，所以这页在后台跑出来的数同样可信。
+
+const out = document.getElementById('out')
+const bar = document.querySelector('#bar>i')
+const F = (n, d = 1) => Number(n).toFixed(d)
+const RESULT = { stage: 'boot', tests: [], note: [] }
+window.__probe = RESULT
+const say = (s) => { out.textContent += '\n' + s }
+const prog = (r) => { bar.style.width = (Math.max(0, Math.min(1, r)) * 100).toFixed(1) + '%' }
+
+const RECEIVER = 'http://127.0.0.1:5199/result'
+function report() {
+  try { document.title = 'PROBE ' + RESULT.stage + ' ' + RESULT.tests.map((t) => `${t.name}:${F(t.fps)}fps`).join(' ') } catch {}
+  fetch(RECEIVER, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify(RESULT) })
+    .then(() => say('结果已回报接收器')).catch(() => say('回报失败（接收器没在跑？）'))
+}
+
+// 不受节流的主线程让出
+const mc = new MessageChannel()
+const yieldTask = () => new Promise((r) => { mc.port1.onmessage = () => r(); mc.port2.postMessage(0) })
+
+const FPS = 15
+const N = 900            // 60 秒内容 @15fps
+const KEY_EVERY = FPS * 2 // 2 秒一个关键帧，贴近 MediaRecorder 的默认形状
+
+function drawFrame(g, i, W, H) {
+  const t = i / FPS
+  const grd = g.createLinearGradient(0, 0, W, H)
+  grd.addColorStop(0, `hsl(${(t * 37) % 360} 55% 22%)`)
+  grd.addColorStop(1, `hsl(${(t * 37 + 80) % 360} 55% 12%)`)
+  g.fillStyle = grd; g.fillRect(0, 0, W, H)
+  g.fillStyle = '#e2e8f0'; g.font = `${Math.round(H / 10)}px sans-serif`
+  g.fillText('f' + i, 20 + (i * 7) % (W - 200), Math.round(H / 2))
+  g.fillStyle = '#f87171'; g.fillRect(0, H - 40, (i * 5) % W, 30)
+}
+
+async function pickCodec(kind) {
+  const cands = kind === 'vp9'
+    ? ['vp09.00.10.08', 'vp09.00.31.08', 'vp8']
+    : ['avc1.42001f', 'avc1.42001E', 'avc1.640028']
+  for (const c of cands) {
+    const cfg = { codec: c, width: 1440, height: 810, bitrate: 1_200_000, framerate: FPS }
+    try {
+      const s = await VideoEncoder.isConfigSupported(cfg)
+      if (s.supported) return { codec: c, cfg }
+    } catch { /* 这个候选不支持就试下一个 */ }
+  }
+  return null
+}
+
+async function encodeTest(name, W, H, kind) {
+  const pick = await pickCodec(kind)
+  if (!pick) { RESULT.tests.push({ name, skipped: '没有可用编码器' }); return null }
+  const c = document.createElement('canvas'); c.width = W; c.height = H
+  const g = c.getContext('2d')
+  const chunks = []
+  let err = null
+  const enc = new VideoEncoder({
+    output: (ch) => chunks.push(ch),
+    error: (e) => { err = String(e && e.message || e) },
+  })
+  enc.configure(pick.cfg)
+  const t0 = performance.now()
+  for (let i = 0; i < N; i++) {
+    drawFrame(g, i, W, H)
+    const vf = new VideoFrame(c, {
+      timestamp: Math.round((i * 1e6) / FPS),
+      duration: Math.round(1e6 / FPS),
+    })
+    enc.encode(vf, { keyFrame: i % KEY_EVERY === 0 })
+    vf.close()
+    if (enc.encodeQueueSize > 24) await yieldTask()
+    if (i % 50 === 0) prog((i / N) * 0.35)
+  }
+  await enc.flush()
+  const ms = performance.now() - t0
+  const bytes = chunks.reduce((s, ch) => s + ch.byteLength, 0)
+  if (err) RESULT.note.push(name + ' 编码报错 ' + err)
+  const out = {
+    name, kind, codec: pick.codec, w: W, h: H, frames: N,
+    contentSec: N / FPS, wallMs: ms, fps: (N / ms) * 1000,
+    contentSecondsProducedPerWallSecond: (N / FPS) / (ms / 1000),
+    chunks: chunks.length, bytes,
+  }
+  RESULT.tests.push(out)
+  say(`   ${name}: ${pick.codec} · ${N} 帧 / 墙钟 ${F(ms / 1000)}s → ${F(out.fps)} fps`
+    + ` · 等效实时倍速 ${F(out.contentSecondsProducedPerWallSecond, 2)}×`
+    + ` · ${(bytes / 1048576).toFixed(2)} MB`)
+  return chunks
+}
+
+async function decodeTest(name, chunks, W, H, kind) {
+  if (!chunks || !chunks.length) { RESULT.tests.push({ name, skipped: '没有可解的块' }); return }
+  let n = 0
+  let err = null
+  const dec = new VideoDecoder({
+    output: (f) => { n++; f.close() },
+    error: (e) => { err = String(e && e.message || e) },
+  })
+  const codec = kind === 'vp9' ? 'vp09.00.10.08' : 'avc1.42001f'
+  const s = await VideoDecoder.isConfigSupported({ codec, codedWidth: W, codedHeight: H })
+  if (!s.supported) { RESULT.tests.push({ name, skipped: '解码器不支持 ' + codec }); return }
+  dec.configure({ codec, codedWidth: W, codedHeight: H })
+  const t0 = performance.now()
+  for (const ch of chunks) {
+    dec.decode(ch)
+    if (dec.decodeQueueSize > 24) await yieldTask()
+    if (n % 50 === 0) prog(0.7 + (n / N) * 0.25)
+  }
+  await dec.flush()
+  const ms = performance.now() - t0
+  if (err) RESULT.note.push(name + ' 解码报错 ' + err)
+  const o = { name, kind, codec, framesDecoded: n, wallMs: ms, fps: (n / ms) * 1000 }
+  RESULT.tests.push(o)
+  say(`   ${name}: 解出 ${n} 帧 / 墙钟 ${F(ms / 1000)}s → ${F(o.fps)} fps`)
+}
+
+async function main() {
+  try {
+    RESULT.ua = navigator.userAgent
+    say(`0) WebCodecs: VideoEncoder=${typeof VideoEncoder} VideoDecoder=${typeof VideoDecoder}`)
+    if (typeof VideoEncoder === 'undefined') throw new Error('本浏览器没有 WebCodecs')
+
+    say('1) 1440×810（9 格画布尺寸）编 60 秒内容…')
+    const vp9Chunks = await encodeTest('编码 vp9 1440x810', 1440, 810, 'vp9')
+    const h264Chunks = await encodeTest('编码 h264 1440x810', 1440, 810, 'h264')
+
+    say('2) 把刚编出来的块顺序解回来…')
+    await decodeTest('解码 vp9', vp9Chunks, 1440, 810, 'vp9')
+    await decodeTest('解码 h264', h264Chunks, 1440, 810, 'h264')
+
+    // 外推：16 分钟 @15fps = 14400 帧
+    const enc = RESULT.tests.find((t) => t.name.includes('编码 h264')) || RESULT.tests.find((t) => t.name.includes('编码'))
+    const dec = RESULT.tests.find((t) => t.name.includes('解码'))
+    RESULT.projection = {
+      framesAssumed: 14400,
+      encodeMinutes: enc && enc.fps ? 14400 / enc.fps / 60 : null,
+      decodeMinutes: dec && dec.fps ? 14400 / dec.fps / 60 : null,
+    }
+    if (RESULT.projection.encodeMinutes != null) {
+      say(`3) 外推 14400 帧（16 分钟 @15fps）：编码约 ${F(RESULT.projection.encodeMinutes)} 分钟`
+        + ` · 解码约 ${F(RESULT.projection.decodeMinutes)} 分钟`
+        + `（两者可流水线重叠，取大者粗略当总时长）`)
+      say(`   对照：现在必须等 16 分钟且必须前台；第一轮测的 seek 取帧要 26 分钟`)
+    }
+    RESULT.hidden = document.hidden
+    RESULT.visibility = document.visibilityState
+    RESULT.stage = 'done'
+    say('DONE hidden=' + document.hidden)
+  } catch (e) {
+    RESULT.stage = 'error'
+    RESULT.error = String(e && e.message || e)
+    say('ERROR ' + RESULT.error)
+  }
+  report()
+}
+main()
+</script>
+</body>
+</html>

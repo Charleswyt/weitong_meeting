@@ -1,0 +1,45 @@
+{
+  "name": "conference-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc && vite build",
+    "preview": "vite preview",
+    "check:copy": "node scripts/check-user-copy.mjs",
+    "check:tokens": "node scripts/check-css-tokens.mjs",
+    "check:paths": "node scripts/check-endpoint-paths.mjs",
+    "gen:types": "node scripts/gen-types.mjs",
+    "check:types": "node scripts/gen-types.mjs --check"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.1",
+    "@mediapipe/tasks-vision": "^1.0.1",
+    "axios": "^1.7.9",
+    "element-plus": "^2.14.7",
+    "hls.js": "^1.7.3",
+    "mediabunny": "1.61.3",
+    "pinia": "^2.3.0",
+    "qrcode": "^1.5.4",
+    "remixicon": "^4.9.1",
+    "sm-crypto": "^0.5.7",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/qrcode": "^1.5.6",
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
+    "@vitejs/plugin-vue": "^6.0.10",
+    "openapi-typescript": "^7.13.0",
+    "sass": "^1.83.4",
+    "typescript": "6.0.3",
+    "vite": "^8.3.4",
+    "vue-tsc": "^3.3.13"
+  },
+  "packageManager": "pnpm@12.11.2",
+  "engines": {
+    "node": ">=24 <25"
+  }
+}

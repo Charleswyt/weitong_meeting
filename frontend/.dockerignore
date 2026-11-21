@@ -1,0 +1,12 @@
+# 手工探针、临时截图、口令夹具都在这两个目录里 —— 构建上下文绝不能带上它们，
+# 否则"发给现场的镜像"里就躺着真实凭据（scratch/ 下有 restore-creds 与探针脚本）。
+scratch/
+node_modules/
+dist/
+.git/
+.idea/
+.vscode/
+*.log
+*.tsbuildinfo
+coverage/
+.design-qa/

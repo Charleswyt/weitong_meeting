@@ -1,0 +1,59 @@
+<!doctype html><meta charset="utf-8"><title>top-mode</title>
+<body><pre id="log" style="font:12px monospace;white-space:pre-wrap"></pre>
+<script type="module">
+// 端到端钉"回放所见 = 导出所得"：三档接线后，页面选 top/right 时导出件的画布必须等于
+// composeLayout 给的那个数。只合前 20 秒，跑得快，量的是形状不是时长。
+const stamp = Date.now()
+const log = (m) => { document.getElementById('log').textContent += m + '\n'; document.title = 'TM ' + m }
+const post = async (body) => {
+  try { await fetch('http://127.0.0.1:5199/result/top-mode-' + stamp, { method: 'POST', body }) } catch (e) { log('POST FAIL ' + e.message) }
+}
+try {
+  if (!localStorage.getItem('token')) {
+    const j = await (await fetch('/api/v1/auth/auto-login', { method: 'POST' })).json()
+    localStorage.setItem('token', (j?.data ?? j)?.token || '')
+  }
+  const { getPlayback } = await import('/src/api/recording.ts')
+  const { cloudStreamsToTracks } = await import('/src/utils/cloudReplay.ts')
+  const { buildLanesFromCloud } = await import('/src/utils/offlineCompose/cloudIntake.ts')
+  const { composeOffline } = await import('/src/utils/offlineCompose/composeOffline.ts')
+  const { buildLayout } = await import('/src/utils/composeLayout.ts')
+  const { Input, CustomSource, ALL_FORMATS } = await import('mediabunny')
+
+  const meeting = new URLSearchParams(location.search).get('m') || 'meeting_1790602635_X-MjWr0-'
+  const mode = new URLSearchParams(location.search).get('mode') || 'top'
+  const pb = await getPlayback(meeting)
+  const streams = pb.data?.streams || []
+  const { tracks } = cloudStreamsToTracks(streams)
+  const videoTracks = tracks.filter((t) => t.hasVideo)
+  const intake = buildLanesFromCloud(videoTracks, streams)
+  const lanes = intake.lanes.filter((l) => l.hasVideo)
+  log('lanes=' + lanes.map((l) => l.id.slice(-8)).join(','))
+
+  const expect = buildLayout({
+    lanes: lanes.map((l) => ({ id: l.id, hasVideo: true, kind: l.kind, durationSec: l.containers.reduce((m, c) => Math.max(m, c.endSec), 0) })),
+    mode, cols: undefined, focusId: null,
+  })
+  const spec = { lanes, mode, cellWidth: 480, fpsOut: 15, durationSec: 20 }
+  const out = await composeOffline(spec, { onProgress: () => {}, isCancelled: () => false })
+  // 读产物自己的宽高：moov 里的 tkhd，不靠猜
+  let dims = null
+  if (out.blob) {
+    const buf = await out.blob.arrayBuffer()
+    const input = new Input({ source: new CustomSource({ getSize: () => buf.byteLength, read: (a, b) => Promise.resolve(new Uint8Array(buf.slice(a, b))) }), formats: ALL_FORMATS })
+    const vt = (await input.getVideoTracks())[0]
+    dims = vt ? `${vt.displayWidth ?? vt.codedWidth}x${vt.displayHeight ?? vt.codedHeight}` : 'no-video-track'
+    await input.dispose?.()
+  }
+  const verdict = {
+    meeting, mode, expectedCanvas: `${expect.canvasWidth}x${expect.canvasHeight}`, expectedMainId: expect.mainId,
+    kind: out.kind, coveredSec: +out.coveredSec.toFixed(1), bytes: out.blob ? out.blob.size : 0,
+    decodedDims: dims,
+    // 成品解码出来的宽高必须等于 buildLayout 的画布（差 1 像素都算分叉）
+    match: dims === `${expect.canvasWidth}x${expect.canvasHeight}`,
+    reasons: out.reasons,
+  }
+  log(JSON.stringify(verdict))
+  await post(JSON.stringify(verdict))
+} catch (e) { log('FATAL ' + (e?.stack || e)) }
+</script>

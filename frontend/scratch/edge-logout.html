@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>LOGOUT-PAGE</title>
+  </head>
+  <body>
+    <!-- 一次性收尾页：侧栏用户区是无 role 的 div，连接器点不到，evaluate_script 又不回传，
+         所以退出由页面自己做。它只干一件事：拿本标签 sessionStorage 里的令牌真调一次
+         /auth/logout（我方后端会顺带结束三方会话），然后清掉本地令牌。
+         令牌不进对话记录，也不进任何工具参数。 -->
+    <h1 id="st">LOGOUT-START</h1>
+    <script>
+      (function () {
+        var st = document.getElementById('st')
+        var tok = sessionStorage.getItem('token') || ''
+        if (tok.length < 40) {
+          sessionStorage.clear()
+          st.textContent = 'LOGOUT-NOTOKEN'
+          document.title = 'LOGOUT-NOTOKEN'
+          return
+        }
+        var x = new XMLHttpRequest()
+        x.open('POST', '/api/v1/auth/logout', false)
+        x.setRequestHeader('Authorization', 'Bearer ' + tok)
+        x.setRequestHeader('Content-Type', 'application/json')
+        var http = 0
+        var code = ''
+        try {
+          x.send('{}')
+          http = x.status
+          try { code = JSON.parse(x.responseText || '{}').code } catch (e) { code = 'noparse' }
+        } catch (e) {
+          st.textContent = 'LOGOUT-XHRFAIL ' + e
+          document.title = 'LOGOUT-XHRFAIL'
+          return
+        }
+        sessionStorage.removeItem('token')
+        var left = sessionStorage.getItem('token')
+        st.textContent = 'LOGOUT http=' + http + ' code=' + code + ' tokenCleared=' + (left === null)
+        document.title = 'LOGOUT-' + http + '-' + code + '-' + (left === null ? 'CLEARED' : 'KEPT')
+      })()
+    </script>
+  </body>
+</html>

@@ -1,0 +1,130 @@
+<!doctype html><meta charset="utf-8"><title>local-compose</title>
+<body><pre id="log" style="font:12px monospace;white-space:pre-wrap"></pre>
+<script type="module">
+// 本机录制那条路（CustomSource + fetchSlice）的端到端夹具：
+// 用 canvas.captureStream + MediaRecorder 造**真 webm 字节**写进 IndexedDB，
+// 形状是"同人再入会 ⇒ 一格两个容器"（两条同 ownerId+kind 的轨，各自带自己的容器头）——
+// 这正是 §6.4.78 那个缺陷的形状，而受控实例里没有用户的本机录制、也没媒体权限录真会，
+// 所以自己造。跑法：/scratch/local-compose-probe.html
+const stamp = Date.now()
+const log = (m) => { document.getElementById('log').textContent += m + '\n'; document.title = 'LC ' + m.slice(0, 36) }
+const post = async (body) => {
+  try { await fetch('http://127.0.0.1:5199/result/local-compose-' + stamp, { method: 'POST', body }) } catch (e) { log('POST FAIL ' + e.message) }
+}
+
+/** 录一段真 webm：canvas 每 200ms 推一帧（captureStream(0) 要手动 requestFrame，后台页 rAF 是死的） */
+async function recordWebm(ms, hue) {
+  const c = document.createElement('canvas')
+  c.width = 320; c.height = 180
+  const ctx = c.getContext('2d')
+  const stream = c.captureStream(0)
+  const vt = stream.getVideoTracks()[0]
+  const rec = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8' })
+  const chunks = []
+  rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data) }
+  const done = new Promise((res) => { rec.onstop = res })
+  let n = 0
+  const draw = setInterval(() => {
+    n++
+    ctx.fillStyle = `hsl(${(hue + n * 12) % 360} 70% 45%)`
+    ctx.fillRect(0, 0, 320, 180)
+    ctx.fillStyle = '#fff'; ctx.font = '48px sans-serif'
+    ctx.fillText(String(n), 20, 110)
+    vt.requestFrame()
+  }, 200)
+  rec.start()
+  await new Promise((r) => setTimeout(r, ms))
+  clearInterval(draw)
+  rec.stop()
+  await done
+  vt.stop()
+  return { blob: new Blob(chunks, { type: 'video/webm' }), ms }
+}
+
+try {
+  const { addLocalRecording, putSegmentWithRecord, getSegmentBlob } = await import('/src/utils/localRecorder.ts')
+  const { buildLanesFromRecording } = await import('/src/utils/offlineCompose/intake.ts')
+  const { composeOffline } = await import('/src/utils/offlineCompose/composeOffline.ts')
+  const { probeEngineCapabilities } = await import('/src/utils/offlineCompose/engine.ts')
+  const { buildLayout } = await import('/src/utils/composeLayout.ts')
+  const { Input, CustomSource, ALL_FORMATS } = await import('mediabunny')
+
+  // 两条"同人再入会"的轨 ⇒ 一格两个容器（每条轨自己一份容器头）。
+  // 两格**时间上重叠**：不重叠的话"同时在读几个容器"永远是 1，量不出并发这个数。
+  const lanesSpec = [{ ownerId: 'p1', name: '甲' }, { ownerId: 'p2', name: '乙' }]
+  const tracks = []
+  const t0 = Date.now()
+  let span = 0
+  for (const l of lanesSpec) {
+    let cursor = 0
+    for (let session = 0; session < 2; session++) {
+      const r = await recordWebm(2600, session * 90 + lanesSpec.indexOf(l) * 45)
+      const recordingId = `${l.ownerId}-cam-${session}`
+      const dur = +(r.ms / 1000).toFixed(2)
+      tracks.push({
+        recordingId, ownerId: l.ownerId, ownerName: l.name, kind: 'camera', mediaLabel: '画面',
+        hasVideo: true, hasAudio: false,
+        startOffsetSec: cursor, endOffsetSec: cursor + dur, closedAtMs: t0 + cursor * 1000,
+        closeReason: 'session_end', mime: 'video/webm;codecs=vp8', fileName: `${recordingId}.webm`,
+        width: 320, height: 180, frameRate: 5,
+        segments: [{ blobKey: `${recordingId}#0`, seq: 0, offsetSec: cursor, durationSec: dur, sizeBytes: r.blob.size, mime: 'video/webm;codecs=vp8' }],
+      })
+      await putSegmentWithRecord({ ...tracks[tracks.length - 1].segments[0], trackId: recordingId }, r.blob)
+      cursor += dur
+      if (cursor > span) span = cursor
+    }
+  }
+  const rec = {
+    id: `local-probe-${stamp}`, title: '夹具：同人再入会两格两容器', meetingNo: 'probe', fileName: 'probe',
+    startedAt: t0, durationSec: span, sizeBytes: tracks.reduce((a, t) => a + t.segments[0].sizeBytes, 0),
+    schema: 2, tracks, dirPath: null, dirHandle: false, partial: false, recorderAccount: 'probe',
+  }
+  await addLocalRecording(rec)
+  log('夹具已入库：tracks=' + tracks.length + ' 每格容器数应=2 字节=' + rec.sizeBytes)
+
+  const intake = await buildLanesFromRecording(rec)
+  const shape = intake.lanes.map((l) => `${l.id} 容器=${l.containers.map((c) => `${c.startSec.toFixed(1)}-${c.endSec.toFixed(1)}`).join('|')}`).join(' ;; ')
+  log('lanes=' + intake.lanes.length + ' 多容器格=' + intake.multiContainerLanes.length + ' 损坏=' + intake.damagedLanes.length)
+  log('形状: ' + shape)
+
+  // 直接量"同时有几个容器在取字节"：这是 §6.4.78 那句"并发从容器数降到路数"的正面证据
+  let live = 0, peakLive = 0, opens = 0
+  const lanes = intake.lanes.map((l) => ({
+    ...l,
+    fetchSlice: async (key) => {
+      opens++
+      live++; if (live > peakLive) peakLive = live
+      try { return await (await getSegmentBlob(key))?.arrayBuffer() ?? null } finally { live-- }
+    },
+  }))
+  const caps = await probeEngineCapabilities(5)
+  const expect = buildLayout({
+    lanes: lanes.map((l) => ({ id: l.id, hasVideo: true, kind: l.kind, durationSec: span })),
+    mode: 'top', focusId: null,
+  })
+  const out = await composeOffline({ lanes, mode: 'top', cellWidth: 480, fpsOut: 5, durationSec: span },
+    { onProgress: () => {}, isCancelled: () => false }, caps)
+  let dims = null
+  if (out.blob) {
+    const buf = await out.blob.arrayBuffer()
+    const input = new Input({ source: new CustomSource({ getSize: () => buf.byteLength, read: (a, b) => Promise.resolve(new Uint8Array(buf.slice(a, b))) }), formats: ALL_FORMATS })
+    const vt = (await input.getVideoTracks())[0]
+    dims = vt ? `${vt.displayWidth ?? vt.codedWidth}x${vt.displayHeight ?? vt.codedHeight}` : 'no-video-track'
+    await input.dispose?.()
+  }
+  const verdict = {
+    containersTotal: intake.lanes.reduce((a, l) => a + l.containers.length, 0),
+    lanes: intake.lanes.length, fetchOpens: opens, peakConcurrentFetch: peakLive,
+    expectedCanvas: `${expect.canvasWidth}x${expect.canvasHeight}`, decodedDims: dims,
+    kind: out.kind, coveredSec: +out.coveredSec.toFixed(2), spanSec: +span.toFixed(2),
+    bytes: out.blob ? out.blob.size : 0, reasons: out.reasons,
+    placeholders: out.placeholderLanes.length, unusable: out.unusableVideoLanes, droppedAudio: out.droppedAudioLanes,
+    // 三条判据：形状对（一格两容器）、跑通且时长说实话、成品画布等于 buildLayout
+    okShape: intake.lanes.length === 2 && intake.lanes.every((l) => l.containers.length === 2),
+    okRun: out.kind === 'ok' && Math.abs(out.coveredSec - span) < 1.5,
+    okCanvas: dims === `${expect.canvasWidth}x${expect.canvasHeight}`,
+  }
+  log(JSON.stringify(verdict))
+  await post(JSON.stringify(verdict))
+} catch (e) { log('FATAL ' + (e?.stack || e)) }
+</script>

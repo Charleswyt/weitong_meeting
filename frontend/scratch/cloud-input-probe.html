@@ -1,0 +1,42 @@
+<!doctype html><meta charset="utf-8"><title>cip</title>
+<body><pre id="log" style="font:12px monospace;white-space:pre-wrap"></pre>
+<script type="module">
+const log = (m) => { document.getElementById('log').textContent += m + '\n'; document.title = 'CIP done' }
+const stamp = Date.now()
+const out = []
+try {
+  if (!localStorage.getItem('token')) {
+    const r = await fetch('/api/v1/auth/auto-login', { method: 'POST' })
+    const j = await r.json(); if (j?.data?.token) localStorage.setItem('token', j.data.token)
+  }
+  const { getPlayback } = await import('/src/api/recording.ts')
+  const mb = await import('/node_modules/mediabunny/dist/mediabunny.mjs')
+  const meeting = 'meeting_1790600078_ev1-TRdK'
+  const pb = await getPlayback(meeting)
+  const st = (pb.data?.streams || []).filter(s => s.downloadUrl)
+  out.push('streams ' + st.length + ' token? ' + !!localStorage.getItem('token'))
+  const cam = st.find(s => s.hasVideo) || st[0]
+  out.push('target ' + cam.mediaKind + ' url ' + cam.downloadUrl.slice(0, 60))
+
+  // 1) 先看这个地址在带令牌的 fetch 下到底回什么
+  const hr = await fetch(cam.downloadUrl, { headers: { Authorization: 'Bearer ' + localStorage.getItem('token') } })
+  const hb = await hr.arrayBuffer()
+  out.push('fetch status ' + hr.status + ' type ' + hr.headers.get('content-type') + ' bytes ' + hb.byteLength)
+  const head = new Uint8Array(hb.slice(4, 12)); out.push('box@4 ' + String.fromCharCode(...head))
+
+  // 2) 再让 mediabunny 读它
+  const tryOne = async (label, src) => {
+    try {
+      const input = new mb.Input({ source: src, formats: mb.ALL_FORMATS })
+      const v = await input.getVideoTracks(); const a = await input.getAudioTracks()
+      out.push(label + ' => video=' + v.length + ' audio=' + a.length + ' info=' + JSON.stringify((v[0] || a[0])?.getFirstSample?.()?.timestamp ?? 'n/a'))
+      await input.dispose?.()
+    } catch (e) { out.push(label + ' THREW ' + (e?.name || '?') + ': ' + String(e?.message || e).slice(0, 240)) }
+  }
+  const hdr = { headers: { Authorization: 'Bearer ' + localStorage.getItem('token') } }
+  await tryOne('UrlSource', new mb.UrlSource(cam.downloadUrl, { requestInit: hdr }))
+  await tryOne('BufferSource', new mb.BufferSource(hb))
+} catch (e) { out.push('FATAL ' + (e?.stack || e)) }
+log(out.join('\n'))
+try { await fetch('http://127.0.0.1:5199/result/cloud-input-' + stamp, { method: 'POST', body: out.join('\n') }) } catch {}
+</script>

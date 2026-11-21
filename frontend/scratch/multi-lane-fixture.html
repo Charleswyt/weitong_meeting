@@ -1,0 +1,183 @@
+<!doctype html>
+<!--
+  多路录制夹具（只在开发期用，scratch/ 已被 gitignore，不进仓库）。
+
+  存在的理由：第 15/16/17 项的"≥2 路同屏宫格 + 断轨全局时间轴"一直没有真产物可测 ——
+  这台机器只有一个真实身份，第二个浏览器（夸克）的自动化通道实测不通。
+  这里用**同一台机器上的两台摄像头**（USB Camera + OBS Virtual Camera）录出两路真实 webm，
+  完全用生产代码自己的 API（/src/utils/localRecorder.ts）写进 IndexedDB。
+  清单形状不是我猜的：tracks/segments 的字段与 addLocalRecording 都来自被测模块本身。
+
+  2026-09-29 改成"再入会"的真形状：甲这一路拆成**两条 RecordedTrack**（fixA1 0–3s 以
+  publisher_left 收尾、fixA2 7–10s 另起一次 MediaRecorder，seq 从 0 重新数、自带容器头），
+  ownerId 与 kind 完全相同 —— 这就是三方给新 publicationId 后本机键换新 streamId 的结果。
+  归组前界面会开出 3 个画面格（甲占两格），归组后应该只剩 2 格、甲那一格中间是缺口。
+-->
+<html lang="zh">
+  <head><meta charset="utf-8" /><title>夹具 双路+断轨</title></head>
+  <body style="font: 14px/1.6 system-ui; padding: 24px; max-width: 720px">
+    <h3>多路录制夹具：两路真实摄像头 + 甲中途退会再入</h3>
+    <p>
+      甲（USB Camera）分**两次会话**录 0–3s 与 7–10s，中间 4 秒是空洞；<br />
+      乙（OBS Virtual Camera）与甲的麦克风连续录 0–10s。<br />
+      产物用 <code>putSegmentBlob</code> / <code>addLocalRecording</code> 落进 IndexedDB，
+      之后走真实界面：本地录制 → 播放 → 下载合成。
+    </p>
+    <button id="go" style="padding: 10px 18px">开始录制（约 11 秒）</button>
+    <span id="phase" style="margin-left: 12px"></span>
+    <pre id="out" style="white-space: pre-wrap; margin-top: 16px; font-size: 12px"></pre>
+    <script type="module">
+      const $ = (id) => document.getElementById(id)
+      const log = (s) => { $('out').textContent += s + '\n' }
+      const REC = await import('/src/utils/localRecorder.ts')
+
+      const TOTAL_MS = 10000
+      const GAP_FROM = 3000
+      const GAP_TO = 7000
+      const SLICE = 2000
+
+      async function pickCameras() {
+        const list = await navigator.mediaDevices.enumerateDevices()
+        if (list.some((d) => d.kind === 'videoinput' && !d.label)) {
+          const probe = await navigator.mediaDevices.getUserMedia({ video: true })
+          probe.getTracks().forEach((t) => t.stop())
+        }
+        const again = await navigator.mediaDevices.enumerateDevices()
+        return { cams: again.filter((d) => d.kind === 'videoinput'), mics: again.filter((d) => d.kind === 'audioinput') }
+      }
+
+      // 一次会话 = 一个 MediaRecorder，从 from 录到 to，seq 从 0 起、第一片自带容器头。
+      // **先等到 from 再开设备**：同一台摄像头不能同时被两路占，甲的两次会话要靠这个错峰。
+      async function recordSession({ deviceId, audio, from, to, recordingId }) {
+        await new Promise((r) => setTimeout(r, Math.max(0, from - Date.now())))
+        const stream = await navigator.mediaDevices.getUserMedia(
+          audio ? { audio: { deviceId: { exact: deviceId } } } : { video: { deviceId: { exact: deviceId } } },
+        )
+        const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+          ? 'video/webm;codecs=vp9,opus'
+          : 'video/webm'
+        const chunks = []
+        const rec = new MediaRecorder(stream, { mimeType: mime })
+        rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push({ blob: e.data, at: Date.now() }) }
+        const done = new Promise((r) => { rec.onstop = r })
+        const runStart = Date.now()
+        rec.start(SLICE)
+        await new Promise((r) => setTimeout(r, Math.max(500, to - runStart)))
+        rec.stop()
+        await done
+        stream.getTracks().forEach((t) => t.stop())
+
+        // 用每片真实到达时间算 offset/duration，不按"每片正好 2 秒"假设
+        let prev = runStart
+        const raw = chunks.map((c, i) => {
+          const s = { seq: i, offsetSec: (prev - t0) / 1000, durationSec: (c.at - prev) / 1000, blob: c.blob }
+          prev = c.at
+          return s
+        })
+        let bytes = 0
+        const segments = []
+        for (const s of raw) {
+          const blobKey = `${recordingId}#${s.seq}`
+          await REC.putSegmentBlob(blobKey, s.blob)
+          bytes += s.blob.size
+          segments.push({
+            seq: s.seq,
+            offsetSec: Math.round(s.offsetSec * 1000) / 1000,
+            durationSec: Math.round(s.durationSec * 1000) / 1000,
+            sizeBytes: s.blob.size,
+            blobKey,
+            mime,
+          })
+        }
+        return { segments, bytes }
+      }
+
+      let t0 = 0
+      $('go').onclick = async () => {
+        $('go').disabled = true
+        let picked
+        try {
+          picked = await pickCameras()
+        } catch (e) {
+          log('枚举失败：' + e.name + ' ' + e.message)
+          $('go').disabled = false
+          return
+        }
+        if (!picked || picked.cams.length < 2) {
+          log('需要两台可用摄像头，实测只枚举到 ' + (picked ? picked.cams.length : 0) + ' 台 —— 夹具不跑')
+          $('go').disabled = false
+          return
+        }
+        const [camA, camB] = picked.cams
+        const mic = picked.mics[0]
+        log('甲=' + camA.label + '\n乙=' + camB.label + '\n麦=' + (mic ? mic.label : '（无）'))
+
+        t0 = Date.now() + 300
+        $('phase').textContent = '录制中…'
+        const jobs = [
+          recordSession({ deviceId: camA.deviceId, from: t0, to: t0 + GAP_FROM, recordingId: 'fixA1' }),
+          recordSession({ deviceId: camA.deviceId, from: t0 + GAP_TO, to: t0 + TOTAL_MS, recordingId: 'fixA2' }),
+          recordSession({ deviceId: camB.deviceId, from: t0, to: t0 + TOTAL_MS, recordingId: 'fixB' }),
+        ]
+        if (mic) jobs.push(recordSession({ deviceId: mic.deviceId, audio: true, from: t0, to: t0 + TOTAL_MS, recordingId: 'fixC' }))
+        const [a1, a2, b, c] = await Promise.all(jobs)
+        $('phase').textContent = ''
+
+        const track = (id, ownerId, ownerName, mediaLabel, hasVideo, hasAudio, r, closeReason) => ({
+          recordingId: id,
+          ownerId,
+          ownerName,
+          kind: hasVideo ? 'camera' : 'microphone',
+          mediaLabel,
+          hasVideo,
+          hasAudio,
+          startOffsetSec: r.segments.length ? r.segments[0].offsetSec : 0,
+          endOffsetSec: r.segments.length
+            ? Math.round((r.segments[r.segments.length - 1].offsetSec + r.segments[r.segments.length - 1].durationSec) * 100) / 100
+            : null,
+          closedAtMs: t0 + TOTAL_MS,
+          closeReason,
+          mime: r.segments[0] ? r.segments[0].mime : 'video/webm',
+          fileName: `${id}.webm`,
+          segments: r.segments,
+        })
+
+        const tracks = [
+          // 甲两次会话：ownerId/kind 完全相同，只有 recordingId 不同 —— 归组要认的就是这个
+          track('fixA1', 'fixture-a', '夹具甲', camA.label, true, false, a1, 'publisher_left'),
+          track('fixA2', 'fixture-a', '夹具甲', camA.label, true, false, a2, 'session_end'),
+          track('fixB', 'fixture-b', '夹具乙', camB.label, true, false, b, 'session_end'),
+        ]
+        if (c) tracks.push(track('fixC', 'fixture-a', '夹具甲', '麦克风', false, true, c, 'session_end'))
+
+        const sizeBytes = a1.bytes + a2.bytes + b.bytes + (c ? c.bytes : 0)
+        const id = await REC.addLocalRecording({
+          title: '夹具 退会再入',
+          meetingNo: '999999',
+          fileName: 'hxt/夹具-退会再入',
+          startedAt: t0,
+          durationSec: Math.round(TOTAL_MS / 1000),
+          sizeBytes,
+          mime: 'application/x-multi-track',
+          schema: 2,
+          tracks,
+          dirPath: null,
+          dirHandle: false,
+          // 甲有 3s→7s 的洞：partial 必须是 true，界面要如实说这一场有缺口
+          partial: true,
+        })
+        document.title = 'FIX ' + id
+        log('已写入 IndexedDB：id=' + id + '，清单 ' + tracks.length + ' 条会话')
+        for (const t of tracks) log('  ' + t.recordingId + ' 分片 ' + JSON.stringify(t.segments.map((s) => [s.offsetSec, s.durationSec])))
+        log('总字节 ' + sizeBytes)
+        $('go').disabled = false
+        $('go').textContent = '再录一次'
+      }
+
+      // ?auto=1 就自己开跑：浏览器自动化通道时好时坏，不该把"我恰好点到按钮"变成前置条件
+      if (new URLSearchParams(location.search).get('auto') === '1') {
+        setTimeout(() => $('go').click(), 400)
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>单路直通探针</title>
+<style>
+  body{font:13px/1.6 ui-monospace,Consolas,monospace;background:#0b1220;color:#cbd5e1;margin:0;padding:16px}
+  pre{white-space:pre-wrap;margin:8px 0 0}
+  .ok{color:#4ade80} .err{color:#f87171} .info{color:#38bdf8}
+  #bar{height:6px;background:#1e293b;border-radius:3px;overflow:hidden}
+  #bar>i{display:block;height:100%;width:0;background:#38bdf8;transition:width .3s}
+</style>
+</head>
+<body>
+<div id="bar"><i></i></div>
+<pre id="out">booting…</pre>
+<script type="module">
+// 单路直通验证：造 WebM → demux → decode → 报结果
+// 验证 webmDemuxer + WebCodecs VideoDecoder 能不能把本机录制的 WebM 一路解到原始帧。
+
+const out = document.getElementById('out')
+const bar = document.querySelector('#bar>i')
+const RESULT = { stage: 'boot', steps: [], errors: [] }
+window.__probe = RESULT
+
+const say = (s, cls) => {
+  const span = cls ? `<span class="${cls}">${s}</span>` : s
+  out.innerHTML += '\n' + span
+}
+const prog = (r) => { bar.style.width = (Math.max(0, Math.min(1, r)) * 100).toFixed(1) + '%' }
+const step = (name, fn) => {
+  RESULT.stage = name
+  say(`\n── ${name} ──`, 'info')
+  return fn().then(
+    (v) => { RESULT.steps.push({ name, ok: true }); return v },
+    (e) => { RESULT.steps.push({ name, ok: false, error: String(e) }); say('ERROR: ' + e, 'err'); throw e }
+  )
+}
+
+const RECEIVER = 'http://127.0.0.1:5199/result'
+function report() {
+  try { document.title = 'PROBE ' + RESULT.stage } catch {}
+  fetch(RECEIVER, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify(RESULT) })
+    .catch(() => {})
+}
+
+// ① 造测试 WebM（canvas 动画 + MediaRecorder）
+async function createTestWebM() {
+  const c = document.createElement('canvas')
+  c.width = 320; c.height = 180
+  const ctx = c.getContext('2d')
+  const cs = c.captureStream(15)
+
+  // 优先 VP9，回退 VP8
+  const mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
+    .find(m => MediaRecorder.isTypeSupported(m)) || ''
+  say('MediaRecorder mime: ' + (mime || 'default'))
+
+  const rec = new MediaRecorder(cs, mime ? { mimeType: mime } : undefined)
+  const chunks = []
+  rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data) }
+
+  let frame = 0
+  const draw = () => {
+    ctx.fillStyle = frame % 2 === 0 ? '#1a237e' : '#b71c1c'
+    ctx.fillRect(0, 0, 320, 180)
+    ctx.fillStyle = '#fff'
+    ctx.font = '24px monospace'
+    ctx.fillText('Frame ' + frame, 80, 100)
+    frame++
+  }
+  const iv = setInterval(draw, 67)
+  rec.start(500)
+  await new Promise(r => setTimeout(r, 3000))
+  rec.stop()
+  clearInterval(iv)
+  cs.getTracks().forEach(t => t.stop())
+  await new Promise(r => { rec.onstop = r })
+
+  const blob = new Blob(chunks, { type: mime || 'video/webm' })
+  const buf = await blob.arrayBuffer()
+  say(`WebM: ${buf.byteLength} bytes, ${chunks.length} chunks, mime=${rec.mimeType}`)
+  return { buf, mime: rec.mimeType || mime }
+}
+
+// ② demux
+async function runDemux(buf) {
+  const { demuxWebM } = await import('../src/utils/offlineExport/webmDemuxer')
+  const result = demuxWebM(buf)
+  say(`demux: ${result.ms.toFixed(1)}ms, ${result.tracks.size} tracks, laceWarn=${result.laceWarn}`)
+  for (const [num, t] of result.tracks) {
+    const frames = result.frames.get(num) || []
+    say(`  track#${num} type=${t.type} codec=${t.codecId} ${t.width ? t.width + 'x' + t.height : ''} ${t.sampleRate ? t.sampleRate + 'Hz' : ''} → ${frames.length} frames`)
+    if (frames.length > 0) {
+      const first = frames[0], last = frames[frames.length - 1]
+      say(`    first: ts=${first.tsMs}ms key=${first.key} size=${first.data.length}`)
+      say(`    last:  ts=${last.tsMs}ms key=${last.key} size=${last.data.length}`)
+    }
+  }
+  return result
+}
+
+// ③ VideoDecoder 解码
+async function runDecode(demuxResult) {
+  let videoTrack = null
+  let videoTrackNum = null
+  for (const [num, t] of demuxResult.tracks) {
+    if (t.type === 1) { videoTrack = t; videoTrackNum = num; break }
+  }
+  if (!videoTrack) { say('no video track found'); return null }
+
+  const frames = demuxResult.frames.get(videoTrackNum) || []
+  if (!frames.length) { say('no video frames'); return null }
+
+  // codec string 映射
+  const codecMap = { 'V_VP9': 'vp09.00.10.08', 'V_VP8': 'vp8', 'V_AV1': 'av01.0.01M.08' }
+  const codec = codecMap[videoTrack.codecId] || videoTrack.codecId.toLowerCase()
+  say(`decoding with codec=${codec}, ${frames.length} frames`)
+
+  // 检查支持
+  const support = await VideoDecoder.isConfigSupported({ codec, codedWidth: 320, codedHeight: 180 })
+  say(`isConfigSupported: ${support.supported}`)
+  if (!support.supported) { say('codec not supported by VideoDecoder', 'err'); return null }
+
+  const decoded = []
+  return new Promise((resolve) => {
+    const dec = new VideoDecoder({
+      output: (frame) => { decoded.push({ w: frame.displayWidth, h: frame.displayHeight, ts: frame.timestamp }) },
+      error: (e) => { say('VideoDecoder error: ' + e, 'err'); resolve(null) },
+    })
+    dec.configure({ codec, codedWidth: videoTrack.width || 320, codedHeight: videoTrack.height || 180 })
+
+    for (let i = 0; i < frames.length; i++) {
+      const f = frames[i]
+      const next = frames[i + 1]
+      dec.decode(new EncodedVideoChunk({
+        type: f.key ? 'key' : 'delta',
+        timestamp: f.tsMs * 1000,
+        duration: next ? (next.tsMs - f.tsMs) * 1000 : 33000,
+        data: f.data,
+      }))
+    }
+    dec.flush().then(() => {
+      dec.close()
+      say(`decoded ${decoded.length} frames`)
+      if (decoded.length > 0) {
+        const first = decoded[0], last = decoded[decoded.length - 1]
+        say(`  first: ${first.w}x${first.h} ts=${first.ts}µs`)
+        say(`  last:  ${last.w}x${last.h} ts=${last.ts}µs`)
+      }
+      resolve(decoded)
+    }).catch(e => { dec.close(); say('flush error: ' + e, 'err'); resolve(null) })
+  })
+}
+
+// ── 主流程 ──
+async function main() {
+  try {
+    prog(0.1)
+    const { buf, mime } = await step('create WebM', createTestWebM)
+    prog(0.4)
+
+    const demuxResult = await step('demux', () => runDemux(buf))
+    prog(0.7)
+
+    const decoded = await step('decode', () => runDecode(demuxResult))
+    prog(1.0)
+
+    if (decoded && decoded.length > 0) {
+      say('\n✓ 单路直通验证通过', 'ok')
+      RESULT.stage = 'pass'
+    } else {
+      say('\n✗ 解码未产出帧', 'err')
+      RESULT.stage = 'fail'
+    }
+  } catch (e) {
+    say('\n✗ 探针异常: ' + e, 'err')
+    RESULT.stage = 'error'
+    RESULT.errors.push(String(e))
+  }
+  report()
+  say('\n探针结束。结果已回报。')
+}
+
+main()
+</script>
+</body>
+</html>

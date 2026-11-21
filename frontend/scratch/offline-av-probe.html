@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>音频 + mux 端到端探针（第三轮）</title>
+<style>
+  body{font:13px/1.6 ui-monospace,Consolas,monospace;background:#0b1220;color:#cbd5e1;margin:0;padding:16px}
+  pre{white-space:pre-wrap;margin:8px 0 0}
+  #bar{height:6px;background:#1e293b;border-radius:3px;overflow:hidden}
+  #bar>i{display:block;height:100%;width:0;background:#38bdf8}
+</style>
+</head>
+<body>
+<div id="bar"><i></i></div>
+<pre id="out">booting…</pre>
+<script type="module">
+// 第三轮：把最后一个白区证掉 —— ① 音频能不能离线解码/混音/编码；② 能不能真 mux 出一个能播的文件。
+//
+// 与生产的关系：本地录制是"一路一条轨"（camera 只有画面、microphone 只有声音），
+// 所以生产里是 N 个视频文件 + M 个音频文件拼一张全局时间轴。本探针为了省事，
+// 让源同时带画面与声音（同形容器、同形编码），并另外用合成 PCM 走一遍"多路对齐混音"。
+
+import { muxWebM } from './mini-webm-muxer.js'
+
+const out = document.getElementById('out')
+const bar = document.querySelector('#bar>i')
+const F = (n, d = 1) => Number(n).toFixed(d)
+const RESULT = { stage: 'boot', note: [] }
+window.__probe = RESULT
+const say = (s) => { out.textContent += '\n' + s }
+const prog = (r) => { bar.style.width = (Math.max(0, Math.min(1, r)) * 100).toFixed(1) + '%' }
+
+const RECEIVER = 'http://127.0.0.1:5199/result/av'
+/** 把字节直接送到盘上 —— evaluate_script 读不了结果，只能让页面自己把它送出来。 */
+const postFile = (name, bytes) =>
+  fetch('http://127.0.0.1:5199/file/' + name, {
+    method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: bytes,
+  })
+function report() {
+  try { document.title = 'PROBE ' + RESULT.stage + ' ' + (RESULT.playback ? JSON.stringify(RESULT.playback) : '') } catch {}
+  fetch(RECEIVER, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify(RESULT) })
+    .then(() => say('结果已回报接收器')).catch(() => say('回报失败（接收器没在跑？）'))
+}
+
+const mc = new MessageChannel()
+const yieldTask = () => new Promise((r) => { mc.port1.onmessage = () => r(); mc.port2.postMessage(0) })
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+// ── 最小 EBML 读取器（多轨版） ─────────────────────────────────────────
+function vintLen(b) { for (let i = 0; i < 8; i++) if (b & (0x80 >> i)) return i + 1; return 0 }
+function readId(dv, p) {
+  const len = vintLen(dv.getUint8(p)); if (len < 1 || len > 4) return null
+  let v = 0; for (let i = 0; i < len; i++) v = v * 256 + dv.getUint8(p + i)
+  return { id: v, len }
+}
+function readSize(dv, p) {
+  const len = vintLen(dv.getUint8(p)); if (len < 1 || len > 8) return null
+  let v = 0, allOnes = true
+  for (let i = 0; i < len; i++) {
+    const b = dv.getUint8(p + i)
+    const data = i === 0 ? (b & (0xFF >> len)) : b
+    if (i === 0) { if ((b & (0xFF >> len)) !== (0xFF >> len)) allOnes = false } else if (b !== 0xFF) allOnes = false
+    v = v * 256 + data
+  }
+  return { size: allOnes ? Infinity : v, len }
+}
+const ru = (dv, p, n) => { let v = 0; for (let i = 0; i < n; i++) v = v * 256 + dv.getUint8(p + i); return v }
+const rs = (dv, p, n) => { let s = ''; for (let i = 0; i < n; i++) s += String.fromCharCode(dv.getUint8(p + i)); return s }
+
+const ID = {
+  SEGMENT: 0x18538067, INFO: 0x1549A966, TIMECODE_SCALE: 0x2AD7B1,
+  TRACKS: 0x1654AE6B, TRACK_ENTRY: 0xAE, TRACK_NUMBER: 0xD7, TRACK_TYPE: 0x83,
+  CODEC_ID: 0x86, CODEC_PRIVATE: 0x63A2, VIDEO: 0xE0, AUDIO: 0xE1,
+  PIXEL_W: 0xB0, PIXEL_H: 0xBA, SAMPLE_RATE: 0xB5, CHANNELS: 0x9F,
+  CLUSTER: 0x1F43B675, CLUSTER_TIME: 0xE7, SIMPLE_BLOCK: 0xA3, BLOCK_GROUP: 0xA0, BLOCK: 0xA1,
+}
+
+function demux(buf) {
+  const dv = new DataView(buf)
+  const t0 = performance.now()
+  let pos = 0, timecodeScaleNs = 1e6, clusterTimeMs = 0, sawSegment = false, laceWarn = false
+  const tracks = new Map()
+  const frames = new Map()          // trackNumber -> [{tsMs, key, data}]
+  const containers = new Set([ID.SEGMENT, ID.INFO, ID.TRACKS, ID.TRACK_ENTRY, ID.VIDEO, ID.AUDIO, ID.BLOCK_GROUP, ID.CLUSTER])
+  let curTrack = null
+
+  const readBlock = (dataStart, dataEnd) => {
+    let p = dataStart
+    const tn = readSize(dv, p); if (!tn) return
+    p += tn.len
+    const rel = dv.getInt16(p); p += 2
+    const flags = dv.getUint8(p); p += 1
+    if ((flags & 0x06) >> 1) laceWarn = true
+    const t = tracks.get(tn.size); if (!t) return
+    const len = dataEnd - p; if (len <= 0) return
+    const b0 = dv.getUint8(p)
+    // 关键帧一律**从码流判**：容器标记实测不可信（MediaRecorder 产物里 0x80 位全为 0）。
+    // VP9 未压缩头：marker(2) profile(2) show_existing(1) frame_type(1)…；Opus 每块都是关键帧。
+    const key = t.codecId === 'V_VP9'
+      ? ((b0 & 0xC0) === 0x80 && (b0 & 0x04) === 0)
+      : (t.codecId === 'V_VP8' ? (b0 & 0x01) === 0 : true)
+    if (!frames.has(tn.size)) frames.set(tn.size, [])
+    frames.get(tn.size).push({ tsMs: clusterTimeMs + rel, key, data: new Uint8Array(buf, p, len) })
+  }
+
+  while (pos < buf.byteLength - 1) {
+    const idr = readId(dv, pos); if (!idr) { pos++; continue }
+    const szr = readSize(dv, pos + idr.len); if (!szr) { pos++; continue }
+    const ds = pos + idr.len + szr.len
+    const de = szr.size === Infinity ? buf.byteLength : Math.min(buf.byteLength, ds + szr.size)
+    const id = idr.id
+    if (containers.has(id)) {
+      if (id === ID.SEGMENT) sawSegment = true
+      if (id === ID.TRACK_ENTRY) curTrack = { number: 0, type: 0, codecId: '' }
+      pos = ds
+      continue
+    }
+    if (id === ID.TIMECODE_SCALE) { timecodeScaleNs = ru(dv, ds, de - ds); pos = de; continue }
+    if (id === ID.CLUSTER_TIME) { clusterTimeMs = ru(dv, ds, de - ds) * (timecodeScaleNs / 1e6); pos = de; continue }
+    if (id === ID.TRACK_NUMBER) { curTrack.number = ru(dv, ds, de - ds); pos = de; continue }
+    if (id === ID.TRACK_TYPE) { curTrack.type = ru(dv, ds, de - ds); pos = de; continue }
+    if (id === ID.CODEC_ID) { curTrack.codecId = rs(dv, ds, de - ds); tracks.set(curTrack.number, curTrack); pos = de; continue }
+    if (id === ID.CODEC_PRIVATE) { curTrack.codecPrivate = new Uint8Array(buf, ds, de - ds); pos = de; continue }
+    if (id === ID.PIXEL_W) { curTrack.w = ru(dv, ds, de - ds); pos = de; continue }
+    if (id === ID.PIXEL_H) { curTrack.h = ru(dv, ds, de - ds); pos = de; continue }
+    if (id === ID.CHANNELS) { curTrack.channels = ru(dv, ds, de - ds); pos = de; continue }
+    if (id === ID.SAMPLE_RATE) {
+      const b = new Uint8Array(buf, ds, de - ds)
+      const d2 = new DataView(b.buffer, b.byteOffset, b.byteLength)
+      // Matroska 里 SamplingFrequency 是 float，而 MediaRecorder 写的是 **4 字节 float32**：
+      // 实测读到 1195081728 = 0x473B8000 = 48000.0f —— 第一版按 8 字节解所以是垃圾值。
+      curTrack.sampleRate = b.byteLength === 8 ? d2.getFloat64(0) : b.byteLength === 4 ? d2.getFloat32(0) : ru(dv, ds, de - ds)
+      pos = de; continue
+    }
+    if (id === ID.SIMPLE_BLOCK || id === ID.BLOCK) { readBlock(ds, de); pos = de; continue }
+    pos = de
+  }
+  return { tracks, frames, ms: performance.now() - t0, sawSegment, laceWarn }
+}
+
+// ── 造源：画面 + 声音一起录（与本地录制同形容器/编码） ────────────────
+async function makeSource(sec) {
+  const c = document.createElement('canvas')
+  c.width = 1280; c.height = 720
+  const g = c.getContext('2d')
+  let drawn = 0
+  const timer = setInterval(() => {
+    drawn++
+    const t = drawn / 15
+    const grd = g.createLinearGradient(0, 0, c.width, c.height)
+    grd.addColorStop(0, `hsl(${(t * 37) % 360} 55% 22%)`)
+    grd.addColorStop(1, `hsl(${(t * 37 + 80) % 360} 55% 12%)`)
+    g.fillStyle = grd; g.fillRect(0, 0, c.width, c.height)
+    g.fillStyle = '#e2e8f0'; g.font = '72px sans-serif'
+    g.fillText('f' + drawn, 60 + (drawn * 11) % 900, 340)
+  }, 1000 / 15)
+
+  let ac = null, audioNote = 'ok'
+  try {
+    ac = new AudioContext()
+    if (ac.state === 'suspended') await ac.resume()
+    if (ac.state !== 'running') audioNote = 'AudioContext 起不来（无用户手势）: ' + ac.state
+  } catch (e) { audioNote = 'AudioContext 异常: ' + e.name }
+
+  const tracks = [...c.captureStream(15).getVideoTracks()]
+  if (ac && ac.state === 'running') {
+    const dest = ac.createMediaStreamDestination()
+    const osc = ac.createOscillator(); osc.frequency.value = 440
+    const gn = ac.createGain(); gn.gain.value = 0.2
+    osc.connect(gn); gn.connect(dest); osc.start()
+    tracks.push(...dest.stream.getAudioTracks())
+  }
+
+  const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+    .find((m) => MediaRecorder.isTypeSupported(m))
+  const rec = new MediaRecorder(new MediaStream(tracks), mime ? { mimeType: mime } : undefined)
+  const chunks = []
+  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data) }
+  const stopped = new Promise((r) => { rec.onstop = r })
+  rec.start(1000)
+  for (let i = 0; i < sec; i++) { await sleep(1000); prog(((i + 1) / sec) * 0.35) }
+  rec.stop(); await stopped
+  clearInterval(timer)
+  tracks.forEach((t) => t.stop())
+  if (ac) await ac.close().catch(() => {})
+  return { blob: new Blob(chunks, { type: rec.mimeType || mime || 'video/webm' }), drawn, shards: chunks.length, mime: rec.mimeType || mime, audioNote }
+}
+
+async function main() {
+  try {
+    RESULT.ua = navigator.userAgent
+    RESULT.hidden = document.hidden
+    say(`0) 造源 12s（画面+声音，1 秒一片）… hidden=${document.hidden}`)
+    const src = await makeSource(12)
+    RESULT.source = { mime: src.mime, drawnFrames: src.drawn, shards: src.shards, bytes: src.blob.size, audioNote: src.audioNote }
+    say(`   ${src.mime} · ${src.drawn} 帧 · ${src.shards} 片 · ${(src.blob.size / 1048576).toFixed(2)} MB · 音频 ${src.audioNote}`)
+
+    const buf = await src.blob.arrayBuffer()
+    say('1) demux（多轨）…')
+    const d = demux(buf)
+    RESULT.demux = {
+      ms: d.ms, tracks: [...d.tracks.values()].map((t) => ({ number: t.number, type: t.type, codecId: t.codecId, w: t.w, h: t.h, channels: t.channels, sampleRate: t.sampleRate, codecPrivateBytes: t.codecPrivate ? t.codecPrivate.length : 0 })),
+      framesPerTrack: [...d.frames.entries()].map(([k, v]) => ({ track: k, frames: v.length, keyframes: v.filter((f) => f.key).length })),
+      laceWarn: d.laceWarn,
+    }
+    for (const t of RESULT.demux.tracks) say(`   轨 ${t.number}: ${t.codecId} type=${t.type} ${t.w ? t.w + '×' + t.h : ''} ${t.sampleRate ? t.sampleRate + 'Hz/' + t.channels + 'ch' : ''} codecPrivate=${t.codecPrivateBytes}B`)
+    for (const f of RESULT.demux.framesPerTrack) say(`   轨 ${f.track}: ${f.frames} 帧（关键帧 ${f.keyframes}）`)
+    if (d.laceWarn) RESULT.note.push('检出 lacing，本探针按一帧一块取')
+
+    const vTrack = [...d.tracks.values()].find((t) => t.type === 1)
+    const vFrames = vTrack ? (d.frames.get(vTrack.number) || []) : []
+    if (!vTrack || !vFrames.length) throw new Error('没抠出视频帧')
+
+    // ── 视频：解码 → 画一格 → 用自写时间戳重编 ────────────────────────
+    say('2) 视频：顺序解码 → 画布 → 用自写时间戳重编（VP9）…')
+    const VW = 960, VH = 540
+    const vc = document.createElement('canvas'); vc.width = VW; vc.height = VH
+    const vg = vc.getContext('2d')
+    const vOut = []
+    let decN = 0, decErr = null
+    const vEnc = new VideoEncoder({
+      output: (ch) => {
+        const u = new Uint8Array(ch.byteLength)
+        ch.copyTo(u)
+        vOut.push({ key: ch.type === 'key', tsMs: Math.round(ch.timestamp / 1000), data: u })
+      },
+      error: (e) => { RESULT.note.push('视频编码错误 ' + (e && e.message)) },
+    })
+    vEnc.configure({ codec: 'vp09.00.10.08', width: VW, height: VH, bitrate: 1_000_000, framerate: 15 })
+    const vDec = new VideoDecoder({
+      output: (fr) => {
+        vg.fillStyle = '#0b1220'; vg.fillRect(0, 0, VW, VH)
+        const s = Math.min(VW / fr.displayWidth, VH / fr.displayHeight)
+        const w = fr.displayWidth * s, h = fr.displayHeight * s
+        try { vg.drawImage(fr, (VW - w) / 2, (VH - h) / 2, w, h) } catch (e) { RESULT.note.push('画帧失败 ' + e.name) }
+        const nf = new VideoFrame(vc, { timestamp: fr.timestamp, duration: 66666 })
+        vEnc.encode(nf, { keyFrame: decN % 30 === 0 })
+        nf.close(); fr.close(); decN++
+      },
+      error: (e) => { decErr = String(e && e.message || e) },
+    })
+    vDec.configure({ codec: 'vp09.00.10.08', codedWidth: vTrack.w, codedHeight: vTrack.h })
+    const tV = performance.now()
+    for (const f of vFrames) {
+      vDec.decode(new EncodedVideoChunk({ type: f.key ? 'key' : 'delta', timestamp: Math.round(f.tsMs * 1000), data: f.data }))
+      if (vDec.decodeQueueSize > 16) await yieldTask()
+    }
+    await vDec.flush(); await vEnc.flush()
+    const vMs = performance.now() - tV
+    RESULT.video = { decoded: decN, decodedErr: decErr, outChunks: vOut.length, transcodeMs: vMs, fps: (decN / vMs) * 1000 }
+    say(`   解出 ${decN} 帧 → 重编 ${vOut.length} 块 / ${F(vMs / 1000)}s ⇒ ${F(RESULT.video.fps)} fps${decErr ? ' · ERR ' + decErr : ''}`)
+
+    // ── 音频：离线解码源 → OfflineAudioContext 混音 → AudioEncoder(opus) ──
+    say('3) 音频：离线解码 + OfflineAudioContext 混音 + 编 opus…')
+    const aTrack = [...d.tracks.values()].find((t) => t.type === 2)
+    RESULT.audioTrackInSource = aTrack ? { codecId: aTrack.codecId, sampleRate: aTrack.sampleRate, channels: aTrack.channels, codecPrivateBytes: aTrack.codecPrivate ? aTrack.codecPrivate.length : 0, frames: (d.frames.get(aTrack.number) || []).length } : null
+    // 要验的是"能不能吃下 MediaRecorder 的 opus-in-webm"（直播流形、无 duration/cues），
+    // 所以直接让 decodeAudioData 吃整份源 —— 能过，这条路就成立，不必自己解 opus 包。
+    const tA0 = performance.now()
+    let decodedAudio = null, adErr = null
+    const ac2 = new AudioContext()
+    try {
+      const b = await src.blob.arrayBuffer()
+      decodedAudio = await ac2.decodeAudioData(b.slice(0))
+    } catch (e) { adErr = e.name + ': ' + e.message }
+    await ac2.close().catch(() => {})
+    const adMs = performance.now() - tA0
+    RESULT.audioDecode = { ok: !!decodedAudio, error: adErr, wallMs: adMs, durationSec: decodedAudio ? decodedAudio.duration : null, sampleRate: decodedAudio ? decodedAudio.sampleRate : null, channels: decodedAudio ? decodedAudio.numberOfChannels : null }
+    say(`   decodeAudioData：${decodedAudio ? '成功 · ' + F(decodedAudio.duration) + 's · ' + decodedAudio.sampleRate + 'Hz · ' + decodedAudio.numberOfChannels + 'ch' : '失败 · ' + adErr}（${F(adMs)}ms）`)
+
+    // 混音：把"解码出来的那一路"与"一路合成正弦"按各自偏移对齐后混成一条 —— 这就是多路对齐的模型
+    const SR = 48000
+    const durSec = decodedAudio ? decodedAudio.duration : 0
+    const frames = Math.max(1, Math.round(durSec * SR))
+    const off = new OfflineAudioContext(2, frames, SR)
+    if (decodedAudio) {
+      const s1 = off.createBufferSource(); s1.buffer = decodedAudio; s1.connect(off.destination); s1.start(0)
+    }
+    // 第二路：晚 2 秒"入会"的合成音，gain 0.5 —— 验的是"按偏移对齐 + 求和"
+    const s2buf = off.createBuffer(1, Math.max(1, Math.round((durSec - 2) * SR)), SR)
+    const s2d = s2buf.getChannelData(0)
+    for (let i = 0; i < s2d.length; i++) s2d[i] = 0.5 * Math.sin((2 * Math.PI * 660 * i) / SR)
+    const s2 = off.createBufferSource(); s2.buffer = s2buf; s2.connect(off.destination); s2.start(2)
+    const tMix = performance.now()
+    const mixed = await off.startRendering()
+    const mixMs = performance.now() - tMix
+    RESULT.mix = { wallMs: mixMs, durationSec: mixed.duration, channels: mixed.numberOfChannels, sampleRate: mixed.sampleRate, pcmBytes: mixed.length * 4 }
+    say(`   OfflineAudioContext 混 2 路：${F(mixMs)}ms · ${F(mixed.duration)}s · PCM 约 ${(RESULT.mix.pcmBytes / 1048576).toFixed(1)} MB`)
+
+    say('4) 编 opus…')
+    const aOut = []
+    let aEncNote = null
+    const aEnc = new AudioEncoder({
+      output: (ch, meta) => {
+        if (meta && meta.decoderConfig && meta.decoderConfig.description && !aOut.opusHead) {
+          aOut.opusHead = new Uint8Array(meta.decoderConfig.description)
+        }
+        const u = new Uint8Array(ch.byteLength); ch.copyTo(u)
+        aOut.push({ tsMs: Math.round(ch.timestamp / 1000), data: u })
+      },
+      error: (e) => { aEncNote = String(e && e.message || e) },
+    })
+    const tAEnc = performance.now()
+    aEnc.configure({ codec: 'opus', sampleRate: SR, numberOfChannels: 2, bitrate: 128000 })
+    const CHUNK = 960   // 20ms @48k
+    const chL = mixed.getChannelData(0), chR = mixed.numberOfChannels > 1 ? mixed.getChannelData(1) : chL
+    const planar = new Float32Array(CHUNK * 2)
+    for (let off0 = 0; off0 < mixed.length; off0 += CHUNK) {
+      const n = Math.min(CHUNK, mixed.length - off0)
+      planar.fill(0, 0, CHUNK * 2)
+      planar.set(chL.subarray(off0, off0 + n), 0)
+      planar.set(chR.subarray(off0, off0 + n), CHUNK)
+      aEnc.encode(new AudioData({
+        format: 'f32-planar', sampleRate: SR, numberOfFrames: CHUNK, numberOfChannels: 2,
+        timestamp: Math.round((off0 / SR) * 1e6), data: planar.slice(0, CHUNK * 2),
+      }))
+      if (aEnc.encodeQueueSize > 16) await yieldTask()
+    }
+    await aEnc.flush()
+    const aEncMs = performance.now() - tAEnc
+    RESULT.audioEncode = { chunks: aOut.length, wallMs: aEncMs, fps: (aOut.length / aEncMs) * 1000, error: aEncNote, opusHeadBytes: aOut.opusHead ? aOut.opusHead.length : 0 }
+    say(`   编出 ${aOut.length} 块 / ${F(aEncMs / 1000)}s ⇒ ${F(RESULT.audioEncode.fps)} 块/s · OpusHead ${RESULT.audioEncode.opusHeadBytes}B${aEncNote ? ' · ERR ' + aEncNote : ''}`)
+
+    // ── mux + 验产物能不能播 ─────────────────────────────────────────
+    say('5) mux 成 WebM 并验证可播…')
+    const tM = performance.now()
+    const all = []
+    for (const c of vOut) all.push({ track: 1, tsMs: c.tsMs, key: c.key, data: c.data })
+    for (const c of aOut) all.push({ track: 2, tsMs: c.tsMs, key: true, data: c.data })
+    const fileBytes = muxWebM({
+      tracks: [
+        { number: 1, type: 1, codecId: 'V_VP9', width: VW, height: VH, defaultDurationNs: 66666666 },
+        { number: 2, type: 2, codecId: 'A_OPUS', codecPrivate: aOut.opusHead, sampleRate: SR, channels: 2 },
+      ],
+      blocks: all,
+      durationMs: Math.max(...all.map((b) => b.tsMs)) + 20,
+    })
+    const mM = performance.now() - tM
+    const outBlob = new Blob([fileBytes], { type: 'video/webm' })
+    RESULT.mux = { wallMs: mM, bytes: fileBytes.length, blocks: all.length }
+    say(`   mux：${F(mM)}ms · ${(fileBytes.length / 1048576).toFixed(2)} MB · ${all.length} 块`)
+
+    // 先把两份字节 dump 到盘上（evaluate_script 读不了结果，只能让页面自己送出来）
+    await postFile('muxed.webm', fileBytes).catch(() => RESULT.note.push('dump muxed 失败'))
+    await postFile('source.webm', new Uint8Array(await src.blob.arrayBuffer())).catch(() => RESULT.note.push('dump source 失败'))
+
+    const probeVideo = async (blob, label, timeoutMs) => {
+      const v = document.createElement('video')
+      v.muted = true; v.playsInline = true; v.preload = 'auto'
+      const url = URL.createObjectURL(blob)
+      const meta = await new Promise((res) => {
+        const to = setTimeout(() => res({ timeout: true }), timeoutMs)
+        v.onloadedmetadata = () => { clearTimeout(to); res({ ok: true }) }
+        v.onerror = () => { clearTimeout(to); res({ error: v.error && v.error.code }) }
+        v.src = url                    // 先挂监听再给 src，免得漏事件
+      })
+      let played = null
+      if (meta.ok) {
+        try {
+          await v.play(); await sleep(1200)
+          played = { currentTime: Number(v.currentTime.toFixed(2)), paused: v.paused }
+          v.pause()
+        } catch (e) { played = { playError: e.name } }
+      }
+      const r = {
+        label, meta,
+        durationSec: isFinite(v.duration) ? Number(v.duration.toFixed(2)) : String(v.duration),
+        videoWidth: v.videoWidth, videoHeight: v.videoHeight, played,
+      }
+      URL.revokeObjectURL(url)
+      return r
+    }
+
+    // 对照组：同一页、同一时刻加载**源文件**。源是 MediaRecorder 产的正品；
+    // 它若也加载不了，说明是"这个隐藏页不让 <video> 加载"，而不是我的 mux 产物坏。
+    RESULT.controlReadSource = await probeVideo(src.blob, '源文件（对照）', 8000)
+    say(`   对照（源文件）：${RESULT.controlReadSource.meta.ok ? 'metadata OK · ' + RESULT.controlReadSource.durationSec + 's' : JSON.stringify(RESULT.controlReadSource.meta)}`)
+
+    RESULT.playback = await probeVideo(outBlob, 'mux 产物', 12000)
+    say(`   产物：${RESULT.playback.meta.ok ? 'metadata OK' : JSON.stringify(RESULT.playback.meta)} · duration=${RESULT.playback.durationSec} · ${RESULT.playback.videoWidth}×${RESULT.playback.videoHeight} · 播放 ${JSON.stringify(RESULT.playback.played)}`)
+
+    RESULT.total = { videoMs: vMs, audioMs: adMs + mixMs + aEncMs, muxMs: mM, wallMs: vMs + adMs + mixMs + aEncMs + mM, sourceFrames: vFrames.length }
+    say(`6) 合计（不含造源）：${F(RESULT.total.wallMs / 1000)}s / 源 ${vFrames.length} 帧`)
+    RESULT.stage = 'done'
+    say('DONE')
+  } catch (e) {
+    RESULT.stage = 'error'
+    RESULT.error = String(e && e.message || e)
+    say('ERROR ' + RESULT.error)
+  }
+  report()
+}
+main()
+</script>
+</body>
+</html>

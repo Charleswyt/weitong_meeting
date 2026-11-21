@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>本机录制清单探针</title>
+<style>body{font:13px/1.6 ui-monospace,Consolas,monospace;background:#0b1220;color:#cbd5e1;padding:16px}pre{white-space:pre-wrap}</style>
+</head>
+<body><pre id="out">booting…</pre>
+<script type="module">
+// 用 vite 同源页读「本机录制」的真源（IndexedDB conference-local），把清单 POST 给探针接收器落盘。
+// 为什么要这一页：这台机器上 user-browser-use 的 evaluate_script 恒回 {}，app 页里的纯文本也读不到，
+// 只有「自己发一个同源页 + POST 结果到 127.0.0.1:5199」这条通道能把事实带出来。
+const out = document.getElementById('out')
+const RESULT = { stage: 'boot', recordings: [], sessions: [] }
+const say = (s) => { out.textContent += '\n' + s }
+const report = () => { fetch('http://127.0.0.1:5199/result/localrepo', { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify(RESULT) }).catch(() => {}) }
+
+function openDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('conference-local')
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+}
+function getAll(db, store) {
+  return new Promise((resolve) => {
+    try {
+      const req = db.transaction(store, 'readonly').objectStore(store).getAll()
+      req.onsuccess = () => resolve(req.result || [])
+      req.onerror = () => resolve([])
+    } catch { resolve([]) }
+  })
+}
+
+async function main() {
+  try {
+    const db = await openDb()
+    RESULT.stores = [...db.objectStoreNames]
+    for (const rec of await getAll(db, 'recordings')) {
+      RESULT.recordings.push({
+        id: rec.id, title: rec.title, schema: rec.schema,
+        startedAt: rec.startedAt, durationSec: rec.durationSec, sizeBytes: rec.sizeBytes,
+        dirHandle: !!rec.dirHandle, dirPath: rec.dirPath || null, storage: rec.storage || 'local',
+        tracks: (rec.tracks || []).map((t) => ({
+          kind: t.kind, owner: t.ownerName, hasVideo: t.hasVideo, hasAudio: t.hasAudio,
+          mime: t.mime, fileName: t.fileName, segs: (t.segments || []).length,
+          bytes: (t.segments || []).reduce((a, s) => a + s.sizeBytes, 0),
+          start: t.startOffsetSec, end: t.endOffsetSec, close: t.closeReason,
+        })),
+      })
+    }
+    for (const s of await getAll(db, 'sessions')) RESULT.sessions.push({ id: s.id, open: s.open, t0: s.t0, tracks: Object.keys(s.tracks || {}).length })
+    RESULT.stage = 'done'
+    RESULT.count = RESULT.recordings.length
+    say('recordings=' + RESULT.recordings.length + ' sessions=' + RESULT.sessions.length + ' stores=' + RESULT.stores.join(','))
+  } catch (e) {
+    RESULT.stage = 'error'
+    RESULT.error = String((e && e.message) || e)
+    say('ERROR ' + RESULT.error)
+  }
+  report()
+  say('DONE')
+}
+main()
+</script>
+</body>
+</html>

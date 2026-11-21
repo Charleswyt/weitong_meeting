@@ -1,0 +1,99 @@
+/* 路由驱动下的适配：原型用 .page/.page.active 绝对定位切页，
+   Vue Router 每次只渲染一个视图，这里把视图根容器改为占满内容区的 flex 列。 */
+#app {
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+.view-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  background: var(--bg-dark);
+  color: var(--text-primary);
+}
+
+/* 主框架：top-navbar + (side-menu + content) */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+.app-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Element Plus 主题对齐原型 token（主色 #165DFF，浅底 #E8F0FF 由 light-9 自然得出） */
+:root {
+  --el-color-primary: #165DFF;
+  --el-color-primary-light-3: #5C8EFF;
+  --el-color-primary-light-5: #8BAEFF;
+  --el-color-primary-light-7: #B9CEFF;
+  --el-color-primary-light-8: #D0DFFF;
+  --el-color-primary-light-9: #E8EFFF;
+  --el-color-primary-dark-2: #124ACC;
+  --el-color-success: #22C55E;
+  --el-color-warning: #D97706;
+  --el-color-danger: #EF4444;
+  --el-color-error: #EF4444;
+  --el-text-color-primary: #0F172A;
+  --el-text-color-regular: #334155;
+  --el-text-color-secondary: #64748B;
+  --el-text-color-placeholder: #94A3B8;
+  --el-border-color: #E2E8F0;
+  --el-border-color-light: #EEF2F7;
+  --el-border-color-lighter: #EEF2F7;
+  --el-fill-color-light: #F8FAFC;
+  --el-fill-color: #F1F5F9;
+  --el-bg-color: #FFFFFF;
+  --el-bg-color-page: #F4F6FA;
+  --el-border-radius-base: 11px;
+}
+
+/* Element Plus 组件在暗色下的一些兜底，避免与原型变量打架 */
+.el-message { z-index: 9999 !important; }
+
+/* 夜间：EP 默认仍是浅色 token，弹窗/表单会出现「白底 + 本站白字」或标题发灰看不清。
+   跟 .dark-theme 原型变量对齐，登录页「版本更新日志」等 el-dialog 才能读。 */
+.dark-theme {
+  --el-color-primary: #165dff;
+  --el-color-primary-light-3: #4b7fff;
+  --el-color-primary-light-5: #7aa2ff;
+  --el-color-primary-light-7: #a8c0ff;
+  --el-color-primary-light-8: #c4d4ff;
+  --el-color-primary-light-9: #1e2a4a;
+  --el-color-primary-dark-2: #124acc;
+  --el-bg-color: #1e2a4a;
+  --el-bg-color-overlay: #1e2a4a;
+  --el-bg-color-page: #0f172a;
+  --el-fill-color: #253559;
+  --el-fill-color-blank: #1e2a4a;
+  --el-fill-color-light: #253559;
+  --el-fill-color-lighter: #1a2338;
+  --el-text-color-primary: #ffffff;
+  --el-text-color-regular: #cbd5e1;
+  --el-text-color-secondary: #94a3b8;
+  --el-text-color-placeholder: #64748b;
+  --el-border-color: #2a3a5a;
+  --el-border-color-light: #233252;
+  --el-border-color-lighter: #1f2d48;
+  --el-mask-color: rgba(2, 6, 23, 0.65);
+  color-scheme: dark;
+}
+.dark-theme .el-overlay-dialog .el-dialog {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+}
+.dark-theme .el-dialog__title {
+  color: var(--text-primary);
+}
+.dark-theme .el-dialog__body {
+  color: var(--text-secondary);
+}

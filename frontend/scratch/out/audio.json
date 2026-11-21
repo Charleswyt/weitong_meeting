@@ -1,0 +1,1 @@
+{"stage":"done","files":[{"name":"muxed.webm","bytes":388211,"durationSec":20.05,"sampleRate":48000,"channels":2,"peak":0.7037,"rms":0.362,"peakAtSec":20.04,"verdict":"有声音(峰值0.7037)"},{"name":"source.webm","bytes":1870573,"durationSec":116.04,"sampleRate":48000,"channels":1,"peak":0.1878,"rms":0.0052,"peakAtSec":44.52,"verdict":"有声音(峰值0.1878)"}]}

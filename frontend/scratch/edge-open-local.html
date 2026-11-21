@@ -1,0 +1,38 @@
+<!doctype html>
+<!--
+  一次性导航探针：连接器这一轮点不到卡片上的「播放」（无 JS 报错，纯粹命中不到），
+  所以绕开点击 —— 直接从本机清单里挑出最新的一条 schema 2 录制，把它的 id 拼进回放路由。
+  令牌沿用同标签页 sessionStorage 里已有的那份，不在这页里出现，也不进任何工具参数。
+-->
+<html lang="zh-CN">
+  <head><meta charset="utf-8" /><title>OPEN-LOCAL</title></head>
+  <body>
+    <h1 id="st">OPEN-START</h1>
+    <script>
+      (function () {
+        var st = document.getElementById('st')
+        var req = indexedDB.open('conference-local', 2)
+        req.onsuccess = function () {
+          var db = req.result
+          try {
+            var g = db.transaction('recordings', 'readonly').objectStore('recordings').getAll()
+            g.onsuccess = function () {
+              var all = (g.result || []).filter(function (x) { return x && x.schema === 2 && (x.tracks || []).length })
+              all.sort(function (a, b) { return (b.startedAt || 0) - (a.startedAt || 0) })
+              if (!all.length) { st.textContent = 'OPEN-NONE'; document.title = 'OPEN-NONE'; return }
+              var top = all[0]
+              st.textContent = 'OPEN-GO ' + top.id + ' segs=' + top.tracks.reduce(function (n, t) { return n + t.segments.length }, 0)
+              document.title = 'OPEN-GO ' + top.id
+              location.replace('/recordings/play/local?local=' + encodeURIComponent(top.id))
+            }
+            g.onerror = function () { st.textContent = 'OPEN-GETFAIL'; document.title = 'OPEN-GETFAIL' }
+          } catch (e) {
+            st.textContent = 'OPEN-TXFAIL ' + e
+            document.title = 'OPEN-TXFAIL'
+          }
+        }
+        req.onerror = function () { st.textContent = 'OPEN-OPENFAIL'; document.title = 'OPEN-OPENFAIL' }
+      })()
+    </script>
+  </body>
+</html>

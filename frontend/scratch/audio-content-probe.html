@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>产物音频内容探针</title>
+<style>body{font:13px/1.6 ui-monospace,Consolas,monospace;background:#0b1220;color:#cbd5e1;padding:16px}pre{white-space:pre-wrap}</style>
+</head>
+<body><pre id="out">booting…</pre>
+<script type="module">
+// 只回答一件事：我 mux 出来的产物里，音频到底有没有内容？
+// 判据：decodeAudioData 解出来之后量 峰值 / RMS / 峰值所在秒。源文件同法作对照。
+const out = document.getElementById('out')
+const say = (s) => { out.textContent += '\n' + s }
+const RESULT = { stage: 'boot', files: [] }
+window.__probe = RESULT
+const report = () => {
+  try { document.title = 'AUDIO ' + RESULT.stage + ' ' + RESULT.files.map((f) => `${f.name}:${f.verdict}`).join(' | ') } catch {}
+  fetch('http://127.0.0.1:5199/result/audio', { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify(RESULT) }).catch(() => {})
+}
+
+async function check(name) {
+  const r = { name }
+  try {
+    const buf = await (await fetch('http://127.0.0.1:5199/file/' + name)).arrayBuffer()
+    r.bytes = buf.byteLength
+    const ac = new AudioContext()
+    let audio = null
+    try { audio = await ac.decodeAudioData(buf.slice(0)) } catch (e) { r.decodeError = e.name + ': ' + e.message }
+    await ac.close().catch(() => {})
+    if (!audio) { r.verdict = '无音频流/解不开'; return r }
+    r.durationSec = Number(audio.duration.toFixed(2))
+    r.sampleRate = audio.sampleRate
+    r.channels = audio.numberOfChannels
+    let peak = 0, sumSq = 0, n = 0, peakAt = 0
+    for (let c = 0; c < audio.numberOfChannels; c++) {
+      const d = audio.getChannelData(c)
+      for (let i = 0; i < d.length; i++) {
+        const a = Math.abs(d[i])
+        if (a > peak) { peak = a; peakAt = i / audio.sampleRate }
+        sumSq += d[i] * d[i]; n++
+      }
+    }
+    r.peak = Number(peak.toFixed(4))
+    r.rms = Number(Math.sqrt(sumSq / Math.max(1, n)).toFixed(4))
+    r.peakAtSec = Number(peakAt.toFixed(2))
+    r.verdict = peak > 0.001 ? `有声音(峰值${r.peak})` : '**静音**'
+  } catch (e) {
+    r.verdict = '取文件失败 ' + e.name
+    r.error = String(e)
+  }
+  return r
+}
+
+async function main() {
+  try {
+    for (const n of ['muxed.webm', 'source.webm']) {
+      const r = await check(n)
+      RESULT.files.push(r)
+      say(`${n}: ${r.verdict} · ${r.durationSec ?? '—'}s · ${r.sampleRate ?? '—'}Hz · ${r.channels ?? '—'}ch · peak=${r.peak ?? '—'} rms=${r.rms ?? '—'} 峰值在 ${r.peakAtSec ?? '—'}s${r.decodeError ? ' · ' + r.decodeError : ''}`)
+    }
+    RESULT.stage = 'done'
+  } catch (e) {
+    RESULT.stage = 'error'
+    RESULT.error = String(e && e.message || e)
+    say('ERROR ' + RESULT.error)
+  }
+  say('DONE')
+  report()
+}
+main()
+</script>
+</body>
+</html>

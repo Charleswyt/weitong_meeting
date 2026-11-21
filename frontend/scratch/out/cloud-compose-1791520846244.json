@@ -1,0 +1,1 @@
+{"fatal":"timeout of 10000ms exceeded","stack":"AxiosError: timeout of 10000ms exceeded\n    at XMLHttpRequest.handleTimeout (http://localhost:5176/node_modules/.vite/deps/axios.js?v=fed6fc65:2378:9)"}

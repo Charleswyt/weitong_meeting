@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>回放引擎夹具台</title>
+<style>body{font:13px/1.6 ui-monospace,Consolas,monospace;background:#0b1220;color:#cbd5e1;padding:16px}pre{white-space:pre-wrap}
+/* 和回放页一样的规矩：纯音轨的 <audio> 是 display:none（我要复现这个条件，别改成可见） */
+.rp-audio-row audio{display:none}</style>
+</head>
+<body><pre id="out">booting…</pre>
+<script type="module">
+// 直接用 app 自己的回放引擎跑一份**真夹具**，把每一路的状态读出来：
+// 「回放没声音」到底是引擎把它静音了、元素没播、还是根本没装载。
+// 为什么不在 app 页里看：受控浏览器干净 profile 没有登录态与本机录制；用户 Edge 的 evaluate 又是坏的。
+// 本页只 import 被测模块本身（`/src/utils/replayEngine.ts`），不复制它的代码。
+import { ReplayEngine, groupTracksByLane } from '/src/utils/replayEngine.ts'
+import { createHoldController } from '/src/utils/visibilityHold.ts'
+import { composeGrid } from '/src/utils/trackRecorder.ts'
+import { remuxFmp4ToProgressive } from '/src/utils/mp4/remuxFmp4.ts'
+
+// 造一个可控的可见性：`document.hidden` 是只读的，但 getter 可以换掉 —— 这样"切走/回来"可复现。
+let fakeHidden = false
+try {
+  Object.defineProperty(document, 'hidden', { configurable: true, get: () => fakeHidden })
+} catch (e) {
+  console.warn('无法替换 document.hidden', e)
+}
+
+const out = document.getElementById('out')
+const RESULT = { stage: 'boot', rows: [], events: {} }
+const say = (s) => { out.textContent += '\n' + s }
+const report = () => { fetch('http://127.0.0.1:5199/result/engine', { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify(RESULT) }).catch(() => {}) }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const ID = new URLSearchParams(location.search).get('id') || 'local-seed-1'
+
+const openDb = () => new Promise((res, rej) => { const q = indexedDB.open('conference-local', 3); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error) })
+const get = (db, store, key) => new Promise((res) => { const q = db.transaction(store, 'readonly').objectStore(store).get(key); q.onsuccess = () => res(q.result ?? null); q.onerror = () => res(null) })
+
+async function main() {
+  const db = await openDb()
+  const meta = await get(db, 'recordings', ID)
+  if (!meta) { RESULT.stage = 'error'; RESULT.error = 'IndexedDB 里没有 ' + ID; say(RESULT.error); report(); return }
+  say(`夹具：${meta.title} · ${meta.tracks.length} 路 · ${meta.durationSec}s · dirHandle=${!!meta.dirHandle}`)
+
+  // 与回放页 `resolveSegmentUrl` 的 IndexedDB 分支同构：拿这一段的连续分片拼成一个可播 Blob
+  const resolveUrl = async (_row, span) => {
+    const parts = []
+    for (const seg of span.segments) {
+      const b = await get(db, 'blobs', seg.blobKey)
+      if (!b) throw new Error('该片段已不可读取: ' + seg.blobKey)
+      parts.push(b)
+    }
+    return URL.createObjectURL(new Blob(parts, { type: span.segments[0].mime || 'video/webm' }))
+  }
+
+  const tracks = groupTracksByLane(meta.tracks || [])
+  RESULT.trackSummary = tracks.map((t) => ({ owner: t.ownerName, kind: t.kind, hasVideo: t.hasVideo, hasAudio: t.hasAudio, spans: t.segments.length }))
+  // 把私有方法包一层：**谁在卸载这一路**（releaseMedia 会清 src 并 load()，事件里只能看到 emptied，
+  // 看不到调用方）。private 只在类型层，运行时方法就挂在原型上。
+  const origRelease = ReplayEngine.prototype.releaseMedia
+  RESULT.releaseStacks = []
+  ReplayEngine.prototype.releaseMedia = function (row) {
+    if (RESULT.releaseStacks.length < 4) {
+      RESULT.releaseStacks.push({ row: row.ownerName + '/' + row.kind, at: Number(this.time.toFixed(2)), stack: String(new Error().stack || '').split('\n').slice(1, 7).join(' | ') })
+    }
+    return origRelease.call(this, row)
+  }
+  const origLoadSegment = ReplayEngine.prototype.loadSegment
+  RESULT.loadCalls = []
+  ReplayEngine.prototype.loadSegment = function (row, index) {
+    if (RESULT.loadCalls.length < 8) RESULT.loadCalls.push({ row: row.ownerName + '/' + row.kind, index, at: Number(this.time.toFixed(2)) })
+    return origLoadSegment.call(this, row, index)
+  }
+  // 只记"异常的那几次"：早先按顺序记，12 条全被 t=0 的正常调用占满了，真正出问题的那次没进日志。
+  const origShould = ReplayEngine.prototype.shouldLoad
+  RESULT.shouldFalse = []
+  ReplayEngine.prototype.shouldLoad = function (row) {
+    const r = origShould.call(this, row)
+    if (!r && RESULT.shouldFalse.length < 10) RESULT.shouldFalse.push({ row: row.kind, visible: row.visible, onScreen: row.onScreen, hasVideo: row.hasVideo, hasAudio: row.hasAudio, t: Number(this.time.toFixed(2)) })
+    return r
+  }
+  const origSegAt = ReplayEngine.prototype.segmentAt
+  RESULT.segNeg = []
+  ReplayEngine.prototype.segmentAt = function (row) {
+    const i = origSegAt.call(this, row)
+    if (i < 0 && RESULT.segNeg.length < 10) RESULT.segNeg.push({ row: row.kind, t: Number(this.time.toFixed(2)), spans: row.spans.map((s) => [Number(s.start.toFixed(2)), Number(s.end.toFixed(2))]), dur: this.duration })
+    return i
+  }
+  RESULT.releaseTimes = []
+  const origRelease2 = ReplayEngine.prototype.releaseMedia
+  ReplayEngine.prototype.releaseMedia = function (row) {
+    if (RESULT.releaseTimes.length < 12) RESULT.releaseTimes.push({ row: row.kind, t: Number(this.time.toFixed(2)) })
+    return origRelease2.call(this, row)
+  }
+  RESULT.tracksRaw = (meta.tracks || []).map((t) => ({ kind: t.kind, segs: t.segments.map((s) => ({ seq: s.seq, dur: s.durationSec, bytes: s.sizeBytes, key: s.blobKey })) }))
+
+  const eng = new ReplayEngine({
+    tracks,
+    durationSec: Math.max(1, meta.durationSec),
+    startAtMs: meta.startedAt,
+    resolveUrl,
+    assembleRuns: true,
+    onChange: () => {},
+    onClock: () => {},
+  })
+  window.__eng = eng
+
+  for (const row of eng.rows) {
+    const el = document.createElement(row.hasVideo ? 'video' : 'audio')
+    el.setAttribute('playsinline', '')
+    el.preload = 'metadata'
+    if (!row.hasVideo) { el.controls = false; document.body.appendChild(el) } else document.body.appendChild(el)
+    for (const ev of ['waiting', 'stalled', 'seeking', 'seeked', 'playing', 'pause', 'error', 'suspend', 'emptied', 'loadeddata', 'ended']) {
+      el.addEventListener(ev, () => { const k = `${row.ownerName}/${row.kind}:${ev}`; RESULT.events[k] = (RESULT.events[k] || 0) + 1 })
+    }
+    eng.attachMedia(row, el)
+  }
+
+  await sleep(1200)
+  const readRows = (tag) => eng.rows.map((r) => {
+    const m = r.media
+    return {
+      tag, owner: r.ownerName, kind: r.kind, hasVideo: r.hasVideo, hasAudio: r.hasAudio,
+      state: r.state, statusText: r.statusText, index: r.index, rowMuted: r.muted,
+      visible: r.visible, onScreen: r.onScreen,
+      media: m ? {
+        hasSrc: !!m.currentSrc, paused: m.paused, muted: m.muted, volume: m.volume,
+        readyState: m.readyState, t: Number(m.currentTime.toFixed(2)),
+        dur: Number.isFinite(m.duration) ? Number(m.duration.toFixed(2)) : String(m.duration),
+        error: m.error ? m.error.code + ' ' + m.error.message : null,
+      } : null,
+    }
+  })
+  RESULT.rowsBefore = readRows('before')
+  RESULT.engineBefore = { time: Number(eng.time.toFixed(2)), duration: eng.duration, playing: eng.playing, muted: eng.muted, cols: eng.cols }
+
+  eng.play()
+  // —— 本轮核心：切走 → 回来必须自动续上（真状态机 + 真引擎）——
+  // 复现用户那条："合成跑到一半切走，回来没有自动播放"。判据是回来之后
+  // `eng.playing === true`、每一路 `media.paused === false`、时钟继续前进。
+  const holdEvents = []
+  const hold = createHoldController({
+    isHidden: () => fakeHidden,
+    onHold: () => { holdEvents.push('hold'); eng.pause() },
+    onResume: () => { holdEvents.push('resume'); if (eng.time < eng.duration - 0.05) eng.play() },
+  })
+  await sleep(700)
+  const timeBeforeHide = Number(eng.time.toFixed(2))
+  fakeHidden = true
+  hold.sync()
+  await sleep(600)
+  const heldState = {
+    isHeld: hold.isHeld(), playing: eng.playing, time: Number(eng.time.toFixed(2)),
+    paused: eng.rows.map((r) => (r.media ? r.media.paused : null)),
+  }
+  fakeHidden = false
+  hold.sync()
+  await sleep(1500)
+  const resumedState = {
+    isHeld: hold.isHeld(), playing: eng.playing, time: Number(eng.time.toFixed(2)),
+    paused: eng.rows.map((r) => (r.media ? r.media.paused : null)),
+  }
+  RESULT.hold = { events: holdEvents, timeBeforeHide, heldState, resumedState, stats: hold.stats() }
+
+  // 音频到底有没有出声：把纯音轨行接进 AnalyserNode 量 RMS。
+  // 注意条件要和 app 一致 —— 它的 `<audio>` 是 `display:none`（页面顶部那条样式我照抄了）。
+  // **?compose=1 时跳过**：`createMediaElementSource` 只能接一次，这里接了，后面 composeGrid 就接不走了
+  // （实测那一轮 `droppedAudioPanes` 里正是这条麦克风路 —— 是探针自己挡了自己）。
+  if (new URLSearchParams(location.search).get('compose') !== '1') try {
+    const audioRow = eng.rows.find((r) => !r.hasVideo && r.hasAudio)
+    if (audioRow && audioRow.media) {
+      const ac = new AudioContext()
+      const src = ac.createMediaElementSource(audioRow.media)
+      const an = ac.createAnalyser()
+      an.fftSize = 2048
+      src.connect(an)
+      an.connect(ac.destination)
+      const buf = new Float32Array(an.fftSize)
+      const measure = async () => {
+        const samples = []
+        for (let i = 0; i < 6; i++) {
+          await sleep(250)
+          an.getFloatTimeDomainData(buf)
+          let sum = 0
+          for (const v of buf) sum += v * v
+          samples.push(Number(Math.sqrt(sum / buf.length).toFixed(5)))
+        }
+        return { max: Math.max(...samples), samples }
+      }
+      // 回放页的纯音轨 `<audio>` 是 `display:none`。先按 app 的样式量一次，
+      // 再改成可见量一次 —— 两次一样就说明 CSS 不影响出声（不然就得改样式）。
+      audioRow.media.style.display = 'none'
+      const hidden = await measure()
+      audioRow.media.style.display = 'block'
+      const shown = await measure()
+      RESULT.audioRms = {
+        ctxState: ac.state,
+        displayNone: hidden,
+        displayBlock: shown,
+        elPaused: audioRow.media.paused,
+        elMuted: audioRow.media.muted,
+      }
+    } else {
+      RESULT.audioRms = { error: '没有纯音轨行，或那一行没有媒体元素' }
+    }
+  } catch (e) {
+    RESULT.audioRms = { error: String((e && e.message) || e) }
+  }
+
+  // 时钟到底走不走（受控浏览器 rAF 是否真的不发，这里直接量）
+  RESULT.clockSamples = []
+  for (let i = 0; i < 6; i++) {
+    await sleep(500)
+    RESULT.clockSamples.push(Number(eng.time.toFixed(2)))
+  }
+  await sleep(200)
+  RESULT.rowsAfter = readRows('after')
+  RESULT.engineAfter = { time: Number(eng.time.toFixed(2)), playing: eng.playing, muted: eng.muted }
+  RESULT.stage = 'done'
+  say('after: ' + JSON.stringify(RESULT.rowsAfter.map((r) => ({ kind: r.kind, state: r.state, muted: r.media && r.media.muted, paused: r.media && r.media.paused, t: r.media && r.media.t, dur: r.media && r.media.dur }))))
+
+  // —— 合成端到端（?compose=1 才跑）：真调 composeGrid + remux，产物 dump 给 node 验 ——
+  if (new URLSearchParams(location.search).get('compose') === '1') {
+    const panes = eng.rows.map((r) => ({
+      id: r.recordingId,
+      label: `${r.ownerName} · ${r.streamLabel}`,
+      hasVideo: r.hasVideo && r.visible,
+      hasAudio: r.hasAudio,
+      muted: r.muted || eng.muted,
+      media: r.media,
+    }))
+    eng.composeMode = true
+    eng.seek(0)
+    eng.play()
+    const t0 = Date.now()
+    const res = await composeGrid({
+      panes,
+      cells: 2,
+      getTime: () => eng.time,
+      durationSec: eng.duration,
+      isHolding: () => hold.isHeld(),
+      shouldCancel: () => false,
+    })
+    eng.composeMode = false
+    RESULT.compose = {
+      wallMs: Date.now() - t0,
+      bytes: res ? res.blob.size : 0,
+      ext: res ? res.ext : '',
+      mime: res ? res.mime : '',
+      cancelled: !!(res && res.cancelled),
+      stalled: !!(res && res.stalled),
+      droppedAudioPanes: res ? res.droppedAudioPanes : [],
+    }
+    if (res && res.blob.size) {
+      const remuxed = res.ext === 'mp4' ? await remuxFmp4ToProgressive(res.blob) : null
+      RESULT.remux = remuxed
+        ? { bytes: remuxed.blob.size, video: remuxed.videoSamples, audio: remuxed.audioSamples, durationMs: remuxed.durationMs }
+        : null
+      const out = remuxed ? remuxed.blob : res.blob
+      try {
+        // 接收器把原始字节落成 scratch/out/<名字>，交由 node 侧验容器
+        await fetch('http://127.0.0.1:5199/file/compose-e2e.' + res.ext, { method: 'POST', body: out })
+        RESULT.dumped = 'compose-e2e.' + res.ext
+      } catch (e) {
+        RESULT.dumped = 'POST 失败：' + String((e && e.message) || e)
+      }
+    }
+    say('compose: ' + JSON.stringify(RESULT.compose) + ' remux=' + JSON.stringify(RESULT.remux))
+  }
+
+  report()
+}
+main().catch((e) => { RESULT.stage = 'error'; RESULT.error = String((e && e.message) || e); say('ERROR ' + RESULT.error); report() })
+</script>
+</body>
+</html>

@@ -1,0 +1,2160 @@
+# 派生件：由人工逐字段对照 backend 运行时出口（controller 的 `response.Ok*/OkWithRows` 实返回值 + api/v1 与 internal/model 的实际 VO struct），
+# 交叉 contracts/api-contract.md §6 与 frontend/src/api/*.ts，于 2026-10-10 手工编制产出
+#
+# 〔状态〕G5 已落地（`pnpm run check:types` / `node tools/check.mjs`），DERIVATION §4 的 23 条分叉已逐条裁定，
+# 所以**已覆盖的这 42 条路由以本文件为准**；未覆盖的端点不在此文件里，**不等于没有契约** ——
+# 缺口只剩 WebSocket `/ws/v1/meeting` 的帧形状（HTTP 侧已全部进来，清单见 DERIVATION §6 末）。
+#
+# 真源 = backend 运行时形状（不是 api/v1 里那些 *Res 装饰体——它们自称"仅 swagger 装饰、运行时不消费"，
+# 且实测与 handler 实返回不一致，逐条记在 DERIVATION.md）。
+# 每个字段的出处写在 x-source 里：`文件:行`（Go）或 `§小节`（文档）。指不出来源的字段没有写进来。
+# 覆盖范围只到 DERIVATION.md 声明的端点；其余端点不在此文件里（见 DERIVATION.md「尚未派生的端点清单」）。
+openapi: 3.1.0
+info:
+  title: edge/conference HTTP 契约（已覆盖部分为真源）
+  version: 0.1.0
+  description: >-
+    运行时形状取自 backend controller 的实际出口（不是 `api/v1/*Res` 装饰体）；文档口径见 `api-contract.md` §6，
+    分叉与裁定逐条记在同目录 `DERIVATION.md`。派生件 `frontend/src/types/api.gen.ts` 由本文件生成并带源哈希。
+    覆盖 42 条路由 —— HTTP 侧已全；未覆盖只剩 WebSocket `/ws/v1/meeting` 的帧形状（见 DERIVATION §6 末）。
+servers:
+  - url: /api/v1
+    description: GoFrame 路由组前缀（backend/internal/cmd/cmd.go:107）
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "其余请求 Authorization: Bearer <jwt>（§5.1）"
+    queryToken:
+      type: apiKey
+      in: query
+      name: token
+      description: >-
+        只读资产端点接受 ?token=<jwt>（媒体代理 / 回放资产 / 头像字节，§5.1:185-188）。
+        后端不把票拼进任何 VO 字段。
+
+  # ---- 信封（所有非流式响应的最外层；来源 backend/internal/response/response.go）----
+  schemas:
+    Envelope:
+      type: object
+      description: 单对象响应信封 response.Ok（response.go:10-21）
+      x-source: backend/internal/response/response.go:10-21
+      required: [code, msg]
+      properties:
+        code:
+          type: integer
+          x-source: response.go:11
+        msg:
+          type: string
+          x-source: response.go:12
+        reason:
+          type: string
+          enum: [not_in_meeting, auto_login_disabled, auto_login_user_unavailable]
+          description: >-
+            可选机器码（omitempty，**多数错误根本没有这个键**）。取值域不是手写清单而是扫出来的：
+            全后端只有 `errs.BizReason(err, R)` 这一处注入点，实参只有这三个常量
+            （`not_in_meeting` 与 `auto_login.go:31-32` 那两个）。
+            〔2026-10-10 收口〕此前这里写"只定义 not_in_meeting"，是漏了免登录那两个 ——
+            它们已经在部署手册的排障表里被当作判据用了。
+            **媒体代理端点不在此列**，那侧的 reason 由状态码一处导出，见 `StreamError`。
+          x-source: internal/errs/errs.go:25-27 + internal/service/auto_login.go:31-32 + controller/meeting/meeting.go:604
+        data:
+          description: 载荷（omitempty）；各端点具体形状见对应 *Envelope 的 allOf
+          x-source: response.go:14
+
+    ErrorEnvelope:
+      type: object
+      description: 失败信封 response.Fail / FailSystem / FailValidate（response.go:41-75）
+      x-source: backend/internal/response/response.go:41-75
+      required: [code, msg]
+      properties:
+        code:
+          type: integer
+          description: 业务失败恒为 500；参数校验 400；未登录 401（HTTP 状态仍 200，§1:33）
+          x-source: response.go:42,66,74,127
+        msg:
+          type: string
+          x-source: response.go:12
+        reason:
+          type: string
+          enum: [not_in_meeting, auto_login_disabled, auto_login_user_unavailable]
+          description: 同 Envelope.reason —— 多数失败根本没有这个键
+          x-source: response.go:13
+
+    PageEnvelopeMeetings:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          description: >-
+            分页出口 response.OkWithRows 是扁平结构（顶层 rows/total，不走 data，也不 omitempty；
+            空集仍出 rows:[]/total:0）。§1:17-23 / response.go:32-39
+          x-source: backend/internal/response/response.go:32-39
+          required: [rows, total]
+          properties:
+            rows:
+              type: array
+              items: { $ref: '#/components/schemas/MeetingVo' }
+              x-source: meeting.go:92 (OkWithRows rows)
+            total:
+              type: integer
+              x-source: meeting.go:92
+
+    # ---- /auth ----
+    LoginReq:
+      type: object
+      description: POST /auth/login 请求体（SM2 信封，§5.1:150-151）
+      x-source: backend/api/v1/auth.go:5-14
+      required: [username, ciphertext]
+      properties:
+        username: { type: string, x-source: auth.go:7, description: 'v:"required"' }
+        algorithm: { type: string, x-source: auth.go:8 }
+        keyId: { type: string, x-source: auth.go:9 }
+        challenge: { type: string, x-source: auth.go:10 }
+        cipherMode: { type: string, x-source: auth.go:11 }
+        ciphertextEncoding: { type: string, x-source: auth.go:12 }
+        ciphertext: { type: string, x-source: auth.go:13, description: 'v:"required"；为空即被拒（auth.go:42）' }
+
+    LoginData:
+      type: object
+      description: >-
+        /auth/login 与 /auth/auto-login 的 data（handler loginRes 实返回 v1.LoginRes；controller/auth/auth.go:97-104）。
+        /auth/auto-login 复用同一条签发路径（auth.go:94 → loginRes），与 §5.1「同形状」一致。
+      x-source: backend/api/v1/auth.go:16-22 + controller/auth/auth.go:97-104
+      required: [token, user, linkSynced]
+      properties:
+        token: { type: string, x-source: auth.go:17 }
+        user: { $ref: '#/components/schemas/UserVo', x-source: auth.go:18 }
+        linkSynced: { type: boolean, x-source: auth.go:20 }
+        linkReason:
+          type: string
+          description: omitempty（auth.go:21）；只允许本域中文（§5.1:169）
+          x-source: auth.go:21
+
+    UserVo:
+      type: object
+      description: >-
+        运行时所有字段无 omitempty，恒出现（空值是 ""，不是缺省）。
+        注意：文档 §6.1:231 把 avatar/positionCode/positionName 标成可选（可缺省），
+        api/v1 装饰体 MeRes 又把它包成 {user:...} —— 两处都与运行时分叉，见 DERIVATION A1/A3/B1。
+      x-source: backend/api/v1/auth.go:51-60
+      required: [id, username, displayName, avatar, accountType, accountTypeName, positionCode, positionName]
+      properties:
+        id: { type: integer, format: int64, x-source: auth.go:52 }
+        username: { type: string, x-source: auth.go:53 }
+        displayName: { type: string, x-source: auth.go:54 }
+        avatar:
+          type: string
+          description: 我方头像端点路径 /api/v1/users/<id>/avatar，无头像为 ""（非缺省；§6.1:234-235 称可为空但运行时不省略键）
+          x-source: auth.go:55 + auth.go:122-132(userVoFromEntity)
+        accountType: { type: string, x-source: auth.go:56 }
+        accountTypeName: { type: string, description: 由字典翻出的中文标签, x-source: auth.go:57 }
+        positionCode: { type: string, x-source: auth.go:58 }
+        positionName: { type: string, x-source: auth.go:59 }
+
+    # ---- /users ----
+    AvatarData:
+      type: object
+      description: POST/DELETE /users/me/avatar 的 data
+      x-source: backend/api/v1/user.go:6-8 + controller/user/user.go:77,101
+      required: [avatar]
+      properties:
+        avatar:
+          type: string
+          description: 我方头像端点路径；清空时为 ""
+          x-source: user.go:7
+
+    DisplayNameReq:
+      type: object
+      x-source: backend/api/v1/user.go:17-20
+      required: [displayName]
+      properties:
+        displayName: { type: string, x-source: user.go:19, description: 'v:"required"；服务端再按"字"校验非空且 ≤32（§6.9:557）' }
+
+    DisplayNameData:
+      type: object
+      x-source: backend/api/v1/user.go:23-25 + controller/user/user.go:92
+      required: [displayName]
+      properties:
+        displayName: { type: string, x-source: user.go:24 }
+
+    # ---- /meetings ----
+    MeetingVo:
+      type: object
+      description: >-
+        本域会议记录（日程/详情/预约/修改/快速会议出口共用同一形状；
+        装配见 controller/meeting/meeting.go:1561-1642 scheduleToVo / meetingToVo）。
+        全部字段无 omitempty → 恒出现。thirdPartyMeetingId 文档 §6.3:309 声称已删除，运行时仍在（DERIVATION A2）。
+      x-source: backend/api/v1/meeting.go:288-313
+      required: [id, title, meetingNo, thirdPartyMeetingId, startTime, startedAt, durationMinutes, status, managed, localStatus, cloudRecord, muteOnJoin, cameraOffOnJoin, allowWaiting, hostName, isHost, creatorId, creatorName, creatorPositionName, createdAt, kind, participantCount, recordingState, hasMinutes]
+      properties:
+        id: { type: integer, format: int64, description: 我方会话键，外部会议不是主键（§6.3:256-258）, x-source: meeting.go:289 }
+        title: { type: string, x-source: meeting.go:290 }
+        meetingNo: { type: string, description: 用户可见唯一入会号, x-source: meeting.go:291 }
+        thirdPartyMeetingId: { type: string, description: 三方会议 ID，回放页查录制清单用它, x-source: meeting.go:294 }
+        startTime: { type: string, description: ISO-8601 带偏移，未设值时 ""（§2:116-119）, x-source: meeting.go:295 }
+        startedAt: { type: string, description: '运行时恒 string；未开始为 ""。文档 §6.3:293 写 string|null（DERIVATION B2）', x-source: meeting.go:296 }
+        durationMinutes: { type: integer, x-source: meeting.go:297 }
+        status: { type: string, description: 字典 meeting_status, x-source: meeting.go:298 }
+        managed: { type: boolean, description: false=只在三方存在的会, x-source: meeting.go:299 }
+        localStatus: { type: string, description: 字典 local_sync_status, x-source: meeting.go:300 }
+        cloudRecord: { type: boolean, x-source: meeting.go:301 }
+        muteOnJoin: { type: boolean, x-source: meeting.go:302 }
+        cameraOffOnJoin: { type: boolean, x-source: meeting.go:303 }
+        allowWaiting: { type: boolean, x-source: meeting.go:304 }
+        hostName: { type: string, description: 主持人三方账号名, x-source: meeting.go:305 }
+        isHost: { type: boolean, x-source: meeting.go:308 }
+        creatorId: { type: integer, format: int64, x-source: meeting.go:309 }
+        creatorName: { type: string, description: 外部会议为空 ""（无本域发起人档案）, x-source: meeting.go:310 }
+        creatorPositionName: { type: string, x-source: meeting.go:311 }
+        createdAt: { type: string, x-source: meeting.go:312 }
+        kind: { type: string, description: 'quick/scheduled/share/voice', x-source: meeting.go }
+        participantCount: { type: integer, description: 已入会去重人数, x-source: meeting.go }
+        recordingState: { type: string, description: 'none/planned/ready', x-source: meeting.go }
+        hasMinutes: { type: boolean, description: 是否有可打开的会议纪要, x-source: meeting.go }
+
+    ScheduleReq:
+      type: object
+      description: >-
+        POST /meetings/schedule 与 PUT /meetings/{id} 共用同一请求形状。
+        文档 §6.3:266 的 schedule 请求体未列 allowWaiting，运行时/前端都有（DERIVATION A4）。
+      x-source: backend/api/v1/meeting.go:52-62（MeetingScheduleReq）；Update 同字段 meeting.go:71-82
+      required: [title, startTime, durationMinutes]
+      properties:
+        title: { type: string, x-source: meeting.go:54, description: 'v:"required|length:1,64"（按字节算，§见 user.go:16 注释）' }
+        startTime: { type: string, x-source: meeting.go:55, description: 'v:"required"；带偏移 ISO 串（§2:130）' }
+        durationMinutes: { type: integer, x-source: meeting.go:56, description: 'v:"required|min:1|max:120"；文档未写上下限' }
+        cloudRecord: { type: boolean, x-source: meeting.go:57 }
+        muteOnJoin: { type: [boolean, 'null'], description: 指针 *bool；缺省时后端按 true 处理（meeting.go:215）, x-source: meeting.go:58 }
+        cameraOff: { type: [boolean, 'null'], description: 指针 *bool；缺省按 false（meeting.go:215）, x-source: meeting.go:59 }
+        allowWaiting: { type: [boolean, 'null'], description: 指针 *bool；缺省按 false（meeting.go:216）, x-source: meeting.go:60 }
+        participantIds:
+          type: array
+          items: { type: integer, format: int64 }
+          description: 受邀 sys_user.id
+          x-source: meeting.go:61
+
+    MeetingListParams:
+      type: object
+      description: GET /meetings/list 查询参数（§3 分页；§6.3:264）
+      x-source: backend/api/v1/meeting.go:9-17
+      properties:
+        pageNum: { type: integer, x-source: meeting.go:11 }
+        pageSize: { type: integer, x-source: meeting.go:12 }
+        orderByColumn: { type: string, description: 白名单列（§3:137；后端 switch 校验）, x-source: meeting.go:13 }
+        isAsc: { type: string, x-source: meeting.go:14 }
+        status: { type: string, x-source: meeting.go:15 }
+        keyword: { type: string, x-source: meeting.go:16 }
+
+    # MeetingStateVo 及子结构（真源 internal/model/meeting_state.go，出口 controller/meeting State→buildState）
+    MeetingStateVo:
+      type: object
+      description: >-
+        GET /meetings/{id}/state 的 data（meeting.go:574 response.Ok(r, vo)）。
+        运行时比文档 §6.3:317-368 多一个顶层 cloudRecord；文档漏列（DERIVATION A5）。
+      x-source: backend/internal/model/meeting_state.go:56-69
+      required: [meetingId, status, startedAt, serverTime, clockDriftMs, hostId, participantCount, cloudRecord, recording, participants, invited, streams]
+      properties:
+        meetingId: { type: integer, format: int64, x-source: meeting_state.go:57 }
+        status: { type: string, x-source: meeting_state.go:58 }
+        startedAt: { type: string, description: 运行时 string；文档 §6.3:323 写 string|null（DERIVATION B2）, x-source: meeting_state.go:59 }
+        serverTime: { type: integer, format: int64, description: 毫秒，前端校时, x-source: meeting_state.go:60 }
+        clockDriftMs: { type: number, format: double, x-source: meeting_state.go:61 }
+        hostId: { type: string, description: 唯一主持人来源, x-source: meeting_state.go:62 }
+        participantCount: { type: integer, x-source: meeting_state.go:63 }
+        cloudRecord: { type: boolean, description: 运行时存在；文档 §6.3 MeetingStateVo 未列（DERIVATION A5）, x-source: meeting_state.go:64 }
+        recording: { $ref: '#/components/schemas/RecordingStateVo', x-source: meeting_state.go:65 }
+        participants: { type: array, items: { $ref: '#/components/schemas/ParticipantVo' }, x-source: meeting_state.go:66 }
+        invited: { type: array, items: { $ref: '#/components/schemas/InvitedVo' }, x-source: meeting_state.go:67 }
+        streams: { type: array, items: { $ref: '#/components/schemas/StreamVo' }, x-source: meeting_state.go:68 }
+
+    RecordingStateVo:
+      type: object
+      x-source: backend/internal/model/meeting_state.go:3-6
+      required: [active, state]
+      properties:
+        active: { type: boolean, x-source: meeting_state.go:4 }
+        state: { type: string, description: idle/starting/recording/stopping/error（后端归并上游多态，§6.3:328）, x-source: meeting_state.go:5 }
+
+    ParticipantVo:
+      type: object
+      description: Account 字段是 `json:"-"`，只服务内部匹配，不进线格式（meeting_state.go:17 / §2）。avatar 运行时带 omitempty。
+      x-source: backend/internal/model/meeting_state.go:8-19
+      required: [id, name, isHost, nodeType, cameraOn, micOn, sharing, recording]
+      properties:
+        id: { type: string, x-source: meeting_state.go:9 }
+        name: { type: string, x-source: meeting_state.go:10 }
+        isHost: { type: boolean, x-source: meeting_state.go:11 }
+        nodeType: { type: string, enum: [edge, cloud], description: 取不到侧别按 deployment.side 兜底（§6.3:331-333）, x-source: meeting_state.go:12 }
+        cameraOn: { type: boolean, description: 语义收紧=有已就绪可播端点的真实发布（§6.3:335-338）, x-source: meeting_state.go:13 }
+        micOn: { type: boolean, x-source: meeting_state.go:14 }
+        sharing: { type: boolean, description: 仍为自报位（§6.3:338）, x-source: meeting_state.go:15 }
+        recording: { type: boolean, x-source: meeting_state.go:16 }
+        avatar: { type: string, description: omitempty；文档 §6.3 participants 未列此字段（DERIVATION A6）, x-source: meeting_state.go:18 }
+
+    InvitedVo:
+      type: object
+      x-source: backend/internal/model/meeting_state.go:22-28
+      required: [userId, name, joined, participantId]
+      properties:
+        userId: { type: integer, format: int64, x-source: meeting_state.go:23 }
+        name: { type: string, x-source: meeting_state.go:24 }
+        avatar: { type: string, description: omitempty（未传头像则无此键）, x-source: meeting_state.go:25 }
+        joined: { type: boolean, x-source: meeting_state.go:26 }
+        participantId: { type: string, description: 未入会为 ""，Go 侧无 null（§6.3:346）, x-source: meeting_state.go:27 }
+
+    StreamVo:
+      type: object
+      description: videoCodec 运行时存在且无 omitempty；文档 §6.3 streams 未列（DERIVATION A7）。
+      x-source: backend/internal/model/meeting_state.go:35-63
+      required: [id, ownerId, ownerName, kind, video, audio, width, height, fps, sourceBitrateKbps, ingressBitrateKbps, compressionKind, videoCodec, active, endpoints]
+      properties:
+        id: { type: string, description: 后端签发的流号，不等于三方 publicationId, x-source: meeting_state.go:36 }
+        ownerId: { type: string, x-source: meeting_state.go:37 }
+        ownerName: { type: string, x-source: meeting_state.go:38 }
+        kind: { type: string, enum: [camera, screen, audio], x-source: meeting_state.go:39 }
+        video: { type: boolean, description: '上游给了任一视频通道即为真（成员徽标"摄像头开着"的判据）。它不等于"本实例收得到"——能不能收、走哪条腿看 videoChannel', x-source: meeting_state.go:40 }
+        audio: { type: boolean, x-source: meeting_state.go:41 }
+        width: { type: integer, x-source: meeting_state.go:42 }
+        height: { type: integer, x-source: meeting_state.go:43 }
+        fps: { type: integer, x-source: meeting_state.go:44 }
+        sourceBitrateKbps: { type: integer, description: '运行时是 int，取不到即 0，不会是 null；文档 §6.3:356 写 number|null（DERIVATION B3）', x-source: meeting_state.go:45 }
+        ingressBitrateKbps: { type: integer, description: '这一路**进入分发面时实测到的出站码率**，与 sourceBitrateKbps 在同一条腿上：分子是发布端编码器输出、这个数是平台侧实测的出站。本端那一路的压缩比分母就是它（三方 ownRows 也是这么分的；remoteRows 传的是裸的本机接收速率，本来就跨腿）。取不到即 0，前端显示"统计中"，**不许拿本端下行接收速率顶上去** —— 那是另一条腿的数，混进来倍率就没有意义。实测边界：没有真媒体在流时服务端量不出这个数，恒为 0。不加 omitempty，与 sourceBitrateKbps 同策略', x-source: meeting_state.go:49 }
+        compressionKind: { type: string, enum: [none, edgeRoi, cloudSoftwareRoi, unknown], description: '报不报压缩倍率以它为准。none = 这一路没经过二次压缩，"压缩前/压缩后"那组量对它**不适用**（不是缺数），界面该合成一句"直传"而不是摆空值', x-source: meeting_state.go:52 }
+        compressionRatio: { type: number, description: '三方在该路发布记录里直接上报的压缩倍率（transportMetrics.compressionRatio）：本端两个数凑不出倍率时的退路，口径同三方 compressionText。omitempty，缺键或 0 = 三方没给，前端显示"统计中"，不许拿派生值冒充。带小数原样传（取整会把 2.31 倍说成 2 倍）', x-source: meeting_state.go:55 }
+        compressionEstimated: { type: boolean, description: '上面那个倍率是三方估算而非实测 —— 界面要照实标"估算"（omitempty）', x-source: meeting_state.go:57 }
+        videoCodec: { type: string, enum: [h264, hevc], x-source: meeting_state.go:56 }
+        videoChannel: { type: string, enum: [direct, lanWhep], description: '视频腿走哪条通道，前端按它选播放器，不靠错误文案猜：direct=GET endpoints.video（直连压缩流）；lanWhep=POST /streams/{streamId}/whep（船端局域网 WHEP，只有边端实例会签）。缺键 = 上游有视频但本实例一条腿都接不通（如云端实例收到只给 RK 通道的发布）。omitempty', x-source: meeting_state.go:60 }
+        active: { type: boolean, x-source: meeting_state.go:61 }
+        endpoints: { $ref: '#/components/schemas/StreamEndpointsVo', description: 'video 只在 videoChannel=direct 时给；lanWhep 那一路的视频不经这条 GET 代理', x-source: meeting_state.go:62 }
+
+    StreamEndpointsVo:
+      type: object
+      description: 两个键均 omitempty；值是我方代理路径 /api/v1/meetings/{id}/media/{streamId}/{video|audio}
+      x-source: backend/internal/model/meeting_state.go:30-33
+      properties:
+        video: { type: string, x-source: meeting_state.go:31 }
+        audio: { type: string, x-source: meeting_state.go:32 }
+
+    # ---- /recordings（§6 无对应小节；见 DERIVATION「/recordings 整组未文档化」）----
+    RecordingListParams:
+      type: object
+      x-source: backend/api/v1/recording.go:5-12
+      properties:
+        pageNum: { type: integer, x-source: recording.go:7 }
+        pageSize: { type: integer, x-source: recording.go:8 }
+        type: { type: string, enum: [cloud, local], description: 'v:"in:,cloud,local"（可空）', x-source: recording.go:9 }
+        keyword: { type: string, x-source: recording.go:10 }
+        days: { type: integer, x-source: recording.go:11 }
+
+    PageEnvelopeRecordings:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          description: GET /recordings/list 出口 response.OkWithRows（recording.go:84）
+          required: [rows, total]
+          properties:
+            rows:
+              type: array
+              items: { $ref: '#/components/schemas/RecordingVo' }
+              x-source: recording.go:57-84
+            total: { type: integer, x-source: recording.go:84 }
+
+    RecordingVo:
+      type: object
+      description: >-
+        线格式只有下面这些键。前端曾在本类型上挂一个 `dataMissing`（recording.ts:26），
+        那是浏览器本地探 IndexedDB/目录句柄得出的位、从不经 HTTP —— 2026-10-10 裁定并已把它摘到
+        `RecordingRow`（DERIVATION §4-C2）。`meetingNo`/`meetingStartedAt`/`meetingSpanSec` 无 omitempty → 恒出现，
+        前端曾标可选（属 DERIVATION §4-B3，接线时由本 schema 统一）。
+      x-source: backend/api/v1/recording.go:48-71
+      required: [recordingId, meetingId, meetingNo, title, participant, status, mediaKind, mediaLabel, recordingType, deletable, startedAt, durationSec, meetingStartedAt, meetingSpanSec, fileSizeBytes, playbackUrl, downloadUrl]
+      properties:
+        recordingId: { type: string, x-source: recording.go:49 }
+        meetingId: { type: string, x-source: recording.go:50 }
+        meetingNo: { type: string, description: 三方会议号（本域唯一的入会号 · 没有本地号）· 三方目录里挂不到会的孤立录像给空串, x-source: recording.go:54 }
+        title: { type: string, description: 会议名（我方语义，非上游拼接串）, x-source: recording.go:55 }
+        participant: { type: string, x-source: recording.go:56 }
+        status: { type: string, x-source: recording.go:57 }
+        mediaKind: { type: string, description: camera/audio/screen，空为未识别, x-source: recording.go:58 }
+        mediaLabel: { type: string, description: 画面/声音/共享屏幕, x-source: recording.go:59 }
+        recordingType: { type: string, enum: [cloud, local], x-source: recording.go:60 }
+        deletable: { type: boolean, description: 当前账号能否删, x-source: recording.go:61 }
+        startedAt: { type: string, x-source: recording.go:62 }
+        durationSec: { type: number, x-source: recording.go:63 }
+        meetingStartedAt: { type: string, description: "同场聚合起点锚，meetingId 空时为空串", x-source: recording.go:66 }
+        meetingSpanSec: { type: number, description: 同场时间轴跨度, x-source: recording.go:67 }
+        fileSizeBytes: { type: integer, format: int64, x-source: recording.go:68 }
+        playbackUrl: { type: string, description: "我方代理路径（/api/v1/recordings/{id}/playlist.m3u8）", x-source: recording.go:69 }
+        downloadUrl: { type: string, description: "我方代理路径（/api/v1/recordings/{id}/download）", x-source: recording.go:70 }
+
+    PlaybackData:
+      type: object
+      description: >-
+        GET /recordings/{meetingId}/playback 的 data（recording.go:147 response.Ok(r, res)，res=v1.RecordingPlaybackRes）。
+        meeting/timeline 是指针，缺省时键出现但值为 null。
+      x-source: backend/api/v1/recording.go:24-29
+      required: [partial, meeting, timeline, streams]
+      properties:
+        partial: { type: boolean, x-source: recording.go:25 }
+        meeting:
+          description: 可空对象（无会议事实时后端给 null）
+          oneOf:
+            - { $ref: '#/components/schemas/PlaybackMeeting' }
+            - type: 'null'
+          x-source: recording.go:26,114-121
+        timeline:
+          oneOf:
+            - { $ref: '#/components/schemas/PlaybackTimeline' }
+            - type: 'null'
+          x-source: recording.go:27,122-127
+        streams:
+          type: array
+          items: { $ref: '#/components/schemas/PlaybackStream' }
+          x-source: recording.go:28,128-146
+
+    PlaybackMeeting:
+      type: object
+      description: >-
+        2026-10-10 裁定：后端原发 meetingNumber、前端读 meetingNo（回放页会议号恒空），已把 json 键改为 meetingNo。
+        Go 字段名仍是 MeetingNumber —— 它镜像三方 state 响应里的字段名；线格式是我方形状，不跟随外部命名。
+        派生前这条被同时标成 C1 与 C3（自身不一致），现统一为 C1。
+      x-source: backend/api/v1/recording.go:69-74
+      required: [meetingId, meetingNo, title, startedAt]
+      properties:
+        meetingId: { type: string, x-source: recording.go:70 }
+        meetingNo: { type: string, x-source: "recording.go:71（json 键于 2026-10-10 由 meetingNumber 改为 meetingNo）" }
+        title: { type: string, x-source: recording.go:72 }
+        startedAt: { type: integer, format: int64, description: 毫秒时间戳, x-source: recording.go:73 }
+
+    PlaybackTimeline:
+      type: object
+      x-source: backend/api/v1/recording.go:76-79
+      required: [startAt, durationSeconds]
+      properties:
+        startAt: { type: integer, format: int64, x-source: recording.go:77 }
+        durationSeconds: { type: number, x-source: recording.go:78 }
+
+    PlaybackStream:
+      type: object
+      description: hasVideo/hasAudio 无 omitempty → 恒 true/false 出现；前端标可选（recording.ts:39-40）。mediaLabel 由本域按 kind 派生（recording.go:137）。
+      x-source: backend/api/v1/recording.go:81-94
+      required: [recordingId, displayName, mediaKind, mediaLabel, hasVideo, hasAudio, playbackUrl, downloadUrl, offsetSeconds, durationSeconds]
+      properties:
+        recordingId: { type: string, x-source: recording.go:82 }
+        displayName: { type: string, x-source: recording.go:83 }
+        mediaKind: { type: string, x-source: recording.go:84 }
+        mediaLabel: { type: string, x-source: recording.go:85 }
+        hasVideo: { type: boolean, x-source: recording.go:88 }
+        hasAudio: { type: boolean, x-source: recording.go:89 }
+        playbackUrl: { type: string, x-source: recording.go:90 }
+        downloadUrl: { type: string, x-source: recording.go:91 }
+        offsetSeconds: { type: number, x-source: recording.go:92 }
+        durationSeconds: { type: number, x-source: recording.go:93 }
+
+    DeleteRecordingData:
+      type: object
+      description: DELETE /recordings/{recordingId} 的 data（response.OkWithData，recording.go:219,231）
+      x-source: backend/api/v1/recording.go:231 + api/v1/recording.go:43-46
+      required: [deletedFiles, deletedBytes]
+      properties:
+        deletedFiles: { type: integer, x-source: recording.go:44 }
+        deletedBytes: { type: integer, format: int64, x-source: recording.go:45 }
+
+    # ↓↓↓ 第二批补进来的 8 型：形状逐端点回 handler 数实返回（不是 api/v1 装饰体）。
+    # 派生账在 DERIVATION §6；`*Res` 那层 `{单数名}` 壳已随 2026-10-10 的删壳体一并排除。
+
+    Sm2Descriptor:
+      type: object
+      description: >-
+        GET /auth/sm2-public-key 的 data。它**不是 api/v1 里的 struct**，由 service 现场造
+        （`internal/service/auth_sm2.go:56-65` 定义、`:85-94` 赋值），所以按装饰体导出会整个漏掉这一个。
+        〔临时鉴权方案，后续会替换 —— 不要围绕它抽公共代码或做缓存〕
+      x-source: backend/internal/service/auth_sm2.go:56-65,85-94
+      required: [algorithm, curve, cipherMode, ciphertextEncoding, publicKey, keyId, challenge, expiresInSeconds]
+      properties:
+        algorithm: { type: string, const: SM2, x-source: auth_sm2.go:85 }
+        curve: { type: string, const: sm2p256v1, x-source: auth_sm2.go:86 }
+        cipherMode: { type: string, const: C1C3C2, x-source: auth_sm2.go:87 }
+        ciphertextEncoding: { type: string, const: c1c3c2-hex, x-source: auth_sm2.go:88 }
+        publicKey: { type: string, description: 130 位 hex（未压缩点，去掉前导 04 后拼 x||y 的形态见前端 sm2.ts）, x-source: auth_sm2.go:89 }
+        keyId: { type: string, x-source: auth_sm2.go:90 }
+        challenge: { type: string, description: 一次性、5 分钟有效；登录时随信封回传, x-source: auth_sm2.go:91 }
+        expiresInSeconds: { type: integer, x-source: auth_sm2.go:92 }
+
+    PrecheckData:
+      type: object
+      description: >-
+        POST /meetings/precheck 的 data。**只有 joinable 恒出现**：可入会时后端走
+        `response.Ok`（`message` 键整个缺失，不是空串），不可入会才带 message。
+        前端因此**不许按 message 空串判分支**，只能判 joinable。
+      x-source: backend/api/v1/meeting.go:169-173 + controller/meeting/meeting.go:320,342,351,354
+      required: [joinable]
+      properties:
+        joinable: { type: boolean, x-source: meeting.go:320 }
+        message: { type: string, description: 不可入会时的用户可读原因（后端产出，前端原样上桌）, x-source: meeting.go:320,342,351 }
+
+    InitialMediaVo:
+      type: object
+      description: 入会初始设备态（预约里设的"入会时静音/关摄像头"，会中只读——三方无改约接口）
+      x-source: backend/api/v1/meeting.go:112-115
+      required: [micOff, cameraOff]
+      properties:
+        micOff: { type: boolean, x-source: meeting.go:113 }
+        cameraOff: { type: boolean, x-source: meeting.go:114 }
+
+    JoinData:
+      type: object
+      description: >-
+        POST /meetings/join 的 data。**9 个键全部恒出现**（无一处 omitempty），
+        所以"键在不在"不能当分支用：等待态下 `participantId` 是空串、真入会态下 `waiting` 是 false，
+        判"到底进没进去"只看 `waiting`（`store/meeting.ts` 与 `PreMeetingView.vue:321` 就是这么判的）。
+        〔DERIVATION §4-C3〕这里**没有** `hasRecording` —— 后端从不赋值、前端从不读，已删；
+        有无录制走 `GET /recordings/list`。
+      x-source: backend/api/v1/meeting.go:100-112 + controller/meeting/meeting.go
+      required: [meetingId, meetingNo, participantId, title, status, initialMedia, kind, waiting]
+      properties:
+        meetingId: { type: integer, format: int64, description: 我方会话键，外部会议不等于库主键, x-source: meeting.go:395 }
+        meetingNo: { type: string, x-source: meeting.go:396 }
+        participantId: { type: string, description: "等待态为空串；前端拿它比对 participants 的 id 判哪一路是我", x-source: meeting.go:467 }
+        title: { type: string, description: 本地无预约单时兜三方回传值, x-source: meeting.go:438,450 }
+        status: { type: string, x-source: meeting.go:398,469 }
+        initialMedia: { $ref: '#/components/schemas/InitialMediaVo', x-source: meeting.go:399,438 }
+        kind: { type: string, description: 'quick/scheduled/share/voice', x-source: meeting.go }
+        waiting: { type: boolean, description: true=这场会开了 allowWaiting 且主持人不在场，本端**没有真的加入三方**，其余字段不可信, x-source: meeting.go:400 }
+
+    PublicationCreateData:
+      type: object
+      description: >-
+        POST /meetings/{id}/publications 的 data；whipPath 是我方代理路径，不是三方地址。
+        `sourceType` 是**我方替这次发布申报的来源**（按本实例端别与媒体类型定，不是前端说了算）：
+        船端摄像头/屏幕 = rk_browser_roi，其余（含船端音频）= browser_whip。
+        前端只读它决定要不要把 H.264 排到编码偏好最前 —— 那一步只对 rk_browser_roi 成立。
+      x-source: backend/api/v1/meeting.go:159-165 + controller/meeting/meeting.go:1254-1258
+      required: [publicationId, whipPath, sourceType]
+      properties:
+        publicationId: { type: string, x-source: meeting.go:1255 }
+        whipPath: { type: string, x-source: meeting.go:1256 }
+        sourceType: { type: string, enum: [browser_whip, rk_browser_roi], x-source: meeting.go:1257 }
+
+    RoiHintRequest:
+      type: object
+      description: >-
+        人脸框上报（外部契约 §10.3）。坐标是相对编码画面的归一化值；空 regions 表示清除。
+        只对 camera 发布有效；边端（deployment.side=edge）没有消费通道，后端直接 409。
+      x-source: backend/api/v1/meeting.go:RoiHintReq + controller/meeting/meeting.go:RoiHint
+      required: [detector, regions]
+      properties:
+        detector: { type: string, enum: [mediapipe_blazeface_short_range], x-source: meeting.go:RoiHintReq }
+        sequence: { type: integer, format: int64, minimum: 0, description: 单调递增，供上游丢弃乱序, x-source: meeting.go:RoiHintReq }
+        sourceTimestampMs: { type: integer, format: int64, minimum: 0, description: 检测帧的本端时刻（performance.now 取整）, x-source: meeting.go:RoiHintReq }
+        inferenceMs: { type: integer, minimum: 0, x-source: meeting.go:RoiHintReq }
+        regions:
+          type: array
+          maxItems: 8
+          items: { $ref: '#/components/schemas/RoiRegion' }
+
+    RoiRegion:
+      type: object
+      description: 归一化人脸框；各值 0..1，且 x+width、y+height 不得超过 1
+      required: [x, y, width, height]
+      properties:
+        x: { type: number, minimum: 0, maximum: 1 }
+        y: { type: number, minimum: 0, maximum: 1 }
+        width: { type: number, minimum: 0, maximum: 1 }
+        height: { type: number, minimum: 0, maximum: 1 }
+        score: { type: number, minimum: 0, maximum: 1 }
+
+    RecordingToggleData:
+      type: object
+      description: POST /meetings/{id}/recording/{action} 的 data（复用会中态里的 recording 子型，同一份归并逻辑）
+      x-source: backend/api/v1/meeting.go:216-219 + controller/meeting/meeting.go:653
+      required: [recording]
+      properties:
+        recording: { $ref: '#/components/schemas/RecordingStateVo', x-source: meeting.go:653 }
+
+    MeetingStatsData:
+      type: object
+      description: GET /meetings/stats 的 data；四键恒出现，与 /list 同源聚合
+      x-source: backend/api/v1/meeting.go:33-38 + controller/meeting/meeting.go:118-123
+      required: [weekCount, pendingCount, myCount, totalMinutes]
+      properties:
+        weekCount: { type: integer, x-source: meeting.go:119 }
+        pendingCount: { type: integer, x-source: meeting.go:120 }
+        myCount: { type: integer, x-source: meeting.go:121 }
+        totalMinutes: { type: integer, x-source: meeting.go:122 }
+
+    ChatMessageVo:
+      type: object
+      description: >-
+        聊天一条。**线上键名是 `senderEndpointType`**（REST 两路都是它，`chat.go:31`），
+        `senderNodeType` 只存在于 WebSocket 推送（`websocket/hub.go:404`）—— 两个名字分属两条通道，
+        不是同一个字段改了名。〔取证发现〕前端 `api/chat.ts:7` 的 REST 类型误写成 `senderNodeType`，
+        且全 src 无一处读 REST 侧的该字段：类型声明与线上键名不符，接线时会当场暴露（DERIVATION §4-A8）。
+        另：POST 出口只赋 text/sentAt 两个字段，但 struct 无 omitempty，
+        所以实际回的是 `{id:0, text, senderName:"", senderEndpointType:"", sentAt}` —— **自增 id 不回查**，
+        前端不许拿 data.id 当这条消息的标识。
+      x-source: backend/api/v1/chat.go:27-33 + controller/chat/chat.go:49,70-73
+      required: [id, text, senderName, senderEndpointType, sentAt]
+      properties:
+        id: { type: integer, format: int64, description: POST 回的是 0（不回查自增主键）, x-source: chat.go:70 }
+        text: { type: string, x-source: chat.go:71 }
+        senderName: { type: string, x-source: chat.go:30 }
+        senderEndpointType: { type: string, description: "〔2026-10-10 更正：这里**故意不写 enum**〕REST 侧是**三方原值透传**（`thirdparty/types.go:359` 把三方 `endpointType` 直接映射过来，`service/chat.go:51` 原样上桌），实测见过 `ship`/`shore`，代码还容忍 `edge`/`cloud`/`board`，且**不认识的值只告警、不假装认识**（`NodeTypeOf`，`meeting_state.go:210-228`）—— 值域本就是开的，写闭枚举等于给契约造一个后端没有的保证。**归一只发生在 WS 那一侧**：WS 帧的 `senderNodeType` 才是 `edge|cloud`。POST 回显该键恒为空串。", x-source: api/v1/chat.go:31 + service/chat.go:51 }
+        sentAt: { type: string, x-source: chat.go:32 }
+
+
+    UserBriefVo:
+      type: object
+      description: 人员选择器用的人员简表（GET /users 的数组元素）
+      x-source: backend/api/v1/user.go:34-41
+      required: [id, name, positionCode, positionName]
+      properties:
+        id: { type: integer, format: int64, x-source: controller/user/user.go:48 }
+        name: { type: string, x-source: controller/user/user.go:49 }
+        positionCode: { type: string, x-source: controller/user/user.go:50 }
+        positionName: { type: string, description: 字典翻译出来的岗位名, x-source: controller/user/user.go:51 }
+        avatar: { type: string, description: 带 omitempty，没头像就不出现这个键, x-source: controller/user/user.go:52 }
+
+    PreferenceVo:
+      type: object
+      description: >-
+        用户偏好。**18 键全部恒出现**（无一处 omitempty）：GET 直接返回它，PUT 的请求体也是它本身
+        （扁平对象，不再包一层 preferences）。PUT 成功**没有 data 键**。
+        〔2026-10-10 补〕`recordingFps` 此前只存在于前端类型（`api/settings.ts:17`）与设置页下拉框，
+        后端 `PreferenceVo` 根本没有它 → GET 从不返回、PUT 当未知键丢弃，是个"有控件但存不住"的死设置；
+        现已补成 `user_settings.RECORDING_FPS` 真列。
+      x-source: backend/internal/model/settings.go:5-24
+      required: [cameraDeviceId, microphoneDeviceId, speakerDeviceId, videoResolution, videoMaxFps, videoTargetBitrateKbps, vbMode, vbCustomImageUrl, faceEnhancement, cloudRecordDefault, recordingQuality, recordingFps, mirrorVideo, bgBlur, micVolume, autoGain, noiseSuppression, recordingSaveDir]
+      properties:
+        cameraDeviceId: { type: string, maxLength: 128, description: MediaStreamTrack.deviceId，换机器即失效, x-source: settings.go:6 }
+        microphoneDeviceId: { type: string, maxLength: 128, x-source: settings.go:7 }
+        speakerDeviceId: { type: string, maxLength: 128, x-source: settings.go:8 }
+        videoResolution: { type: string, enum: [480p, 720p, 1080p], x-source: settings.go:9 }
+        videoMaxFps: { type: integer, minimum: 5, maximum: 60, description: 采集约束的 ideal 上限，与下面录制帧率是两件事, x-source: settings.go:10 }
+        videoTargetBitrateKbps: { type: integer, minimum: 0, maximum: 1000, description: '0=自适应（不设编码器 maxBitrate）；1–19 非法；20–1000 为上限 Kbps。上限从 8000 收到 1000：契约取值域必须每一档都有实测证据。⚠️ 20–80 四档在三方侧要设备能力位，我方只证到 setParameters 能吃。', x-source: settings.go:12 }
+        vbMode: { type: string, enum: [off, blur, custom], description: "背景虚化的唯一生效真源；custom 本期无实现，按 off 处理", x-source: settings.go:12 }
+        vbCustomImageUrl: { type: string, maxLength: 256, description: 本期无消费方, x-source: settings.go:13 }
+        faceEnhancement: { type: integer, enum: [0, 1], description: 0/1 而不是 bool（列是 TINYINT）, x-source: settings.go:14 }
+        cloudRecordDefault: { type: integer, enum: [0, 1], description: 只定预约弹窗的初始值，不覆盖用户当场改动, x-source: settings.go:15 }
+        recordingQuality: { type: string, enum: [high, medium, low], x-source: settings.go:16 }
+        recordingFps: { type: integer, enum: [0, 25, 30, 60, 120], description: "本地录制画布帧率；可选 25/30/60/120，默认 30；0 或旧档 10/15 读时归一为 30", x-source: settings.go:17 }
+        mirrorVideo: { type: boolean, x-source: settings.go:18 }
+        bgBlur: { type: boolean, description: "兼容镜像：只与 vbMode==='blur' 同步；判生效只看 vbMode。读到 bgBlur=true 且 vbMode=off 时按 blur 迁移一次", x-source: settings.go:19 }
+        micVolume: { type: integer, minimum: 0, maximum: 100, x-source: settings.go:20 }
+        autoGain: { type: boolean, description: 映射 getUserMedia autoGainControl, x-source: settings.go:21 }
+        noiseSuppression: { type: boolean, description: 映射 getUserMedia noiseSuppression, x-source: settings.go:22 }
+        recordingSaveDir: { type: string, maxLength: 256, description: 只是显示名；真实目录句柄在客户端 IndexedDB, x-source: settings.go:23 }
+
+    SettingsCapabilitiesVo:
+      type: object
+      description: 只读能力表；当前只有人脸增强一项
+      x-source: backend/api/v1/settings.go:SettingsCapabilitiesRes + service/capabilities.go
+      required: [faceEnhancement]
+      properties:
+        faceEnhancement: { $ref: '#/components/schemas/CapabilityVo' }
+
+    CapabilityVo:
+      type: object
+      description: supported=false 时 message 非空，是给用户看的整句（前端不改写）
+      required: [supported, message]
+      properties:
+        supported: { type: boolean }
+        message: { type: string }
+
+    DictItemVo:
+      type: object
+      description: >-
+        字典一项。`tagType` **带 omitempty**（空则该键不出现），其余三键恒在。
+        装饰体 `DictListRes{list}` 那层壳运行时不存在 —— data 直接是数组。
+      x-source: backend/api/v1/dict.go:13-18 + controller/dict/dict.go:32
+      required: [value, label, sort]
+      properties:
+        value: { type: string, x-source: dict.go:32 }
+        label: { type: string, x-source: dict.go:32 }
+        tagType: { type: string, description: 可缺键（omitempty，空值时不出现）, x-source: dict.go:32 }
+        sort: { type: integer, x-source: dict.go:32 }
+
+    # ————————————————————————————————————————————————————————
+    # WebSocket `/ws/v1/meeting` 帧形状。
+    # OpenAPI 3.1 没有 channel 概念，所以这些**不挂在 paths 下**，只作为具名 schema 存在 ——
+    # 但它们同样是真源：前端 WS 侧类型也从这里生成，不再手写。
+    # 握手：`GET /ws/v1/meeting?meetingId=&ticket=`，两个参数**都必填**（`hub.go:80-95`）。
+    # 票据由 `POST /meetings/ws-ticket` 签，TTL 60 秒、一次性、取出即销毁。
+    # **鉴权失败是握手前的 HTTP 拒绝**（400 缺参 / 401 票无效或会议号不符 / 403 未在会中），
+    # 不存在"连上之后再关帧"这种形态；该路由绑在 `/api/v1` 组外，**JWT 不参与 WS**。
+    # 信封恒两键 `{type, data}`（`hub.go:22-25`，**均无 omitempty** → data 为 nil 时出 `"data":null`）。
+    # ————————————————————————————————————————————————————————
+
+    WsParticipantsData:
+      type: object
+      description: >-
+        下行帧 `type: "participants"` 的 data。**WS 多这一层匿名包装对象**，
+        REST 里这两个数组只作为 `MeetingStateVo` 的子键出现，从不单独返回。
+        元素形状与 REST **同一个 Go 结构、同一个构造器**（`model/meeting_state.go` +
+        `service/meeting_state.go:25-133`），所以字段级零分叉 —— 分叉只在包装。
+      x-source: backend/internal/websocket/hub.go:357-363
+      required: [participants, invited]
+      properties:
+        participants:
+          type: array
+          items: { $ref: '#/components/schemas/ParticipantVo' }
+          x-source: hub.go:358
+        invited:
+          type: array
+          items: { $ref: '#/components/schemas/InvitedVo' }
+          x-source: hub.go:359
+
+    WsMeetingData:
+      description: >-
+        下行帧 `type: "meeting"` 的 data —— **就是 REST `GET /meetings/{id}/state` 那个 `MeetingStateVo`**，
+        同一构造器。〔但零值兜底不同〕`hub.go:272-279` 在撤房补发时只填 `meetingId` 与三个空数组，
+        `status`/`startedAt`/`hostId` 等出空值 —— 契约标它们全 required，
+        所以**前端不许按"键在不在"判有没有数据，只能按值判**。
+      allOf:
+        - $ref: '#/components/schemas/MeetingStateVo'
+      x-source: backend/internal/websocket/hub.go:272-279,373
+
+    WsStreamsData:
+      description: >-
+        下行帧 `type: "streams"` 的 data 是**裸数组**（`states.Streams`），不是对象 ——
+        REST 从不单独返回流数组，所以这一帧的根形状在 HTTP 侧不存在。
+      type: array
+      items: { $ref: '#/components/schemas/StreamVo' }
+      x-source: backend/internal/websocket/hub.go:376
+
+    WsChatData:
+      type: object
+      description: >-
+        下行帧 `type: "chat"` 的 data。〔与 REST 的**两处**不同，不是只改了名〕
+        1. 键名 `senderNodeType`（REST 是 `senderEndpointType`）；
+        2. **值域也不同**：这里过 `NodeTypeOf` 归一成 `edge|cloud`，
+           而 REST 是三方原值透传（`ship`/`shore`/…）。
+        所以两个通道的这个字段**不能共用一个类型** —— 前端 `useWebSocket.ts:16` 用 `senderNodeType` 是对的。
+      x-source: backend/internal/websocket/hub.go:400-406
+      required: [id, text, senderName, senderNodeType, sentAt]
+      properties:
+        id: { type: integer, format: int64, x-source: hub.go:401 }
+        text: { type: string, x-source: hub.go:402 }
+        senderName: { type: string, x-source: hub.go:403 }
+        senderNodeType: { type: string, enum: [edge, cloud], description: 归一后的本域词；未知值按本实例 deployment.side 兜底（默认 edge）并告警, x-source: hub.go:404 + service/meeting_state.go:210-228 }
+        sentAt: { type: string, description: 与 REST 同一个时间格式（Y-m-dTH:i:sP）, x-source: hub.go:405 }
+
+    WsTimeData:
+      type: object
+      description: >-
+        下行帧 `type: "time"` 的 data —— 校时。这两个键名与 `MeetingStateVo` 里的同名，
+        但 REST 没有"只回这两个字段"的形状。前端把 `clockDriftMs` 当可选用。
+      x-source: backend/internal/websocket/hub.go:378-381
+      required: [serverTime]
+      properties:
+        serverTime: { type: integer, format: int64, description: 毫秒, x-source: hub.go:379 }
+        clockDriftMs: { type: integer, x-source: hub.go:380 }
+
+    WsSpeakingDown:
+      type: object
+      description: >-
+        下行帧 `type: "speaking"` 的 data。**单播**：`room.send(ws, …)` 只发给除发送者外的成员
+        （`hub.go:430-440`），所以"我自己说了话"这件事不会从这条帧回来。
+        `participantId` 由服务端从会话补，**不信任上行里带的值**。
+      x-source: backend/internal/websocket/hub.go:500-503
+      required: [participantId, speaking]
+      properties:
+        participantId: { type: string, x-source: hub.go:501 }
+        speaking: { type: boolean, x-source: hub.go:502 }
+
+    WsMediaUp:
+      type: object
+      description: >-
+        上行帧 `type: "media"` 的 data。**四个都是可空指针**：
+        "这一项没提"与"提了但值是 false"必须分得开 —— 后端 `UpdateMedia` 收的是 `*bool`，
+        只把非 nil 的项写进会话。〔历史坑〕这里早先直接反序列化三方 MediaState
+        （词形是 `cameraEnabled`/…），前端发的字段一个都对不上，**媒体意图位恒为 false**。
+      x-source: backend/internal/websocket/hub.go:465-484
+      properties:
+        cameraOn: { type: boolean, nullable: true, x-source: hub.go:469 }
+        micOn: { type: boolean, nullable: true, x-source: hub.go:470 }
+        sharing: { type: boolean, nullable: true, x-source: hub.go:471 }
+        recording: { type: boolean, nullable: true, x-source: hub.go:472 }
+
+    WsChatUp:
+      type: object
+      description: "上行帧 type=chat 的 data。转发失败只告警不断连（`hub.go:491-493`）。"
+      x-source: backend/internal/websocket/hub.go:485-494
+      required: [text]
+      properties:
+        text: { type: string, x-source: hub.go:487 }
+        clientMessageId: { type: string, description: 幂等键, x-source: hub.go:488 }
+
+    WsSpeakingUp:
+      type: object
+      description: >-
+        上行帧 `type: "speaking"` 的 data —— **只有 `speaking` 一个字段**，
+        `participantId` 由服务端从会话补。〔记账〕前端 `useWebSocket.ts:147-151` 声明了会发这一类，
+        但全 src **无实际调用点**（本地检测只写 `speakingMap`，不上行）—— 这条上行目前是空转的。
+      x-source: backend/internal/websocket/hub.go:495-504
+      required: [speaking]
+      properties:
+        speaking: { type: boolean, x-source: hub.go:497 }
+
+  # 真状态码错误体，供流式/字节端点复用（reason 由状态码一处导出，§1:55-68 / response.go:93-124）
+  responses:
+    StreamError:
+      description: 流式/字节端点失败——真非 2xx + {code,msg,reason}（response.FailStream，response.go:93-101）
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [code, msg, reason]
+            properties:
+              code: { type: integer, x-source: response.go:97 }
+              msg: { type: string, x-source: response.go:98 }
+              reason: { type: string, enum: [not_found, gone, warming, upstream_unreachable, no_channel, bad_request, system_error, not_in_meeting], x-source: response.go:99, description: "由状态码一处导出（streamReason，response.go:106-124），调用点不传第二份字符串。〔2026-10-10 收口〕取值域从映射表数出来，与 §1 信封侧那三个是两套：一边由业务分支点名、一边由状态码推导，E2 那条看起来冲突就出在这里" }
+
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/login:
+    post:
+      summary: 口令登录（SM2 信封）
+      description: 无需 Bearer（登录入口本身）。鉴权白名单见 middleware/auth.go publicAuthPaths。
+      security: []
+      x-source: cmd.go:112 + api/v1/auth.go:6
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginReq' }
+      responses:
+        '200':
+          description: >-
+            成功 data={token,user,linkSynced,linkReason?}；口令/账号不符等业务失败走 HTTP 200 + {code:500}。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/LoginData' }
+        '409':
+          description: 信封校验失败（key_mismatch/challenge_invalid_or_used/crypto_failed/envelope_incomplete），见 §5.1:157-161
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /auth/auto-login:
+    post:
+      summary: 免登录（临时方案，公开端点）
+      security: []
+      x-source: cmd.go:113 + api/v1/auth.go:31-33 + §5.1:172-184
+      responses:
+        '200':
+          description: 与 /auth/login 同形状 data
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/LoginData' }
+        '403':
+          description: 开关关闭或账号不可用（故意不用 401，§5.1:181-184）。reason=auto_login_disabled|auto_login_user_unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /auth/me:
+    get:
+      summary: 当前登录用户
+      x-source: cmd.go:115 + api/v1/auth.go:43-49 + controller/auth/auth.go:112-120
+      responses:
+        '200':
+          description: >-
+            data=UserVo（handler 直接 response.Ok(r, userVo)）。
+            注意 api/v1 装饰体 MeRes 写成 {user: UserVo}，运行时不是这样——见 DERIVATION A1。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/UserVo' }
+
+  /auth/logout:
+    post:
+      summary: 登出
+      x-source: cmd.go:114 + controller/auth/auth.go:106-110
+      responses:
+        '200':
+          description: 恒 200 登出成功，无 data（§6.1:227-229）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
+  /auth/sms/send:
+    post:
+      summary: 发送短信验证码（公开）
+      security: []
+      x-source: cmd.go + api/v1/auth.go SmsSendReq
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mobile, purpose]
+              properties:
+                mobile: { type: string }
+                purpose: { type: string, enum: [login, reset] }
+      responses:
+        '200':
+          description: data={cooldownSeconds,provider,debugCode?}
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [cooldownSeconds, provider]
+                        properties:
+                          cooldownSeconds: { type: integer }
+                          provider: { type: string }
+                          debugCode: { type: string }
+
+  /auth/sms/login:
+    post:
+      summary: 手机验证码登录（公开）
+      security: []
+      x-source: cmd.go + api/v1/auth.go SmsLoginReq
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mobile, code]
+              properties:
+                mobile: { type: string }
+                code: { type: string }
+      responses:
+        '200':
+          description: 与 /auth/login 同形状 data
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/LoginData' }
+
+  /auth/sms/reset-password:
+    post:
+      summary: 验证码重置口令（公开，新口令走 SM2 信封）
+      security: []
+      x-source: cmd.go + api/v1/auth.go SmsResetPasswordReq
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mobile, code, ciphertext]
+              properties:
+                mobile: { type: string }
+                code: { type: string }
+                username: { type: string }
+                algorithm: { type: string }
+                keyId: { type: string }
+                challenge: { type: string }
+                cipherMode: { type: string }
+                ciphertextEncoding: { type: string }
+                ciphertext: { type: string }
+      responses:
+        '200':
+          description: 成功无 data
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+        '409':
+          description: SM2 信封校验失败（与 /auth/login 同 reason 域）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /auth/email/send:
+    post:
+      summary: 发送邮箱验证码（公开；login 用途允许未注册邮箱，供自助注册）
+      security: []
+      x-source: cmd.go + api/v1/auth.go EmailSendReq
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, purpose]
+              properties:
+                email: { type: string }
+                purpose: { type: string, enum: [login, reset] }
+      responses:
+        '200':
+          description: data={cooldownSeconds,provider,debugCode?}
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [cooldownSeconds, provider]
+                        properties:
+                          cooldownSeconds: { type: integer }
+                          provider: { type: string }
+                          debugCode: { type: string }
+
+  /auth/email/login:
+    post:
+      summary: 邮箱验证码登录（公开；未注册则自动建号；registerAs=temp 为面试临时用户）
+      security: []
+      x-source: cmd.go + api/v1/auth.go EmailLoginReq
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code]
+              properties:
+                email: { type: string }
+                code: { type: string }
+                displayName: { type: string, description: 首登展示名；面试临时注册建议必填 }
+                registerAs: { type: string, enum: [user, temp], description: 空/user=普通用户；temp=临时用户（面试） }
+      responses:
+        '200':
+          description: 与 /auth/login 同形状 data
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/LoginData' }
+
+  /users/me/display-name:
+    put:
+      summary: 改显示名
+      x-source: cmd.go:179 + api/v1/user.go:17-25
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DisplayNameReq' }
+      responses:
+        '200':
+          description: data={displayName}
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/DisplayNameData' }
+
+  /users/me/avatar:
+    post:
+      summary: 上传头像（multipart 字段名 file）
+      x-source: cmd.go:177 + controller/user/user.go:56-78
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: 仅 PNG/JPEG/WebP（按 magic bytes 判），≤2MB（§6.9:555）
+      responses:
+        '200':
+          description: data={avatar} = /api/v1/users/<id>/avatar
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AvatarData' }
+    delete:
+      summary: 清空头像
+      x-source: cmd.go:178 + controller/user/user.go:95-102
+      responses:
+        '200':
+          description: data={avatar:""}
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AvatarData' }
+
+  /users/{id}/avatar:
+    get:
+      summary: 头像字节出口（<img> 消费）
+      description: >-
+        失败一律回真状态码（FailStream）：无头像 404、id 非法 400、系统异常 500（§6.9:558）。
+        id 必须正整数（v:"min:1"）。可带 ?token=（§5.1 固定形状白名单）。
+      x-source: cmd.go:181 + api/v1/user.go:11-14 + controller/user/user.go:104-127
+      security:
+        - bearerAuth: []
+        - queryToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64, minimum: 1 }
+          x-source: user.go:13
+      responses:
+        '200':
+          description: "图片字节，Content-Type=<avatar_type>，Cache-Control: private, max-age=300"
+          content:
+            image/png: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        '400': { $ref: '#/components/responses/StreamError' }
+        '404': { $ref: '#/components/responses/StreamError' }
+        '500': { $ref: '#/components/responses/StreamError' }
+
+  /meetings/list:
+    get:
+      summary: 会议分页列表（以三方为全集并本地预约单）
+      x-source: cmd.go:119 + api/v1/meeting.go:9-22 + controller/meeting/meeting.go:73-93
+      parameters:
+        - name: pageNum
+          in: query
+          schema: { type: integer }
+          x-source: meeting.go:11
+        - name: pageSize
+          in: query
+          schema: { type: integer }
+          x-source: meeting.go:12
+        - name: orderByColumn
+          in: query
+          schema: { type: string }
+          x-source: meeting.go:13
+        - name: isAsc
+          in: query
+          schema: { type: string }
+          x-source: meeting.go:14
+        - name: status
+          in: query
+          schema: { type: string }
+          x-source: meeting.go:15
+        - name: keyword
+          in: query
+          schema: { type: string }
+          x-source: meeting.go:16
+      responses:
+        '200':
+          description: 顶层 rows[MeetingVo]/total（无 data）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PageEnvelopeMeetings' }
+
+  /meetings/{id}:
+    get:
+      summary: 会议详情
+      description: 外部会议走 detailFromUpstream（meeting.go:148-178）；仍回同一 MeetingVo 形状。
+      x-source: cmd.go:128 + api/v1/meeting.go:43-50 + controller/meeting/meeting.go:126-178
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 }, x-source: meeting.go:45 }
+      responses:
+        '200':
+          description: >-
+            data=MeetingVo（handler response.Ok(r, vo)）。
+            注意 api/v1 装饰体 MeetingDetailRes 写成 {meeting: MeetingVo}，运行时不带这层壳——见 DERIVATION A1b。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/MeetingVo' }
+
+  /meetings/schedule:
+    post:
+      summary: 预约会议
+      x-source: cmd.go:123 + api/v1/meeting.go:52-66 + controller/meeting/meeting.go:200-231
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScheduleReq' }
+      responses:
+        '200':
+          description: >-
+            data=MeetingVo（同步失败时仍回 data，但 msg="预约已记录，但尚未同步到会议服务"，
+            OkWithData，meeting.go:227）。装饰体 MeetingScheduleRes 写 {meeting:...}，运行时不包壳。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/MeetingVo' }
+
+  /meetings/{id}/cancel:
+    post:
+      summary: 取消会议（仅 scheduled，仅主持人）
+      x-source: cmd.go:137 + controller/meeting/meeting.go:1463-1481
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 }, x-source: meeting.go:155 }
+      responses:
+        '200':
+          description: 仅 msg，无 data（成功/三方未同步两条都是 OkWithMessage；§6.3:272）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
+  /meetings/{id}/state:
+    get:
+      summary: 会中全量状态
+      description: >-
+        取不到状态时按事实回业务中文（非收敛成系统异常），前端据 reason=not_in_meeting 清会话离页；
+        §6.3:275 / controller/meeting/meeting.go:930-1002。
+      x-source: cmd.go:130 + api/v1/meeting.go:219-226 + controller/meeting/meeting.go:563-575
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 }, x-source: meeting.go:221 }
+      responses:
+        '200':
+          description: data=MeetingStateVo（handler response.Ok(r, vo)，装饰体 MeetingStateRes 的 {state:...} 不成立）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/MeetingStateVo' }
+
+  /meetings/{id}/media/{streamId}/{kind}:
+    get:
+      summary: 会中媒体流代理（二进制，非信封）
+      description: >-
+        GET 流式响应（实现由后端定，§6.3:378）。鉴权 = JWT，可 ?token=（§6.4:379）。
+        失败用真非 2xx + FailStream（§1:55-68 的 reason 映射表）：
+        401 not_in_meeting / 404 not_found(终态) / 410 gone(终态) / 503 warming(重试) / 502 upstream_unreachable / 501 no_channel。
+        无 JSON 成功 schema——成功是媒体字节。
+      x-source: cmd.go:136 + api/v1/meeting.go:245-250 + controller/meeting/meeting.go:657-735
+      security:
+        - bearerAuth: []
+        - queryToken: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 }, x-source: meeting.go:246 }
+        - { name: streamId, in: path, required: true, schema: { type: string }, x-source: meeting.go:247 }
+        - name: kind
+          in: path
+          required: true
+          schema: { type: string, enum: [video, audio] }
+          x-source: meeting.go:248
+      responses:
+        '200':
+          description: 媒体字节（H.264/HEVC Annex-B 或转发流；Content-Type 由 accept/编码决定）
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/StreamError' }
+        '404': { $ref: '#/components/responses/StreamError' }
+        '410': { $ref: '#/components/responses/StreamError' }
+        '501': { $ref: '#/components/responses/StreamError' }
+        '502': { $ref: '#/components/responses/StreamError' }
+        '503': { $ref: '#/components/responses/StreamError' }
+
+  /recordings/list:
+    get:
+      summary: 录制分页列表
+      description: §6 未文档化本组端点（仅 §6.5.1 定浏览器本地清单，非 HTTP）。运行时以 response.OkWithRows 出口。
+      x-source: cmd.go:148 + api/v1/recording.go:5-17 + controller/recording/recording.go:30-84
+      parameters:
+        - { name: pageNum, in: query, schema: { type: integer }, x-source: recording.go:7 }
+        - { name: pageSize, in: query, schema: { type: integer }, x-source: recording.go:8 }
+        - { name: type, in: query, required: false, schema: { type: string, enum: [cloud, local] }, x-source: recording.go:9 }
+        - { name: keyword, in: query, schema: { type: string }, x-source: recording.go:10 }
+        - { name: days, in: query, schema: { type: integer }, x-source: recording.go:11 }
+      responses:
+        '200':
+          description: 顶层 rows[RecordingVo]/total
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PageEnvelopeRecordings' }
+
+  /recordings/{meetingId}/playback:
+    get:
+      summary: 回放清单
+      x-source: cmd.go:149 + api/v1/recording.go:19-29 + controller/recording/recording.go:86-148
+      parameters:
+        - { name: meetingId, in: path, required: true, schema: { type: string }, x-source: recording.go:21 }
+      responses:
+        '200':
+          description: data={partial,meeting,timeline,streams[]}
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/PlaybackData' }
+
+  /recordings/{recordingId}/download:
+    get:
+      summary: 录制归档下载代理（二进制）
+      description: >-
+        代理三方归档；透传 Content-Type/Disposition/Length（recording.go:177-187）。
+        失败走信封（HTTP 200 + code）——§5.1:193-194 明定本端点不用真状态码，
+        以便前端"先试 JSON 再落 blob"取到 msg。
+      x-source: cmd.go:150 + api/v1/recording.go:31-36 + controller/recording/recording.go:152-195
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: recordingId, in: path, required: true, schema: { type: string }, x-source: recording.go:33 }
+      responses:
+        '200':
+          description: 归档字节（多为 video/mp4）
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '500':
+          description: 取不到/未归档等 → HTTP 200 信封里的 {code:500,msg}（不是真 5xx），此处仅示意失败信封
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /recordings/{recordingId}:
+    delete:
+      summary: 删除录制（整场粒度）
+      x-source: cmd.go:151 + api/v1/recording.go:38-46 + controller/recording/recording.go:199-232
+      parameters:
+        - { name: recordingId, in: path, required: true, schema: { type: string }, x-source: recording.go:40 }
+      responses:
+        '200':
+          description: data={deletedFiles,deletedBytes}；幂等（已不存在回 0/0 + "已从列表清除"）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/DeleteRecordingData' }
+
+  # ————————————————————————————————————————————————————————————
+  # 第二批：会议生命周期 / 发布链路 / 聊天。取证账见 DERIVATION §6。
+  # 共同点：这些端点**成功时多数没有 data 键**（response.OkWithMessage），
+  # 前端因此不许按 data 判成功，只能按 code===200 + 渲染 msg。
+  # ————————————————————————————————————————————————————————————
+
+  /auth/sm2-public-key:
+    get:
+      operationId: getSm2PublicKey
+      summary: 取 SM2 登录公钥与一次性 challenge
+      security: []
+      x-source: backend/internal/cmd/cmd.go:111 + controller/auth/auth.go:33
+      responses:
+        '200':
+          description: data=Sm2Descriptor
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Sm2Descriptor' }
+
+  /meetings/today:
+    get:
+      operationId: getMeetingsToday
+      summary: 今日会议
+      description: >-
+        data **直接是数组**（不是 `{list:[...]}`；那个壳只存在于已删除的装饰体里），空时回 `[]` 不是 null。
+      x-source: backend/internal/cmd/cmd.go:120 + controller/meeting/meeting.go:103-107
+      responses:
+        '200':
+          description: data=MeetingVo[]
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/MeetingVo' }
+                        x-source: meeting.go:103
+
+  /meetings/stats:
+    get:
+      operationId: getMeetingsStats
+      summary: 首页四个统计数
+      x-source: backend/internal/cmd/cmd.go:121 + controller/meeting/meeting.go:118-123
+      responses:
+        '200':
+          description: data=MeetingStatsData
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/MeetingStatsData' }
+
+  /meetings/quick-start:
+    post:
+      operationId: quickStartMeeting
+      summary: 发起快速会议
+      description: >-
+        data=MeetingVo（18 键全恒出现）。三方同步失败时**HTTP 仍 200、code 仍 200**，
+        只把 msg 换成"会议已创建，但尚未同步到会议服务" —— 同步态要读 `localStatus` 才判得出，
+        不许按 msg 文案判分支。
+      x-source: backend/internal/cmd/cmd.go:124 + controller/meeting/meeting.go:233,264
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, minLength: 1, maxLength: 64, x-source: api/v1/meeting.go:90 }
+                durationMinutes: { type: integer, x-source: api/v1/meeting.go:91 }
+                cloudRecord: { type: boolean, x-source: api/v1/meeting.go:92 }
+                launchKind: { type: string, description: 'quick/share/voice；空按 quick', x-source: api/v1/meeting.go:78 }
+      responses:
+        '200':
+          description: data=MeetingVo
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/MeetingVo' }
+
+  /meetings/precheck:
+    post:
+      operationId: precheckMeeting
+      summary: 入会前预检（会议号或会议 id）
+      x-source: backend/internal/cmd/cmd.go:126 + controller/meeting/meeting.go:320,342,351,354
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                meetingNo: { type: string, x-source: api/v1/meeting.go:161 }
+                meetingId: { type: integer, format: int64, x-source: api/v1/meeting.go:160 }
+      responses:
+        '200':
+          description: data=PrecheckData
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/PrecheckData' }
+
+  /meetings/join:
+    post:
+      operationId: joinMeeting
+      summary: 入会（等候室门禁在这一条里兑现）
+      description: >-
+        两条返回分支共用一个形状：`waiting=true` 表示这场会开了 allowWaiting 而主持人不在场，
+        后端**没有真的加入三方**（HTTP 200，不是错误），前端停在等待页每 3 秒重试本接口。
+        〔第 10 项〕门禁靠的就是"先不放进三方"这一步，判据是 hostInMeeting 的两个信号。
+      x-source: backend/internal/cmd/cmd.go:125 + controller/meeting/meeting.go:394-401,466-473
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [meetingNo]
+              properties:
+                meetingNo: { type: string, x-source: api/v1/meeting.go:119 }
+                displayName: { type: string, x-source: api/v1/meeting.go:120 }
+                recordingConsent: { type: boolean, x-source: api/v1/meeting.go:121 }
+      responses:
+        '200':
+          description: data=JoinData
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/JoinData' }
+
+  /meetings/leave:
+    post:
+      operationId: leaveMeeting
+      summary: 离会（幂等）
+      description: >-
+        成功**无 data 键**，msg="已离开会议"。服务端已无本端会话也算完成。
+        离会之后仍在途的收尾请求（media-state / 停发布 / focus / chat）一律带 reason=not_in_meeting，
+        前端据此静默收尾、不弹报错（第 1 项）。
+      x-source: backend/internal/cmd/cmd.go:127 + controller/meeting/meeting.go:476,489,508
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [meetingId]
+              properties:
+                meetingId: { type: integer, format: int64, x-source: api/v1/meeting.go:146 }
+      responses:
+        '200':
+          description: 无 data；msg 见上
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
+  /meetings/ws-ticket:
+    post:
+      operationId: createWsTicket
+      summary: 签 WebSocket 一次性票
+      description: >-
+        **路径在 meetings 组下**（`cmd.go:107 /api/v1` → `:118 Group("/meetings")` → `:122`）。
+        规格文档 §5.1 与 §6.1 原先两处都写错，2026-10-10 已按代码更正（DERIVATION §4-A6/E1）。
+      x-source: backend/internal/cmd/cmd.go:122 + controller/meeting/meeting.go:917
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [meetingId]
+              properties:
+                meetingId: { type: integer, format: int64, x-source: api/v1/meeting.go:254 }
+      responses:
+        '200':
+          description: data={ticket, expiresInSeconds}
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: object
+                        x-source: api/v1/meeting.go:256-260
+                        required: [ticket, expiresInSeconds]
+                        properties:
+                          ticket: { type: string, x-source: meeting.go:917 }
+                          expiresInSeconds: { type: integer, x-source: meeting.go:917 }
+
+  /meetings/{id}/start:
+    post:
+      operationId: startMeeting
+      summary: 提前开始一场已预约的会
+      description: >-
+        无 data。三方拒绝时 msg 形如"会议未开始："+原因，**照实上桌**（后端已把它写成用户可读）。
+      x-source: backend/internal/cmd/cmd.go:131 + controller/meeting/meeting.go:267,281,284
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 }, x-source: api/v1/meeting.go:103 }
+      responses:
+        '200':
+          description: 无 data
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
+  /meetings/{id}/stop:
+    post:
+      operationId: stopMeeting
+      summary: 结束会议（非主持人路径的停会）
+      x-source: backend/internal/cmd/cmd.go:132 + controller/meeting/meeting.go:287
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 }, x-source: api/v1/meeting.go:108 }
+      responses:
+        '200':
+          description: 无 data
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
+  /meetings/{id}/end:
+    post:
+      operationId: endMeeting
+      summary: 主持人结束整场（三方令牌在后端）
+      x-source: backend/internal/cmd/cmd.go:133 + controller/meeting/meeting.go:538,559
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 }, x-source: api/v1/meeting.go:139 }
+      responses:
+        '200':
+          description: 无 data；msg="会议已结束"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
+  /meetings/{id}/focus:
+    post:
+      operationId: focusStream
+      summary: 声明关注某路流
+      description: >-
+        无 data。该流已结束时回 500 + "该流已结束"（**无 reason**，不是 not_in_meeting，别混判）。
+      x-source: backend/internal/cmd/cmd.go:134 + controller/meeting/meeting.go:591,598,610
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 }, x-source: api/v1/meeting.go:228 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [streamId]
+              properties:
+                streamId: { type: string, x-source: api/v1/meeting.go:229 }
+      responses:
+        '200':
+          description: 无 data；msg="已关注"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
+  /meetings/{id}/media-state:
+    post:
+      operationId: reportMediaState
+      summary: 上报本端媒体开关态
+      description: >-
+        成功回 `data: {}`（**空对象，不是缺键** —— 出口是 `Ok(r, v1.MeetingMediaStateRes{})`，
+        该 struct 无字段）。前端不读 data。三方同步失败回 500 + "媒体状态未同步到会议链路"。
+      x-source: backend/internal/cmd/cmd.go:144 + controller/meeting/meeting.go:1281,1284
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 }, x-source: api/v1/meeting.go:241 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              x-source: api/v1/meeting.go:242-248
+              properties:
+                cameraOn: { type: boolean, x-source: api/v1/meeting.go:243 }
+                micOn: { type: boolean, x-source: api/v1/meeting.go:244 }
+                sharing: { type: boolean, x-source: api/v1/meeting.go:245 }
+      responses:
+        '200':
+          description: data 是空对象
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: object, description: 恒为空对象 }
+
+  /meetings/{id}/telemetry:
+    post:
+      operationId: reportTelemetry
+      summary: 上报发布端实测的编码码率
+      description: >-
+        「原始速率 / 压缩比 / 节省带宽」三个数的**唯一真源**：订阅端算不出压缩前的数，
+        只能读服务端把发布端这份上报转发成的该路 `transportMetrics.sourceVideoBitrateKbps`。
+        三方只认 4 秒内的新鲜样本，所以前端 2 秒报一次（丢一次仍在门内）。
+        〔硬规则〕**不得只走 WS** —— WS 未连上时消息静默丢弃，会让**所有订阅者**
+        （含三方自家页面）永远停在「原始码率统计中」；WS 的 `telemetry` 帧保留作冗余，
+        与本端点**共用同一个 item 形状**（契约 §6.3 的 TelemetryItem 是那一份定义）。
+        后端只把样本落进会话、**不立刻向三方心跳**（泵每秒已逐会话发一次，多插一次是白加往返，
+        还会把全局单调的 revision 无谓推高）—— 这一点与 `/media-state` 相反，那条会立刻心跳。
+        摄像头与屏幕共享是两个独立发布，**逐路各报一条**。
+        成功回 `data: {}`（空对象，出口是 `Ok(r, v1.MeetingTelemetryRes{})`）。
+      x-source: backend/internal/cmd/cmd.go:148 + controller/meeting/meeting.go:1515
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 }, x-source: api/v1/meeting.go:298 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              x-source: api/v1/meeting.go:296-300
+              properties:
+                items:
+                  type: array
+                  x-source: api/v1/meeting.go:299
+                  items:
+                    type: object
+                    x-source: api/v1/meeting.go:281-286
+                    properties:
+                      publicationId:
+                        type: string
+                        description: "归哪一路发布。空串整条被后端丢弃（过滤只在 registry.UpdateSourceTelemetry 一处，REST 与 WS 共用）"
+                        x-source: api/v1/meeting.go:282
+                      sourceVideoBitrateKbps:
+                        type: number
+                        format: double
+                        description: "发布端自己 getStats 实测的编码码率，SI kbit/s。<=0 整条被丢弃 —— 发 0 会被上游当成「实测到 0」，比缺数更坏"
+                        x-source: api/v1/meeting.go:283
+                      sourceFps:
+                        type: number
+                        format: double
+                        description: "outbound-rtp 的 framesPerSecond（三方同源取法）；量不到给 0"
+                        x-source: api/v1/meeting.go:284
+                      associatedAudioBitrateKbps:
+                        type: number
+                        format: double
+                        description: "该人独立音频路的实测上行；没有给 0"
+                        x-source: api/v1/meeting.go:285
+      responses:
+        '200':
+          description: data 是空对象
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: object, description: 恒为空对象 }
+
+  /meetings/{id}/publications:
+    post:
+      operationId: createPublication
+      summary: 创建一路媒体发布
+      description: >-
+        〔三方逆向硬规则〕麦克风必须是独立的 `mediaKind:'audio'` 发布，camera 发布只装视频轨
+        （`hasAudio:false`）—— 把音轨捆进 camera 发布，三方媒体服务器只转视频，**对端必然无声**。
+        静音语义=拆掉整条 audio 发布，不是 `track.enabled=false`。
+      x-source: backend/internal/cmd/cmd.go:137 + controller/meeting/meeting.go:1149-1152
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 }, x-source: api/v1/meeting.go:196 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              x-source: api/v1/meeting.go:178-192
+              required: [mediaKind, hasVideo, hasAudio]
+              properties:
+                mediaKind: { type: string, enum: [camera, screen, audio], x-source: api/v1/meeting.go:179 }
+                hasVideo: { type: boolean, x-source: api/v1/meeting.go:180 }
+                hasAudio: { type: boolean, x-source: api/v1/meeting.go:181 }
+                width: { type: integer, x-source: api/v1/meeting.go:182 }
+                height: { type: integer, x-source: api/v1/meeting.go:183 }
+                fps: { type: integer, x-source: api/v1/meeting.go:184 }
+                targetBitrateKbps: { type: integer, x-source: api/v1/meeting.go:185 }
+                encodingStrategy: { type: string, enum: [source_frames, bandwidth_first, dynamic_gop], x-source: api/v1/meeting.go:186 }
+                mediaLabel: { type: string, x-source: api/v1/meeting.go:187 }
+      responses:
+        '200':
+          description: data=PublicationCreateData
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/PublicationCreateData' }
+
+  /meetings/{id}/publications/{pubId}/whip:
+    post:
+      operationId: whipOffer
+      summary: WHIP offer 转发（SDP 原文，不是 JSON 信封）
+      description: >-
+        成功时 `Content-Type: application/sdp` **原文转发三方 answer**，没有 code/msg/data；
+        转发失败回 `WriteStatus(502, 纯文本)`。所以这一条的判据只能是 HTTP 状态码 + 内容类型，
+        套信封解析必然坏。
+      x-source: backend/internal/cmd/cmd.go:138 + controller/meeting/meeting.go:1188,1196-1198
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 }, x-source: api/v1/meeting.go:206 }
+        - { name: pubId, in: path, required: true, schema: { type: string }, x-source: api/v1/meeting.go:207 }
+      requestBody:
+        required: true
+        content:
+          application/sdp:
+            schema: { type: string }
+      responses:
+        '201':
+          description: 三方 answer（SDP 原文）
+          content:
+            application/sdp:
+              schema: { type: string }
+        '502':
+          description: 转发失败，纯文本
+          content:
+            text/plain:
+              schema: { type: string }
+    delete:
+      operationId: whipTeardown
+      summary: 拆流（幂等）
+      description: >-
+        无 data。已不存在时回"发布已结束"（幂等），正常回"已停止发布"。
+      x-source: backend/internal/cmd/cmd.go:139 + controller/meeting/meeting.go:1217,1226
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 }, x-source: api/v1/meeting.go:206 }
+        - { name: pubId, in: path, required: true, schema: { type: string }, x-source: api/v1/meeting.go:207 }
+      responses:
+        '200':
+          description: 无 data
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
+  /meetings/{id}/publications/{pubId}/roi-hint:
+    post:
+      operationId: postRoiHint
+      summary: 上报人脸框（只有云端部署有效）
+      description: >-
+        `regions` 为空表示清除 ROI。250ms 节流、失败不重试、**不影响发布**。
+        边端（deployment.side=edge）没有 ROI 增强通道，回 409 与固定中文；
+        与 `/settings/capabilities` 是同一件事的写侧。
+      x-source: backend/internal/cmd/cmd.go:143 + controller/meeting/meeting.go:RoiHint
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+        - { name: pubId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RoiHintRequest' }
+      responses:
+        '200':
+          description: 无 data
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+        '409':
+          description: 当前部署不支持
+        '502':
+          description: 上游拒绝；本端发布不受影响
+
+  /meetings/{id}/publications/{pubId}/stop:
+    post:
+      operationId: stopPublication
+      summary: 结束发布并回收流号
+      description: >-
+        无 data。**三方 stop 失败只记日志、仍回成功** —— 本端已经拆了，
+        回错误只会让前端卡在"没拆干净"的假象上。
+      x-source: backend/internal/cmd/cmd.go:140 + controller/meeting/meeting.go:1252
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 }, x-source: api/v1/meeting.go:211 }
+        - { name: pubId, in: path, required: true, schema: { type: string }, x-source: api/v1/meeting.go:212 }
+      responses:
+        '200':
+          description: 无 data
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
+  /meetings/{id}/recording/{action}:
+    post:
+      operationId: toggleCloudRecording
+      summary: 开/关云端录制
+      description: >-
+        `action` 取值域由校验标签定死：`v:"required|in:start,stop"`（`api/v1/meeting.go:214`），
+        越界在 `r.Parse` 就 400"请求参数不合法"，**进不到业务分支**。
+        成功回 `data.recording={active,state}`，state 是后端归并上游多态后的本域词。
+      x-source: backend/internal/cmd/cmd.go:135 + controller/meeting/meeting.go:653
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 }, x-source: api/v1/meeting.go:209 }
+        - { name: action, in: path, required: true, schema: { type: string, enum: [start, stop] }, x-source: api/v1/meeting.go:214 }
+      responses:
+        '200':
+          description: data=RecordingToggleData
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/RecordingToggleData' }
+
+  /chat/messages:
+    get:
+      operationId: listChatMessages
+      summary: 拉一场会的聊天记录
+      description: >-
+        data **直接是数组**（`response.Ok(r, messages)`，messages 是 `[]service.ChatMessageVo`）。
+        装饰体那个 `{messages:[...]}` 壳从未在线上出现过 —— 文档 §6.6 写的数组形状才是对的。
+      x-source: backend/internal/cmd/cmd.go:157 + controller/chat/chat.go:49
+      parameters:
+        - { name: meetingId, in: query, required: true, schema: { type: integer, format: int64 }, x-source: api/v1/chat.go:7 }
+        - { name: afterId, in: query, required: false, schema: { type: integer, format: int64 }, description: 增量拉取的水位（只回比它新的）, x-source: api/v1/chat.go:8 }
+        - { name: limit, in: query, required: false, schema: { type: integer }, x-source: api/v1/chat.go:9 }
+      responses:
+        '200':
+          description: data=ChatMessageVo[]
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/ChatMessageVo' }
+                        x-source: chat.go:49
+    post:
+      operationId: sendChatMessage
+      summary: 发一条聊天
+      description: >-
+        回显的 data 里 `id` 恒为 0、`senderName`/`senderEndpointType` 恒为空串（struct 无 omitempty）。
+      x-source: backend/internal/cmd/cmd.go:158 + controller/chat/chat.go:70-73
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [meetingId, text]
+              properties:
+                meetingId: { type: integer, format: int64, x-source: api/v1/chat.go:19 }
+                text: { type: string, minLength: 1, maxLength: 1000, x-source: api/v1/chat.go:20 }
+                clientMessageId: { type: string, description: 前端生成的幂等键（后端收下用于去重，不回显在 data 里）, x-source: api/v1/chat.go:21 }
+      responses:
+        '200':
+          description: data=ChatMessageVo（回显，id=0）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ChatMessageVo' }
+
+  /users:
+    get:
+      operationId: listUsers
+      summary: 人员简表（受邀人选器）
+      description: >-
+        data **直接是裸数组**，没有 `rows`/`total`（那两个键只属分页信封 `OkWithRows`）。
+        空结果回 `[]` 不是 null。
+      x-source: backend/internal/cmd/cmd.go:175 + controller/user/user.go:43
+      parameters:
+        - { name: keyword, in: query, required: false, schema: { type: string }, description: 无校验规则，空串即全量, x-source: api/v1/user.go:30 }
+      responses:
+        '200':
+          description: data=UserBriefVo[]
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/UserBriefVo' }
+                        x-source: user.go:39-42
+
+  /settings/:
+    get:
+      operationId: getSettings
+      summary: 读用户偏好
+      description: >-
+        **路径带尾斜杠**（`cmd.go:161` 把 `/settings` 与 `/` 拼出来，线上是 `/api/v1/settings/`）。
+        没写过偏好是正常首访：后端返回全默认值且**不落库**（惰性），所以这一条永远不会 404。
+      x-source: backend/internal/cmd/cmd.go:161 + controller/settings/settings.go:26
+      responses:
+        '200':
+          description: data=PreferenceVo
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/PreferenceVo' }
+    put:
+      operationId: updateSettings
+      summary: 全量覆盖用户偏好
+      description: >-
+        请求体是**扁平的 PreferenceVo 本身**，不再包一层 preferences（`api/v1/settings.go:20-23`）。
+        既然是全量覆盖，前端**不许只 PUT 改动的几个键** —— 少带一个键就等于把那一项清零。
+        成功回 `OkWithMessage` → **没有 data 键**。
+      x-source: backend/internal/cmd/cmd.go:162 + controller/settings/settings.go:30,41
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PreferenceVo' }
+      responses:
+        '200':
+          description: 无 data；msg 是给用户那句话
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
+  /settings/capabilities:
+    get:
+      operationId: getSettingsCapabilities
+      summary: 当前部署支持的能力
+      description: >-
+        与 `PreferenceVo` 分开：18 键是 PUT 的全量请求体，塞只读键会把全量覆盖弄坏。
+        `message` 由后端产出，前端照实渲染。
+      x-source: backend/internal/cmd/cmd.go:166 + controller/settings/settings.go:Capabilities
+      responses:
+        '200':
+          description: data=SettingsCapabilitiesVo
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/SettingsCapabilitiesVo' }
+
+  /dicts/{type}:
+    get:
+      operationId: getDictByType
+      summary: 按类型取字典项
+      description: >-
+        data 直接是数组。〔实现缺口，诚实记账〕`type` **没有白名单**：请求侧只有 `v:"required"`，
+        service 一次读全表分组后 `return grouped[dictType]`（`internal/service/dict.go:85-89`），
+        所以**拼错的 type 得到 `[]` + HTTP 200，不是 404**。
+        已知 type 集合只以两份清单存在（`internal/consts/*.go:18-24` 七个常量、前端 `api/dict.ts:40-48` 的 DICT map），
+        代码互不校验 —— 正因如此前端才拿 `dicts/meeting_status` 当 RTT 打样端点（恒 200）。
+        这里**故意不写 enum**：写了就是假装后端有白名单。
+      x-source: backend/internal/cmd/cmd.go:165 + controller/dict/dict.go:34
+      parameters:
+        - { name: type, in: path, required: true, schema: { type: string }, description: 无白名单，未知值回空数组, x-source: api/v1/dict.go:7 }
+      responses:
+        '200':
+          description: data=DictItemVo[]
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/DictItemVo' }
+                        x-source: dict.go:34
+
+  /net-probe/down:
+    get:
+      operationId: netProbeDown
+      summary: 下行带宽探测（定长零载荷，不是 JSON）
+      description: >-
+        回 `application/octet-stream` + `Cache-Control: no-store`，字节数 = `kb*1024`（32KiB 一块）。
+        `kb` 非数字或 ≤0 → 1024；>8192 → 截到 8192。**正常路径不产 code/msg**，
+        所以前端只能判 `res.ok && bytes>0`，不许套信封解析。
+      x-source: backend/internal/cmd/cmd.go:167 + controller/netprobe/netprobe.go:26-41
+      parameters:
+        - { name: kb, in: query, required: false, schema: { type: integer, default: 1024, maximum: 8192 }, x-source: netprobe.go:26 }
+      responses:
+        '200':
+          description: 零载荷字节流
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+
+  /net-probe/up:
+    post:
+      operationId: netProbeUp
+      summary: 上行带宽探测（收到即丢，不落盘不回显）
+      description: >-
+        body 读到 16MiB 上限即止。成功回 `OkWithMessage` → `{code:200,msg:"探测完成"}`，**无 data 键**。
+        前端单项失败只让那一格空着（`catch {}`），后端错误到不了用户 —— 这是刻意的，探测不是功能。
+      x-source: backend/internal/cmd/cmd.go:168 + controller/netprobe/netprobe.go:50
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '200':
+          description: 无 data
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
+  /recordings/{recordingId}/playlist.m3u8:
+    get:
+      operationId: getRecordingPlaylist
+      summary: HLS 清单（代理三方 + 改写内部 URI）
+      description: >-
+        **不是 JSON 信封**：回 `application/vnd.apple.mpegurl` + `Cache-Control: no-store`，
+        正文是三方清单文本，但**每一处指向都已被改写到我方代理**：
+        裸 URI 行换成 `/api/v1/recordings/{id}/hls/...`，`#EXT-*` 行里的 `URI="..."` 同样改写
+        （`rewriteHls`，`recording.go:361-375`；URI 归一在 `ourHlsPath` :339、EXT 行在 `rewriteExtUri` :369）。所以播放器**不会**直连三方 —— 会话头鉴权因此仍然有效。
+        失败一律 `FailStream`：**真非 2xx** + `{code,msg,reason}`，`reason` 由状态码一处导出（§1 的映射表）。
+      x-source: backend/internal/cmd/cmd.go:152 + controller/recording/recording.go:236-256
+      parameters:
+        - { name: recordingId, in: path, required: true, schema: { type: string }, x-source: recording.go:237 }
+      responses:
+        '200':
+          description: 改写后的 m3u8 文本
+          content:
+            application/vnd.apple.mpegurl:
+              schema: { type: string }
+        '400': { $ref: '#/components/responses/StreamError' }
+        '404': { $ref: '#/components/responses/StreamError' }
+        '502': { $ref: '#/components/responses/StreamError' }
+
+  /recordings/{recordingId}/hls/{path}:
+    get:
+      operationId: getRecordingHlsAsset
+      summary: HLS 分片/变体清单（代理三方，路径受严格约束）
+      description: >-
+        **不是 JSON 信封**：字节透传，容器由三方决定。
+        `path` 只允许"录制目录内的相对路径"—— 正则 `^[A-Za-z0-9._\-/]+$`（`assetRelPat` `recording.go:261`，
+        判定函数 `safeAssetRel` `:320`）：
+        不含 scheme、不含 `..`、不以 `/` 开头；主机名恒取配置里的 baseUrl，
+        **客户端能影响的只有这个相对路径**，且它拼在固定的
+        `/api/frontend/conference-management/recordings/{id}/` 之后，出不了那台三方主机。
+        不合法直接 400，不会去连三方。
+      x-source: backend/internal/cmd/cmd.go:153 + controller/recording/recording.go:264-280
+      parameters:
+        - { name: recordingId, in: path, required: true, schema: { type: string }, x-source: recording.go:265 }
+        - { name: path, in: path, required: true, schema: { type: string, pattern: '^[A-Za-z0-9._\-/]+$' }, description: 通配段，含斜杠, x-source: recording.go:266 }
+      responses:
+        '200':
+          description: 分片或变体清单字节
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '400': { $ref: '#/components/responses/StreamError' }
+        '404': { $ref: '#/components/responses/StreamError' }
+        '502': { $ref: '#/components/responses/StreamError' }

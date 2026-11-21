@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>demux 端到端探针（第二轮）</title>
+<style>
+  body{font:13px/1.6 ui-monospace,Consolas,monospace;background:#0b1220;color:#cbd5e1;margin:0;padding:16px}
+  pre{white-space:pre-wrap;margin:8px 0 0}
+  #bar{height:6px;background:#1e293b;border-radius:3px;overflow:hidden}
+  #bar>i{display:block;height:100%;width:0;background:#38bdf8}
+</style>
+</head>
+<body>
+<div id="bar"><i></i></div>
+<pre id="out">booting…</pre>
+<script type="module">
+// 第二轮：乙方案剩下的唯一未知数 —— 能不能从 MediaRecorder 产的 webm 里**顺序**抠出编码帧。
+//
+// 这个 webm 是"直播流形"：Segment 不定长、没有 Duration、没有 Cues，且中间分片没有容器头
+// （本页的源用 rec.start(1000) 切片，所以天然是多片拼接 —— 与生产里的分片产物同形）。
+// 所以必须自己走一遍 EBML，而不是靠任何"按索引 seek"的能力。
+//
+// 测三件事：① demux 解析本身多贵；② 抠出来的帧喂 VideoDecoder 能不能解、多快；
+// ③ 接上 VideoEncoder 重编，整条链路的墙钟与"内容时长是否保住"。
+
+const out = document.getElementById('out')
+const bar = document.querySelector('#bar>i')
+const F = (n, d = 1) => Number(n).toFixed(d)
+const RESULT = { stage: 'boot', steps: [], note: [] }
+window.__probe = RESULT
+const say = (s) => { out.textContent += '\n' + s }
+const prog = (r) => { bar.style.width = (Math.max(0, Math.min(1, r)) * 100).toFixed(1) + '%' }
+
+const RECEIVER = 'http://127.0.0.1:5199/result'
+function report() {
+  try { document.title = 'PROBE ' + RESULT.stage + (RESULT.total ? ' total=' + F(RESULT.total.wallMs / 1000) + 's' : '') } catch {}
+  fetch(RECEIVER, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify(RESULT) })
+    .then(() => say('结果已回报接收器')).catch(() => say('回报失败（接收器没在跑？）'))
+}
+
+const mc = new MessageChannel()
+const yieldTask = () => new Promise((r) => { mc.port1.onmessage = () => r(); mc.port2.postMessage(0) })
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+// ── 最小的 EBML 读取器 ────────────────────────────────────────────────
+// ID 与 size 都是 vint：首字节前导零的个数决定长度；size 要去掉标记位。
+function vintLen(b) { for (let i = 0; i < 8; i++) if (b & (0x80 >> i)) return i + 1; return 0 }
+
+function readId(dv, pos) {
+  const len = vintLen(dv.getUint8(pos))
+  if (len < 1 || len > 4) return null
+  let v = 0
+  for (let i = 0; i < len; i++) v = v * 256 + dv.getUint8(pos + i)
+  return { id: v, len }
+}
+
+function readSize(dv, pos) {
+  const len = vintLen(dv.getUint8(pos))
+  if (len < 1 || len > 8) return null
+  let v = 0
+  let allOnes = true
+  for (let i = 0; i < len; i++) {
+    const b = dv.getUint8(pos + i)
+    const data = i === 0 ? (b & (0xFF >> len)) : b
+    if (i === 0) { if ((b & (0xFF >> len)) !== (0xFF >> len)) allOnes = false }
+    else if (b !== 0xFF) allOnes = false
+    v = v * 256 + data
+  }
+  return { size: allOnes ? Infinity : v, len }   // Infinity = "不定长"，Segment/Cluster 常用
+}
+
+function readUint(dv, pos, len) { let v = 0; for (let i = 0; i < len; i++) v = v * 256 + dv.getUint8(pos + i); return v }
+function readStr(dv, pos, len) { let s = ''; for (let i = 0; i < len; i++) s += String.fromCharCode(dv.getUint8(pos + i)); return s }
+
+const ID = {
+  SEGMENT: 0x18538067, INFO: 0x1549A966, TIMECODE_SCALE: 0x2AD7B1,
+  TRACKS: 0x1654AE6B, TRACK_ENTRY: 0xAE, TRACK_NUMBER: 0xD7, TRACK_TYPE: 0x83,
+  CODEC_ID: 0x86, DEFAULT_DURATION: 0x23E383, VIDEO: 0xE0, PIXEL_W: 0xB0, PIXEL_H: 0xBA,
+  CLUSTER: 0x1F43B675, CLUSTER_TIME: 0xE7, SIMPLE_BLOCK: 0xA3, BLOCK_GROUP: 0xA0, BLOCK: 0xA1,
+}
+
+/** 走一遍 EBML，收集视频轨的编码帧。顺序解析，不依赖 Cues/索引。 */
+function demux(buf) {
+  const dv = new DataView(buf)
+  const t0 = performance.now()
+  let pos = 0
+  let timecodeScaleNs = 1000000   // 默认 1ms（TimecodeScale 的默认值）
+  let clusterTimeMs = 0
+  let track = null
+  const frames = []               // {tsMs, key, data:Uint8Array}
+  let laceWarn = false
+  let clusters = 0
+  let sawSegment = false
+  let containerKeys = 0
+  let bitstreamKeys = 0
+
+  // 只认元素 ID、不要嵌套语义 ⇒ **平铺走，不递归**。
+  // 第一版按嵌套递归写，遇到"不定长 Cluster"时 pos 没先推进就再进 walk，
+  // 同一个元素被反复解析 → Maximum call stack size exceeded（实测撞到，记在这里）。
+  const CONTAINERS = new Set([
+    ID.SEGMENT, ID.INFO, ID.TRACKS, ID.TRACK_ENTRY, ID.VIDEO, ID.BLOCK_GROUP, ID.CLUSTER,
+  ])
+
+  const readBlock = (dataStart, dataEnd) => {
+    let p = dataStart
+    const tn = readSize(dv, p)            // 轨道号也是 vint（标记位要去掉）
+    if (!tn) return
+    p += tn.len
+    const rel = dv.getInt16(p); p += 2
+    const flags = dv.getUint8(p); p += 1
+    const containerKey = (flags & 0x80) !== 0
+    if ((flags & 0x06) >> 1) laceWarn = true
+    if (!track || tn.size !== track.number) return
+    const len = dataEnd - p
+    if (len <= 0) return
+    // 关键帧**不认容器标记**：实测这份 MediaRecorder 产物里 SimpleBlock 的 0x80 位
+    // 全为 0（187 帧里 0 个），照它喂解码器会被 "A key frame is required" 当场拒收。
+    // 改从码流判 —— VP9 未压缩头：marker(2)=10 · profile(2) · show_existing(1) · frame_type(1)…
+    // frame_type=0 即关键帧。
+    const b0 = dv.getUint8(p)
+    const vp9Key = (b0 & 0xC0) === 0x80 && (b0 & 0x04) === 0
+    if (containerKey) containerKeys++
+    if (vp9Key) bitstreamKeys++
+    const key = track.codec === 'V_VP9' ? vp9Key : containerKey
+    frames.push({ tsMs: clusterTimeMs + rel, key, data: new Uint8Array(buf, p, len) })
+  }
+
+  while (pos < buf.byteLength - 1) {
+    const idr = readId(dv, pos)
+    if (!idr) { pos++; continue }
+    const szr = readSize(dv, pos + idr.len)
+    if (!szr) { pos++; continue }
+    const dataStart = pos + idr.len + szr.len
+    const dataEnd = szr.size === Infinity ? buf.byteLength : Math.min(buf.byteLength, dataStart + szr.size)
+    const id = idr.id
+
+    if (CONTAINERS.has(id)) {
+      if (id === ID.SEGMENT) sawSegment = true
+      if (id === ID.CLUSTER) clusters++
+      pos = dataStart                     // 走进去，不要跳到末尾
+      continue
+    }
+    if (id === ID.TIMECODE_SCALE) {
+      timecodeScaleNs = readUint(dv, dataStart, dataEnd - dataStart); pos = dataEnd; continue
+    }
+    if (id === ID.CLUSTER_TIME) {
+      clusterTimeMs = readUint(dv, dataStart, dataEnd - dataStart) * (timecodeScaleNs / 1e6); pos = dataEnd; continue
+    }
+    if (id === ID.TRACK_TYPE || id === ID.TRACK_NUMBER || id === ID.CODEC_ID
+      || id === ID.PIXEL_W || id === ID.PIXEL_H || id === ID.DEFAULT_DURATION) {
+      if (!track) track = {}
+      const v = id === ID.CODEC_ID
+        ? readStr(dv, dataStart, dataEnd - dataStart)
+        : readUint(dv, dataStart, dataEnd - dataStart)
+      if (id === ID.TRACK_TYPE) track.type = v
+      else if (id === ID.TRACK_NUMBER) track.number = v
+      else if (id === ID.CODEC_ID) track.codec = v
+      else if (id === ID.PIXEL_W) track.w = v
+      else if (id === ID.PIXEL_H) track.h = v
+      else track.defaultDurationNs = v
+      pos = dataEnd
+      continue
+    }
+    if (id === ID.SIMPLE_BLOCK || id === ID.BLOCK) { readBlock(dataStart, dataEnd); pos = dataEnd; continue }
+    pos = dataEnd
+  }
+
+  const ms = performance.now() - t0
+  if (!sawSegment) RESULT.note.push('没找到 Segment 元素')
+  if (laceWarn) RESULT.note.push('检出 lacing：本探针只按"一帧一块"取，可能少算帧')
+  return { frames, track, ms, clusters, timecodeScaleNs, containerKeys, bitstreamKeys }
+}
+
+// ── 造源：与本地录制同形的 webm（多片拼接） ──────────────────────────
+async function makeSource(sec) {
+  const c = document.createElement('canvas')
+  c.width = 1280; c.height = 720
+  const g = c.getContext('2d')
+  let drawn = 0
+  const timer = setInterval(() => {
+    drawn++
+    const t = drawn / 15
+    const grd = g.createLinearGradient(0, 0, c.width, c.height)
+    grd.addColorStop(0, `hsl(${(t * 37) % 360} 55% 22%)`)
+    grd.addColorStop(1, `hsl(${(t * 37 + 80) % 360} 55% 12%)`)
+    g.fillStyle = grd; g.fillRect(0, 0, c.width, c.height)
+    g.fillStyle = '#e2e8f0'; g.font = '72px sans-serif'
+    g.fillText('f' + drawn, 60 + (drawn * 11) % 900, 340)
+    g.fillStyle = '#f87171'; g.fillRect(0, 660, (drawn * 3) % 1280, 36)
+  }, 1000 / 15)
+  const stream = c.captureStream(15)
+  const mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
+    .find((m) => MediaRecorder.isTypeSupported(m))
+  const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
+  const chunks = []
+  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data) }
+  const stopped = new Promise((r) => { rec.onstop = r })
+  rec.start(1000)                      // 1 秒一片 → 天然多片拼接，与生产同形
+  for (let i = 0; i < sec; i++) { await sleep(1000); prog(((i + 1) / sec) * 0.5) }
+  rec.stop()
+  await stopped
+  clearInterval(timer)
+  stream.getTracks().forEach((t) => t.stop())
+  return { blob: new Blob(chunks, { type: rec.mimeType || mime || 'video/webm' }), drawn, shards: chunks.length, mime: rec.mimeType || mime }
+}
+
+async function main() {
+  try {
+    RESULT.ua = navigator.userAgent
+    RESULT.hidden = document.hidden
+    say(`0) 造源 30s（1 秒一片）… hidden=${document.hidden}`)
+    const src = await makeSource(30)
+    RESULT.source = { mime: src.mime, drawnFrames: src.drawn, shards: src.shards, bytes: src.blob.size }
+    say(`   源：${src.mime} · 作画 ${src.drawn} 帧 · ${src.shards} 片 · ${(src.blob.size / 1048576).toFixed(2)} MB`)
+
+    const buf = await src.blob.arrayBuffer()
+    say('1) demux（顺序走 EBML，不靠 Cues）…')
+    const d = demux(buf)
+    RESULT.demux = { ms: d.ms, clusters: d.clusters, frames: d.frames.length, keyframes: d.frames.filter((f) => f.key).length, containerKeys: d.containerKeys, bitstreamKeys: d.bitstreamKeys, bytesPerSec: buf.byteLength / (d.ms / 1000), track: d.track }
+    say(`   解析 ${F(d.ms)}ms · cluster ${d.clusters} 个 · 抠出 ${d.frames.length} 帧`)
+    say(`   关键帧：容器标记 ${d.containerKeys} 个 · 码流判定 ${d.bitstreamKeys} 个（**以码流为准**）`)
+    say(`   解析吞吐 ${F(RESULT.demux.bytesPerSec / 1048576)} MB/s`)
+    say(`   轨：${d.track ? d.track.codec + ' #' + d.track.number + ' ' + d.track.w + '×' + d.track.h : '未识别'}`)
+    if (!d.frames.length) throw new Error('一帧都没抠出来')
+
+    const codecId = d.track && d.track.codec
+    const codec = codecId === 'V_VP9' ? 'vp09.00.10.08' : codecId === 'V_VP8' ? 'vp8' : null
+    if (!codec) throw new Error('未知 codecId ' + codecId + '（本探针只认 VP8/VP9）')
+
+    say('2) 顺序解码（vp9，无需 description）…')
+    let decN = 0
+    let decErr = null
+    const dec = new VideoDecoder({
+      output: (f) => { decN++; f.close() },
+      error: (e) => { decErr = String(e && e.message || e) },
+    })
+    dec.configure({ codec, codedWidth: d.track.w, codedHeight: d.track.h })
+    const tDec = performance.now()
+    for (const fr of d.frames) {
+      const chunk = new EncodedVideoChunk({
+        type: fr.key ? 'key' : 'delta',
+        timestamp: Math.round(fr.tsMs * 1000),
+        data: fr.data,
+      })
+      dec.decode(chunk)
+      if (dec.decodeQueueSize > 24) await yieldTask()
+    }
+    await dec.flush()
+    const decMs = performance.now() - tDec
+    RESULT.decode = { frames: decN, wallMs: decMs, fps: (decN / decMs) * 1000, error: decErr }
+    say(`   解出 ${decN} 帧 / ${F(decMs / 1000)}s → ${F(RESULT.decode.fps)} fps${decErr ? ' · ERR ' + decErr : ''}`)
+
+    say('3) 用自写时间戳重编（1440×810，H.264）…')
+    const base = await VideoEncoder.isConfigSupported({ codec: 'avc1.42001f', width: 1440, height: 810, bitrate: 1_200_000, framerate: 15 })
+    if (!base.supported) RESULT.note.push('avc1.42001f 不支持，未测重编')
+    const canv = document.createElement('canvas'); canv.width = 1440; canv.height = 810
+    const cg = canv.getContext('2d')
+    const outChunks = []
+    let encN = 0
+    const enc = new VideoEncoder({ output: (ch) => outChunks.push(ch), error: (e) => RESULT.note.push('编码错误 ' + (e && e.message)) })
+    enc.configure(base.supported ? { codec: 'avc1.42001f', width: 1440, height: 810, bitrate: 1_200_000, framerate: 15 } : { codec, width: 1440, height: 810, bitrate: 1_200_000, framerate: 15 })
+    // 画布内容是合成的（本探针量的是吞吐与"帧数/时间戳是否守住"，不是画质）：
+    // 真源解出来的 VideoFrame 在 output 回调里就被关掉了，这里只按同一串时间戳重绘。
+    const total = d.frames.length
+    const tEnc = performance.now()
+    for (let i = 0; i < total; i++) {
+      cg.fillStyle = '#0b1220'; cg.fillRect(0, 0, canv.width, canv.height)
+      cg.fillStyle = '#e2e8f0'; cg.font = '48px sans-serif'
+      cg.fillText('t=' + (d.frames[i].tsMs / 1000).toFixed(2), 40, 100)
+      const vf = new VideoFrame(canv, { timestamp: Math.round(d.frames[i].tsMs * 1000), duration: 66666 })
+      enc.encode(vf, { keyFrame: i % 30 === 0 })
+      vf.close(); encN++
+      if (enc.encodeQueueSize > 24) await yieldTask()
+    }
+    await enc.flush()
+    const encMs = performance.now() - tEnc
+    RESULT.reencode = { frames: encN, wallMs: encMs, fps: (encN / encMs) * 1000, outChunks: outChunks.length, bytes: outChunks.reduce((s, c) => s + c.byteLength, 0) }
+    say(`   重编 ${encN} 帧 / ${F(encMs / 1000)}s → ${F(RESULT.reencode.fps)} fps`)
+
+    // 源时长用**末帧时间戳**算，不用 帧数/15 —— 页面被节流时帧数会少很多，
+    // 用帧数除会把"内容时长"算小，后面的"等效实时倍速"就虚高了（第一次跑就撞到这个）。
+    const sourceSec = d.frames.length ? d.frames[d.frames.length - 1].tsMs / 1000 : 0
+    const wall = d.ms + decMs + encMs
+    RESULT.total = { sourceFrames: total, sourceSec, demuxMs: d.ms, decodeMs: decMs, encodeMs: encMs, wallMs: wall, realtimeX: sourceSec / (wall / 1000) }
+    RESULT.projection16 = { framesAssumed: 14400, minutes: (wall / total) * 14400 / 1000 / 60 }
+    say(`4) 合计：源 ${F(sourceSec)}s（${total} 帧）→ 墙钟 ${F(wall / 1000)}s`
+      + ` ⇒ 等效实时 ${F(RESULT.total.realtimeX, 2)}×`)
+    say(`   外推 14400 帧（16 分钟 @15fps）≈ ${F(RESULT.projection16.minutes)} 分钟`)
+    RESULT.stage = 'done'
+    say('DONE')
+  } catch (e) {
+    RESULT.stage = 'error'
+    RESULT.error = String(e && e.message || e)
+    say('ERROR ' + RESULT.error)
+  }
+  report()
+}
+main()
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+# 行尾策略：仓库内统一 LF。
+# 不加这条会被本机 core.autocrlf 改写工作副本，deploy 脚本 / manifest 里的 yaml
+# 一旦变成 CRLF，在边缘设备上 systemd 直接起不来（bad interpreter: /usr/bin/env^M）。
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.xlsx binary
+*.go binary=auto

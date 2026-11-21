@@ -1,0 +1,22 @@
+# 构建脚本一律不放行（实测不需要），口径与证据见 platform/TECH_STACK.md 的 BOM「包管理器」行。
+allowBuilds:
+  '@parcel/watcher': false
+  esbuild: false
+  vue-demi: false
+
+# pnpm 12 的 globalShims 默认会给 node 装一个"项目感知"的 shim（读到 devEngines/engines 里
+# 的 runtime 就自己下载一份 Node 并遮蔽 PATH）。本工作区的 Node 版本由 nvm 管，两个管理器
+# 抢同一个命令迟早出问题 —— 所以显式关掉，node 仍由 nvm use 24.19.0 决定。
+globalShims:
+  node: false
+
+# openapi-typescript@7.13.0 把 peer 写成 typescript ^5.x，但它自身并不依赖 typescript
+# （registry 里没有这条依赖）→ 装饰性 peer，而 BOM 要 TS 6.0.3。放行它，理由与证明一起留：
+# 证明在 G5 —— 重跑 pnpm run gen:types 后 src/types/api.gen.ts 必须逐字节等于生成结果。
+minimumReleaseAgeExclude:
+  - '@vue/language-core@3.3.13'
+  - vue-tsc@3.3.13
+
+peerDependencyRules:
+  allowedVersions:
+    openapi-typescript>typescript: '>=5.0.0 <7.0.0'

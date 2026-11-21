@@ -1,0 +1,37 @@
+node_modules/
+dist/
+test-screenshots/
+# 手工联调用的临时探针脚本（要跑在 frontend/ 里才能解析 sm-crypto），不是交付物
+tmp-*.mjs
+# 合轨性能基准的临时页面（第 18 项实测用，跑完可删；结论已抄进 docs/录制方案可行性与合轨性能.md）
+tmp-bench-*.html
+.DS_Store
+*.local
+.vscode/
+.idea/
+.env
+.env.local
+
+# 取证用例与探针是资产，不是垃圾：脚本与小 JSON 证据入库，媒体产物不入库。
+# 旧写法 `/scratch/` 整段忽略 ⇒ 每个检出各有一份、同名工具还能各自漂移
+# （2026-10-10 实测：主检出 12 份与 worktree 11 份 verify 交集为 0，
+#  validate-mp4.mjs 两份不是同一程序）。合一后 283 件，这里只挡产物不挡判据。
+/scratch/*
+!/scratch/*.mjs
+!/scratch/*.cjs
+!/scratch/*.js
+!/scratch/*.ts
+!/scratch/*.ps1
+!/scratch/*.py
+!/scratch/*.html
+!/scratch/*.json
+!/scratch/*.yaml
+!/scratch/out/
+/scratch/out/*
+!/scratch/out/
+/scratch/out/*
+!/scratch/out/*.json
+# 退役用例连同"为什么管不着了"的说明要留在仓里可见，只是不匹配全量跑的 glob
+!/scratch/retired/
+/scratch/token.json
+/scratch/_aside-main/

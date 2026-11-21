@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>PROBE-PAGE</title>
+  </head>
+  <body>
+    <!-- 一次性探针页：连接器这一轮的 evaluate_script 不回传值，所以注入由页面自己做。
+         它只干三件事：取令牌写 sessionStorage、把结论显在页面上（给快照读）、2.5 秒后跳进真实路由。
+         令牌不进对话记录，也不进任何工具参数。 -->
+    <h1 id="st">PROBE-START</h1>
+    <script>
+      (function () {
+        var st = document.getElementById('st')
+        var to = new URLSearchParams(location.search).get('to') || '/'
+        var tok = ''
+        try {
+          var x = new XMLHttpRequest()
+          x.open('GET', '/scratch/token_value.txt', false)
+          x.send()
+          tok = (x.responseText || '').trim()
+        } catch (e) {
+          st.textContent = 'PROBE-XHRFAIL ' + e
+          return
+        }
+        if (!tok || tok.length < 40) {
+          st.textContent = 'PROBE-EMPTY-TOKEN len=' + tok.length
+          return
+        }
+        localStorage.setItem('token', tok)
+        st.textContent = 'PROBE-OK len=' + tok.length + ' vis=' + document.visibilityState + ' vp=' + window.innerWidth + 'x' + window.innerHeight
+        document.title = 'PROBE-OK'
+        setTimeout(function () { location.replace(to) }, 2500)
+      })()
+    </script>
+  </body>
+</html>

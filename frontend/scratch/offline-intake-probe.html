@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>离线合成 S2 标定探针</title>
+<style>
+  body{font:13px/1.6 ui-monospace,Consolas,monospace;background:#0b1220;color:#cbd5e1;margin:0;padding:16px}
+  pre{white-space:pre-wrap;margin:8px 0 0}
+  #bar{height:6px;background:#1e293b;border-radius:3px;overflow:hidden}
+  #bar>i{display:block;height:100%;width:0;background:#38bdf8;transition:width .2s}
+</style>
+</head>
+<body>
+<div id="bar"><i></i></div>
+<pre id="out">booting…</pre>
+<script type="module">
+/**
+ * S2 标定探针（正本 §7 第七轮）。测的是**成本模型缺的那两个常数**，不是功能。
+ *
+ * ① intake 的读取形状：只读元数据要拉多少字节 / 解完整片要多少 —— 用来证明
+ *    "不整份读"是不是真的成立（上一轮的 OOM 第二真因就是整份 arrayBuffer）。
+ * ② 三口对账：清单末片终值（墙钟）/ Σ片长 / 容器时间码时长 —— 正本 §7 第六轮欠的那次测量。
+ * ③ 解码吞吐 vs 源像素 → R_decode 的标定值。
+ * ④ 多路并发的聚合吞吐 → "实时这一刻喂不喂得过来"的分母。
+ * ⑤ 编码吞吐 vs 画布像素 + H.264 profile 与 avcC 长度。
+ *
+ * 每一段独立 try/catch，一处 API 猜错不许带走整轮 —— 第一轮就是这么抓出
+ * `formats` 必填、轨道是 `getVideoTracks()` 方法而不是属性的。
+ *
+ * 源用盘上真实产物经本地 Range 服务给出（`scratch/range-server.mjs`）。
+ * **不走 IndexedDB**：IndexedDB 按 origin 隔离，本探针起在 5176 就读不到你 5175 上的录制。
+ * 盘的字节与 IndexedDB 拼出来的是同一份东西，标定吞吐与容器时间码用它足够硬。
+ *
+ * 读数通道：本机 evaluate_script 恒返回 {}（扩展侧故障，已确证不可自修），
+ * 所以走 `document.title` + POST 到 `probe-receiver.mjs`，按探针名分文件（防 HMR 陈旧页面抢写）。
+ */
+import {
+  Input, CustomSource, ALL_FORMATS, VideoSampleSink, AudioSampleSink,
+  Output, Mp4OutputFormat, NullTarget, CanvasSource, Quality,
+  canEncodeVideo, canDecodeVideo,
+} from 'mediabunny'
+
+const RECEIVER = 'http://127.0.0.1:5199/result/intake-s2'
+const BASE = 'http://127.0.0.1:5200/'
+const MAX_DECODE_SEC = Number(new URLSearchParams(location.search).get('maxSec') || 0) || Infinity
+const out = document.getElementById('out')
+const RESULT = { startedAt: new Date().toISOString(), probeVersion: 2, stages: {}, notes: [] }
+let lastTitle = ''
+
+function say(s) {
+  out.textContent = s
+  const t = s.split('\n').filter(Boolean).slice(-2).join(' · ').slice(0, 120)
+  if (t !== lastTitle) { lastTitle = t; document.title = t }
+}
+function progress(p) { document.querySelector('#bar>i').style.width = `${Math.round(p * 100)}%` }
+async function report(stage, payload) {
+  RESULT.stages[stage] = payload
+  say(Object.entries(RESULT.stages).map(([k, v]) => `${k}: ${JSON.stringify(v).slice(0, 240)}`).join('\n'))
+  try { await fetch(RECEIVER, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify(RESULT) }) }
+  catch (e) { RESULT.notes.push(`receiver 不可用：${e.name}`) }
+}
+const mb = (n) => Math.round(n / 1048576 * 10) / 10
+const heap = () => (performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null)
+/** ⚠️ usedJSHeapSize 不含 VideoFrame 的原生后备内存，OOM 恰恰发生在原生侧 ⇒ 只作旁证 */
+
+/** 自带字节计数的 Range 源：这也是生产里 `IdbRunSource` 的同形实现（虚拟文件 + 分段读） */
+async function makeRangeSource(url) {
+  const head = await fetch(url, { method: 'HEAD' })
+  const size = Number(head.headers.get('x-total-bytes') || head.headers.get('content-length') || 0)
+  if (!size) throw new Error('拿不到文件长度（Range 服务没起来？）')
+  const log = { bytes: 0, calls: 0, ranges: [], maxSpan: 0 }
+  const source = new CustomSource({
+    getSize: () => size,
+    read: async (start, end) => {
+      const res = await fetch(url, { headers: { Range: `bytes=${start}-${end - 1}` } })
+      const buf = new Uint8Array(await res.arrayBuffer())
+      log.bytes += buf.length
+      log.calls++
+      log.maxSpan = Math.max(log.maxSpan, buf.length)
+      if (log.ranges.length < 12) log.ranges.push([start, end])
+      return buf
+    },
+    maxCacheSize: 8 << 20,
+    prefetchProfile: 'fileSystem',
+  })
+  return { source, log, size }
+}
+
+/** 打开 + 只读便宜的元数据，返回按阶段累计的字节账 */
+async function openTrack(url) {
+  const { source, log, size } = await makeRangeSource(url)
+  const input = new Input({ source, formats: ALL_FORMATS })
+  const vts = await input.getVideoTracks()
+  const ats = await input.getAudioTracks()
+  const vt = vts[0] || null
+  const at = ats[0] || null
+  const t = vt || at
+  if (!t) throw new Error('这条源没有可解的轨')
+  const afterMeta = { bytes: log.bytes, calls: log.calls }
+
+  const codec = t.codec ?? (await t.getCodec?.().catch(() => null))
+  const codecString = await t.getCodecParameterString?.().catch(() => null)
+  const dims = vt ? { coded: [vt.codedWidth, vt.codedHeight], display: [vt.displayWidth, vt.displayHeight] } : null
+  const decoderConfig = await t.getDecoderConfig?.().catch(() => null)
+  const cfgInfo = decoderConfig
+    ? {
+        codec: decoderConfig.codec,
+        codedWidth: decoderConfig.codedWidth ?? null,
+        codedHeight: decoderConfig.codedHeight ?? null,
+        sampleRate: decoderConfig.sampleRate ?? null,
+        numberOfChannels: decoderConfig.numberOfChannels ?? null,
+        // 上一轮的缺陷 #5：H.264 不给 description 必挂。这里只记长度与头 4 字节，不外泄内容
+        descriptionBytes: decoderConfig.description
+          ? (decoderConfig.description.byteLength ?? decoderConfig.description.length)
+          : null,
+        descriptionHead: decoderConfig.description
+          ? Array.from(new Uint8Array(decoderConfig.description.buffer ?? decoderConfig.description, 0, 4))
+          : null,
+      }
+    : null
+
+  const durationFromMeta = await t.getDurationFromMetadata?.().catch(() => null)
+  const afterCheapDuration = { bytes: log.bytes, calls: log.calls }
+  const firstTs = await t.getFirstTimestamp?.().catch(() => null)
+  const duration = await t.computeDuration?.().catch(() => null)
+  let stats = null
+  try { stats = await t.computePacketStats?.(200) } catch { /* 采样失败不带走整条 */ }
+  const afterPacketSample = { bytes: log.bytes, calls: log.calls }
+
+  return {
+    input, vt, at, log, size, codec, codecString, dims, cfgInfo,
+    durationFromMeta: durationFromMeta == null ? null : Math.round(durationFromMeta * 1000) / 1000,
+    duration: duration == null ? null : Math.round(duration * 1000) / 1000,
+    firstTs: firstTs == null ? null : Math.round(firstTs * 1000) / 1000,
+    stats,
+    readAccount: { afterMeta, afterCheapDuration, afterPacketSample },
+  }
+}
+
+/** ③ 顺序解完整路 —— R_decode 的标定；每帧取到即 close（上一版把帧全留着） */
+async function decodeThroughput(track, capSec) {
+  const sink = new VideoSampleSink(track)
+  let n = 0, lastTs = null, firstTs = null
+  const heaps = []
+  const t0 = performance.now()
+  for await (const s of sink.samples(undefined, capSec)) {
+    if (!s) continue
+    if (firstTs === null) firstTs = s.timestamp ?? null
+    lastTs = s.timestamp ?? null
+    n++
+    s.close()
+    if (n % 2000 === 0) { heaps.push(heap()); say(`解码 ${n} 帧 · ${Math.round(n / ((performance.now() - t0) / 1000))} fps`) }
+  }
+  const wallSec = (performance.now() - t0) / 1000
+  const fps = n / wallSec
+  return {
+    frames: n,
+    wallSec: Math.round(wallSec * 10) / 10,
+    fps: Math.round(fps),
+    firstTs, lastTs,
+    contentSec: firstTs != null && lastTs != null ? Math.round((lastTs - firstTs) * 10) / 10 : null,
+    heaps,
+    peakHeapMb: heaps.length ? Math.max(...heaps) : heap(),
+  }
+}
+
+async function decodeAudioThroughput(track, capSec) {
+  const sink = new AudioSampleSink(track)
+  let n = 0, firstT = null, lastT = null
+  const t0 = performance.now()
+  for await (const s of sink.samples(undefined, capSec)) {
+    if (!s) continue
+    if (firstT === null) firstT = s.timestamp ?? null
+    lastT = s.timestamp ?? null
+    n++
+    s.close?.()
+  }
+  const wallSec = (performance.now() - t0) / 1000
+  return { packets: n, wallSec: Math.round(wallSec * 10) / 10, firstT, lastT, packetsPerSec: Math.round(n / wallSec) }
+}
+
+// —— 目标清单 ——
+let targets
+try {
+  targets = await (await fetch(`${BASE}__targets__.json`)).json()
+} catch (e) {
+  say(`拿不到目标清单：${e.message}\n先跑 node scratch/list-intake-targets.mjs，再起 node scratch/range-server.mjs`)
+  throw e
+}
+await report('inventory', {
+  manifests: targets.scannedManifests, lanes: targets.lanesTotal, shapes: targets.shapes.length,
+  singles: targets.singles.length, groups: targets.groups.length,
+  longestSec: targets.singles[0]?.durationSec ?? null,
+})
+
+const CAPS = {
+  decodeVp9: await canDecodeVideo('vp9', {}).catch((e) => `err ${e.name}`),
+  decodeH264: await canDecodeVideo('avc', {}).catch((e) => `err ${e.name}`),
+  encodeAvc1440x810: await canEncodeVideo('avc', { width: 1440, height: 810, quality: new Quality(2_000_000) }).catch((e) => `err ${e.name}`),
+  encodeAvc2400x1350: await canEncodeVideo('avc', { width: 2400, height: 1350, quality: new Quality(4_000_000) }).catch((e) => `err ${e.name}`),
+  userAgent: navigator.userAgent.slice(-28),
+  visibilityAtStart: document.visibilityState,
+}
+await report('capability', CAPS)
+
+// —— ①②③⑤ 逐条单路 ——
+const singles = []
+for (const [i, s] of targets.singles.entries()) {
+  const url = `${BASE}${encodeURI(s.file)}`
+  const rec = {
+    file: s.file.split('/').slice(-2).join('/'), kind: s.kind, mime: s.mime,
+    wallEndSec: s.durationSec, segSumSec: s.segmentSecSum, segmentCount: s.segmentCount,
+    fileMB: mb(s.bytes), kbps: s.kbps,
+  }
+  try {
+    const o = await openTrack(url)
+    rec.codec = o.codec
+    rec.decoderConfig = o.cfgInfo
+    rec.dims = o.dims
+    rec.containerDuration = o.duration
+    rec.durationFromMeta = o.durationFromMeta
+    rec.firstTs = o.firstTs
+    rec.packets = o.stats ? { count: o.stats.count ?? null, keyFrames: o.stats.keyFrameCount ?? null } : null
+    // ②三口对账（>0.5 秒就必须先做校正再谈编码）
+    const base = o.duration
+    rec.drift = {
+      containerMinusWallEnd: base != null ? Math.round((base - s.durationSec) * 100) / 100 : null,
+      containerMinusSegSum: base != null ? Math.round((base - s.segmentSecSum) * 100) / 100 : null,
+      wallEndMinusSegSum: Math.round((s.durationSec - s.segmentSecSum) * 100) / 100,
+    }
+    // ①字节账
+    const acc = o.readAccount
+    rec.reads = {
+      metaKB: Math.round(acc.afterMeta.bytes / 1024),
+      metaCalls: acc.afterMeta.calls,
+      metaPct: Math.round(acc.afterMeta.bytes / o.size * 1000) / 10,
+      cheapDurationKB: Math.round(acc.afterCheapDuration.bytes / 1024),
+      packetSampleKB: Math.round(acc.afterPacketSample.bytes / 1024),
+      maxSpanKB: Math.round(o.log.maxSpan / 1024),
+      cacheCapKB: Math.round(8 << 10),
+    }
+
+    if (o.vt && s.kind !== 'microphone') {
+      const cap = Math.min(MAX_DECODE_SEC, s.durationSec)
+      const d = await decodeThroughput(o.vt, cap)
+      rec.decode = d
+      rec.decode.mpx = o.dims ? Math.round(o.dims.coded[0] * o.dims.coded[1] / 1e4) / 100 : null
+      rec.decode.packetsPerSec = d.frames && d.contentSec ? Math.round(d.frames / d.wallSec) : null
+      // 折算成成本模型要的常数：Mpx/s
+      if (rec.decode.mpx) rec.decode.mpxPerSec = Math.round(d.fps * rec.decode.mpx * 100) / 100
+      rec.bytesAfterDecodeMB = mb(o.log.bytes)
+      rec.decodeBytesVsFile = Math.round(o.log.bytes / o.size * 1000) / 10
+    }
+    if (o.at && s.kind === 'microphone') {
+      rec.audio = await decodeAudioThroughput(o.at, Math.min(MAX_DECODE_SEC, s.durationSec))
+      rec.bytesAfterDecodeMB = mb(o.log.bytes)
+    }
+    await o.input.dispose?.()
+  } catch (e) {
+    rec.error = `${e.name}: ${String(e.message).slice(0, 200)}`
+  }
+  singles.push(rec)
+  progress((i + 1) / targets.singles.length * 0.7)
+  await report('singles', singles)
+}
+
+// —— ④ 多路并发：聚合吞吐才是"实时喂不喂得过来"的分母 ——
+for (const g of targets.groups) {
+  const rec = { group: g.group, lanes: g.lanes, totalBytesMB: mb(g.totalBytes), perLane: [], aggregate: null }
+  const opened = []
+  try {
+    for (const f of g.files) {
+      try {
+        const o = await openTrack(`${BASE}${encodeURI(f)}`)
+        if (o.vt) opened.push({ file: f.split('/').pop(), vt: o.vt, log: o.log, dims: o.dims })
+        else await o.input.dispose?.()
+      } catch (e) { rec.perLane.push({ file: f.split('/').pop(), error: e.name }) }
+    }
+    rec.perLane = opened.map((o) => ({ file: o.file, dims: o.dims }))
+    const lanes = opened.length
+    if (!lanes) throw new Error('这一组里没有可解的视频路')
+    const t0 = performance.now()
+    let total = 0
+    const sinks = opened.map((o) => new VideoSampleSink(o.vt))
+    await Promise.all(sinks.map(async (sink) => {
+      for await (const s of sink.samples()) { if (!s) continue; total++; s.close() }
+    }))
+    const sec = (performance.now() - t0) / 1000
+    const srcFps = Math.round(total / sec / lanes)
+    rec.aggregate = {
+      lanes,
+      frames: total,
+      wallSec: Math.round(sec * 10) / 10,
+      aggregateFps: Math.round(total / sec),
+      /** 每路等效 fps：成本模型判"实时这一刻会不会丢内容"就比这个数与源帧率 */
+      perLaneFps: srcFps,
+      peakHeapMb: heap(),
+      bytesPulledMB: mb(opened.reduce((s, o) => s + o.log.bytes, 0)),
+    }
+    // 反推：这一档源要撑住 N 路实时，需要什么吞吐
+    rec.realtimeCeilingLanes = Math.max(1, Math.floor(rec.aggregate.aggregateFps / (targets.singles[0]?.frameRate || 15)))
+  } catch (e) {
+    rec.error = `${e.name}: ${String(e.message).slice(0, 200)}`
+  } finally {
+    for (const o of opened) await o.input?.dispose?.()
+  }
+  await report('concurrent', [rec])
+}
+
+// —— ⑤ 编码吞吐 vs 画布像素 ——
+async function encodeThroughput(w, h, fps, frames) {
+  const canvas = new OffscreenCanvas(w, h)
+  const ctx = canvas.getContext('2d')
+  const source = new CanvasSource(canvas, { codec: 'avc', bitrate: new Quality(2_000_000), keyFrameInterval: 2 })
+  const output = new Output({ format: new Mp4OutputFormat({ fastStart: false }), target: new NullTarget() })
+  output.addVideoTrack(source, { framerate: fps, maximumPacketCount: frames })
+  const t0 = performance.now()
+  await output.start()
+  for (let i = 0; i < frames; i++) {
+    // 低熵画面（纯色 + 移动方块）会让编码偏快 —— 这个数只能比形状，不能当承诺值
+    ctx.fillStyle = '#0b1220'; ctx.fillRect(0, 0, w, h)
+    ctx.fillStyle = `hsl(${(i * 7) % 360} 70% 55%)`; ctx.fillRect((i * 13) % w, (i * 29) % h, w / 6, h / 6)
+    await source.add(i / fps, 1 / fps)
+  }
+  await output.finalize()
+  const sec = (performance.now() - t0) / 1000
+  return {
+    canvas: `${w}x${h}`, mpx: Math.round((w * h) / 1e4) / 100, frames,
+    wallSec: Math.round(sec * 10) / 10, fps: Math.round(frames / sec),
+    mpxPerSec: Math.round(((w * h) / 1e6) * (frames / sec) * 100) / 100,
+    peakHeapMb: heap(),
+  }
+}
+try {
+  const enc = []
+  enc.push(await encodeThroughput(480, 270, 15, 300))
+  enc.push(await encodeThroughput(1280, 720, 15, 300))
+  enc.push(await encodeThroughput(1440, 810, 15, 300))
+  enc.push(await encodeThroughput(1600, 720, 15, 300))
+  enc.push(await encodeThroughput(2400, 1350, 15, 240))
+  await report('encode', {
+    samples: enc,
+    caveat: '低熵合成画面：真实画面更慢。这组数只用于看"是否随像素线性下降"的形状，不是承诺值',
+  })
+} catch (e) {
+  await report('encode', { error: `${e.name}: ${String(e.message).slice(0, 240)}` })
+}
+
+// —— 隐藏页那一跑的证据：结束时把可见性历史带回去（正本 §6.3 至今未证）——
+const vis = []
+document.addEventListener('visibilitychange', () => vis.push(`${document.visibilityState}@${Math.round(performance.now() / 1000)}`))
+RESULT.visibilityTail = () => vis
+RESULT.finishedAt = new Date().toISOString()
+await report('done', { ok: true, visibilityChanges: vis })
+say('探针完成 → scratch/out/intake-s2.json')
+</script>
+</body>
+</html>

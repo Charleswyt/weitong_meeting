@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>离线合成生产链路探针</title>
+<style>
+  body{font:13px/1.6 ui-monospace,Consolas,monospace;background:#0b1220;color:#cbd5e1;margin:0;padding:16px}
+  pre{white-space:pre-wrap;margin:8px 0 0}
+  #bar{height:6px;background:#1e293b;border-radius:3px;overflow:hidden}
+  #bar>i{display:block;height:100%;width:0;background:#38bdf8;transition:width .2s}
+  button{font:inherit;background:#1e293b;color:#cbd5e1;border:1px solid #334155;border-radius:4px;padding:6px 10px;margin:4px 4px 0 0;cursor:pointer}
+</style>
+</head>
+<body>
+<div id="bar"><i></i></div>
+<pre id="out">booting…</pre>
+<div>
+  <button id="cancel">取消（测半截件）</button>
+  <label><input type="checkbox" id="withAudio" checked> 带音频</label>
+  <label>列数 <input type="number" id="cols" value="3" min="1" max="6" style="width:40px"></label>
+  <label>时长上限(秒) <input type="number" id="sec" value="120" style="width:60px"></label>
+</div>
+<script type="module">
+/**
+ * 直接跑**生产模块**的合成链路，测的是要上线的那份代码，不是副本。
+ *
+ * 源怎么来：worktree 的 dev server 起在 5176，与你 5175 上的 IndexedDB **不同 origin**，读不到你的录制。
+ * 所以这里用盘上那份 manifest 的 `segments[].bytes` 前缀和，把已拼接好的 `.webm`
+ * 反向切成"虚拟分片"，每片按 Range 取字节 —— 与生产的 IndexedDB 逐片模型同形
+ * （一片一 blob、按前缀和定位、范围读）。
+ *
+ * 要答的四问：
+ *  ① `fastStart:'reserve'` + 两条轨的 maximumPacketCount 能不能跑到底（上一轮 OOM 马甲的正面验收）；
+ *  ② 音画是不是都在（逐轨样本数 > 0，不是"能播但只有一条 soun 轨"那种 443 KB 假视频）；
+ *  ③ 半截件：点取消后 finalize 出来的是不是**合法且时长说实话**的短文件；
+ *  ④ 峰值堆与字节账：证明没有整份常驻。
+ */
+import { composeOffline } from '/src/utils/offlineCompose/composeOffline.ts'
+import { splitContainers } from '/src/utils/offlineCompose/segmentSource.ts'
+import { probeEngineCapabilities } from '/src/utils/offlineCompose/engine.ts'
+
+const BASE = 'http://127.0.0.1:5200/'
+const RECEIVER = 'http://127.0.0.1:5199'
+const out = document.getElementById('out')
+const R = { stages: {} }
+function say(s) { out.textContent = s; document.title = s.split('\n').filter(Boolean).slice(-1)[0].slice(0, 120) }
+function progress(p) { document.querySelector('#bar>i').style.width = `${Math.round(p * 100)}%` }
+async function report(k, v) {
+  R.stages[k] = v
+  say(Object.entries(R.stages).map(([a, b]) => `${a}: ${JSON.stringify(b).slice(0, 300)}`).join('\n'))
+  try { await fetch(`${RECEIVER}/result/prod-compose`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify(R) }) } catch { /* 接收器没起也不影响产物 */ }
+}
+const mb = (n) => Math.round(n / 1048576 * 10) / 10
+
+// 挑一组**多路**的真实录制（同一场会里的 camera + microphone + screen）
+// 先挑**已知好**的那组（987 秒 / 487 片）；`chenfang/20260930185052` 那组是 §十 的坏件，
+// 故意放在第二位 —— 它用来验"坏件会不会被静默吞掉"，不是用来验吞吐。
+const groups = ['20260929182818/chenfang/59505895', 'chenfang/20260930185052/14969610']
+let manifest = null, group = null
+for (const g of groups) {
+  try {
+    const res = await fetch(`${BASE}${encodeURI(g)}/manifest.json`)
+    if (!res.ok) continue
+    const json = await res.json()
+    if (json?.streams?.length) { manifest = json; group = g; break }
+  } catch { continue }
+}
+if (!manifest) { say('拿不到任何一组的 manifest（range-server 没起来？）'); throw new Error('no manifest') }
+
+const capSec = Number(document.getElementById('sec').value || 120)
+const streams = manifest.streams.filter((s) => s.segments?.length)
+const lanes = []
+const skipped = []
+for (const st of streams) {
+  const fileUrl = `${BASE}${encodeURI(`${group}/${st.fileName}`)}`
+  // 前缀和 = 每片的字节区间；第 0 片带容器头 ⇒ 一个容器
+  let prefix = 0
+  const slices = st.segments.map((seg, i) => {
+    const s = { blobKey: `${st.fileName}#${i}`, seq: i, offsetSec: seg.offsetSeconds, durationSec: seg.durationSeconds, sizeBytes: seg.bytes }
+    const start = prefix; prefix += seg.bytes
+    return { ...s, start }
+  })
+  const byKey = new Map(slices.map((s) => [s.blobKey, s]))
+  const fetched = { bytes: 0, calls: 0 }
+  const containers = splitContainers(st.recordingId, slices.map(({ blobKey, seq, offsetSec, durationSec, sizeBytes }) => ({ blobKey, seq, offsetSec, durationSec, sizeBytes })))
+  if (containers.containerCount !== 1) {
+    skipped.push({ id: st.recordingId, kind: st.kind, containers: containers.containerCount, anomalies: containers.anomalies })
+    continue
+  }
+  const totalBytes = prefix
+  if (!st.hasVideo && !st.hasAudio) continue
+  lanes.push({
+    id: st.recordingId, label: `${st.ownerName}-${st.kind}`, hasVideo: !!st.hasVideo, hasAudio: !!st.hasAudio,
+    kind: st.kind, containers: containers.containers,
+    width: st.width ?? null, height: st.height ?? null, frameRate: st.frameRate ?? null,
+    sampleRate: st.sampleRate ?? null, channelCount: st.channelCount ?? null, mime: st.mime || '',
+    fetchSlice: async (blobKey) => {
+      const s = byKey.get(blobKey)
+      if (!s) return null
+      const res = await fetch(fileUrl, { headers: { Range: `bytes=${s.start}-${s.start + s.sizeBytes - 1}` } })
+      const buf = await res.arrayBuffer()
+      fetched.bytes += buf.byteLength; fetched.calls++
+      return buf
+    },
+    _fetched: fetched,
+  })
+}
+await report('lanes', {
+  group, total: streams.length, usable: lanes.length, skipped,
+  video: lanes.filter((l) => l.hasVideo).length, audio: lanes.filter((l) => l.hasAudio).length,
+  declaredBytesMB: mb(lanes.reduce((s, l) => s + l.containers[0].totalBytes, 0)),
+  capSec,
+})
+if (!lanes.some((l) => l.hasVideo)) { say('这一组没有可合成的画面路'); throw new Error('no usable video lane') }
+
+const caps = await probeEngineCapabilities(15)
+await report('caps', caps)
+
+let cancelled = false
+document.getElementById('cancel').onclick = () => { cancelled = true }
+const spec = {
+  lanes: lanes.map((l) => ({
+    id: l.id, label: l.label, hasVideo: l.hasVideo, hasAudio: l.hasAudio && document.getElementById('withAudio').checked,
+    kind: l.kind, containers: l.containers, fetchSlice: l.fetchSlice,
+    width: l.width, height: l.height, frameRate: l.frameRate, sampleRate: l.sampleRate, channelCount: l.channelCount, mime: l.mime,
+  })),
+  mode: 'grid',
+  cols: Number(document.getElementById('cols').value || 3),
+  focusId: null,
+  fpsOut: 15,
+  cellWidth: 480,
+  durationSec: capSec,
+  audioChunkSec: 15,
+}
+const t0 = performance.now()
+const heapNow = () => (performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null)
+function heap() { return heapNow() }
+const heaps = []
+const samples = []
+const timer = setInterval(() => { if (performance.memory) heaps.push(Math.round(performance.memory.usedJSHeapSize / 1048576)) }, 500)
+let outcome
+try {
+  outcome = await composeOffline(spec, {
+    onProgress: (p) => { progress(p.ratio); samples.push([Math.round(p.coveredSec), p.ratio, p.doneFrames, p.placeholderLanes]); if (samples.length % 10 === 0) say(`进度 ${Math.round(p.ratio * 100)}% 已覆盖 ${p.coveredSec.toFixed(1)}s 堆 ${heap()}MB`) },
+    cancel: () => { cancelled = true },
+    isCancelled: () => cancelled,
+  }, caps)
+} catch (e) {
+  clearInterval(timer)
+  await report('threw', { name: e.name, message: String(e.message).slice(0, 300) })
+  throw e
+}
+clearInterval(timer)
+const wallSec = (performance.now() - t0) / 1000
+window.heap = heapNow
+
+await report('outcome', {
+  kind: outcome.kind, engine: outcome.engine, reasons: outcome.reasons, failureCode: outcome.failureCode ?? null,
+  coveredSec: Math.round(outcome.coveredSec * 10) / 10, durationSec: Math.round(outcome.durationSec * 10) / 10,
+  droppedAudioLanes: outcome.droppedAudioLanes, placeholderCount: outcome.placeholderLanes.length,
+  skippedAnomalousLanes: outcome.skippedAnomalousLanes,
+  wallSec: Math.round(wallSec * 10) / 10,
+  bytesMB: outcome.blob ? mb(outcome.blob.size) : 0,
+  mime: outcome.blob ? outcome.blob.type : '',
+  peakHeapMb: heaps.length ? Math.max(...heaps) : null,
+  bytesPulledMB: mb(lanes.reduce((s, l) => s + l._fetched.bytes, 0)),
+  fetchCalls: lanes.reduce((s, l) => s + l._fetched.calls, 0),
+})
+
+if (outcome.blob) {
+  const name = `prod-compose-${outcome.kind}${cancelled ? '-cancel' : ''}.mp4`
+  await fetch(`${RECEIVER}/file/${name}`, { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: outcome.blob })
+  await report('dumped', { name, ok: true })
+  say(`${outcome.kind} · 覆盖 ${outcome.coveredSec.toFixed(1)}s · 墙钟 ${wallSec.toFixed(1)}s · ${mb(outcome.blob.size)}MB · 已 dump → ${name}`)
+} else {
+  say(`${outcome.kind} 没产出文件（failureCode=${outcome.failureCode}）`)
+}
+</script>
+</body>
+</html>

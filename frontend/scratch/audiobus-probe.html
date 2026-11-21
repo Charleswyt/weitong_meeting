@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>音频总线对照探针</title>
+<style>body{font:13px/1.6 ui-monospace,Consolas,monospace;background:#0b1220;color:#cbd5e1;padding:16px}pre{white-space:pre-wrap}</style>
+</head>
+<body><pre id="out">booting…</pre>
+<script type="module">
+// 回答一件事：合成里"没声音"是不是 AudioContext 没 resume 造成的，以及共用总线是否修好了它。
+// 做法：同一份真录音，用两条通路各录 4 秒再解出来量 RMS ——
+//   A) 裸 AudioContext（**不** resume，即旧 startCompose 的写法）
+//   B) `src/utils/audioBus.ts` 的 ensureAudioBus()/hookMediaToBus()（会 resume、且同时接扬声器）
+// 结果 POST 到探针接收器落盘（这台机器 user-browser-use 的 evaluate_script 恒回 {}）。
+import { ensureAudioBus, hookMediaToBus } from '/src/utils/audioBus.ts'
+
+const out = document.getElementById('out')
+const RESULT = { stage: 'boot' }
+const say = (s) => { out.textContent += '\n' + s }
+const report = () => { fetch('http://127.0.0.1:5199/result/audiobus', { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify(RESULT) }).catch(() => {}) }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+async function rmsOf(blob) {
+  const ac = new AudioContext()
+  const audio = await ac.decodeAudioData(await blob.arrayBuffer())
+  let peak = 0, sumSq = 0, n = 0
+  for (let c = 0; c < audio.numberOfChannels; c++) {
+    const d = audio.getChannelData(c)
+    for (let i = 0; i < d.length; i++) { const a = Math.abs(d[i]); if (a > peak) peak = a; sumSq += d[i] * d[i]; n++ }
+  }
+  await ac.close().catch(() => {})
+  return { seconds: Number(audio.duration.toFixed(3)), peak: Number(peak.toFixed(4)), rms: Number(Math.sqrt(sumSq / Math.max(1, n)).toFixed(4)), bytes: blob.size }
+}
+
+/** 录 4 秒，返回 blob 与关键状态 */
+async function capture(connectGraph, media, ms) {
+  const chunks = []
+  const rec = new MediaRecorder(media)
+  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data) }
+  rec.start(500)
+  await sleep(ms)
+  await new Promise((r) => { rec.onstop = () => r(); rec.stop() })
+  return new Blob(chunks, { type: rec.mimeType || 'audio/webm' })
+}
+
+async function main() {
+  const url = 'http://127.0.0.1:5199/file/source.webm'
+  const ab = await (await fetch(url)).arrayBuffer()
+  RESULT.src = { bytes: ab.byteLength }
+  const mkEl = () => { const el = document.createElement('audio'); el.src = URL.createObjectURL(new Blob([ab], { type: 'audio/webm' })); el.preload = 'auto'; return el }
+
+  // —— A：裸 AudioContext，旧写法（不 resume、只接 dest）——
+  try {
+    const el = mkEl(); document.body.appendChild(el)
+    const acA = new AudioContext()
+    const destA = acA.createMediaStreamDestination()
+    const srcA = acA.createMediaElementSource(el)
+    srcA.connect(destA)
+    let playErrA = null
+    try { await el.play() } catch (e) { playErrA = e.name }
+    RESULT.A = { ctxState: acA.state, playErr: playErrA, tracks: destA.stream.getAudioTracks().length }
+    RESULT.A.recorded = await rmsOf(await capture('A', destA.stream, 4000))
+    RESULT.A.verdict = RESULT.A.recorded.peak > 0.001 ? '有声音' : '**静音**'
+    say(`A 裸上下文：state=${RESULT.A.ctxState} playErr=${playErrA} → peak=${RESULT.A.recorded.peak} rms=${RESULT.A.recorded.rms} ${RESULT.A.verdict}`)
+    el.pause()
+  } catch (e) { RESULT.A = { error: String((e && e.message) || e) }; say('A 异常：' + RESULT.A.error) }
+
+  // —— B：共用总线（resume + 双接）——
+  try {
+    const el = mkEl(); document.body.appendChild(el)
+    const bus = ensureAudioBus()
+    const gain = hookMediaToBus(el)
+    if (!bus || !gain) throw new Error('总线起不来')
+    gain.gain.value = 1
+    let playErrB = null
+    try { await el.play() } catch (e) { playErrB = e.name }
+    RESULT.B = { ctxState: bus.ac.state, playErr: playErrB, tracks: bus.dest.stream.getAudioTracks().length }
+    RESULT.B.recorded = await rmsOf(await capture('B', bus.dest.stream, 4000))
+    RESULT.B.verdict = RESULT.B.recorded.peak > 0.001 ? '有声音' : '**静音**'
+    say(`B 共用总线：state=${RESULT.B.ctxState} playErr=${playErrB} → peak=${RESULT.B.recorded.peak} rms=${RESULT.B.recorded.rms} ${RESULT.B.verdict}`)
+    el.pause()
+  } catch (e) { RESULT.B = { error: String((e && e.message) || e) }; say('B 异常：' + RESULT.B.error) }
+
+  RESULT.stage = 'done'
+  say('DONE')
+  report()
+}
+main().catch((e) => { RESULT.stage = 'error'; RESULT.error = String((e && e.message) || e); say('ERROR ' + RESULT.error); report() })
+</script>
+</body>
+</html>

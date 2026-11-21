@@ -1,0 +1,1 @@
+{"meeting":"meeting_1790604187_6IdJ56Ee","mode":"grid","fpsOut":15,"cap":600,"lanes":1,"cols":1,"canvas":"offline:cancelled","kind":"cancelled","coveredSec":102.7,"wallSec":8.1,"bytes":25960541,"reasons":["user_cancelled"],"progressCalls":52,"cancelLatencyMs":112,"gapMedianMs":135,"gapP95Ms":183,"gapMaxMs":1226}
