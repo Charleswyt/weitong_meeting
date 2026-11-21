@@ -1,3 +1,4 @@
+import { sitePath } from '@/utils/sitePath'
 import { FilesetResolver } from '@mediapipe/tasks-vision'
 
 // MediaPipe 运行时的共用部分：wasm fileset、初始化超时与遥测屏蔽。
@@ -6,7 +7,7 @@ import { FilesetResolver } from '@mediapipe/tasks-vision'
 type WasmFileset = Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>
 
 // 模型与 wasm 全部本地化（public/mediapipe/）—— 边端环境可能没有外网，运行期不许回源 CDN。
-const WASM_BASE_PATH = '/mediapipe/wasm'
+const WASM_BASE_PATH = sitePath('/mediapipe/wasm')
 
 // 初始化必须**有界**。GPU delegate 在拿不到可用 GPU 的浏览器里会直接挂住 ——
 // 实测本端 100 秒既不 resolve 也不 reject、也不发一条降级原因，

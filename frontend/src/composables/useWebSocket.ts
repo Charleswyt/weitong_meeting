@@ -1,3 +1,4 @@
+import { sitePath } from '@/utils/sitePath'
 import { ref, onUnmounted } from 'vue'
 import { getMeetingState } from '@/api/meeting'
 import type { ParticipantVo, StreamVo, MeetingStateVo, InvitedVo } from '@/api/meeting'
@@ -96,7 +97,7 @@ export function useWebSocket() {
   async function open(meetingId: number) {
     currentMeetingId = meetingId
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const url = `${proto}//${location.host}/ws/v1/meeting?meetingId=${meetingId}&ticket=${encodeURIComponent(meetingStore.wsTicket)}`
+    const url = `${proto}//${location.host}${sitePath('/ws/v1/meeting')}?meetingId=${meetingId}&ticket=${encodeURIComponent(meetingStore.wsTicket)}`
     closedByUs = false
     ws = new WebSocket(url)
 

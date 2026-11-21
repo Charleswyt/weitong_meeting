@@ -289,6 +289,7 @@
 </template>
 
 <script setup lang="ts">
+import { sitePath } from '@/utils/sitePath'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -712,7 +713,7 @@ function attachCloudRow(row: EngineRow, url: string, media: HTMLMediaElement): (
   }
   if (Hls.isSupported()) {
     const hls = new Hls({
-      xhrSetup: (xhr) => xhr.setRequestHeader('Authorization', 'Bearer ' + (localStorage.getItem('token') || '')),
+      xhrSetup: (xhr) => xhr.setRequestHeader('Authorization', 'Bearer ' + (localStorage.getItem('weitong.token') || '')),
     })
     hls.loadSource(url)
     hls.attachMedia(media)
@@ -728,7 +729,7 @@ function attachCloudRow(row: EngineRow, url: string, media: HTMLMediaElement): (
   }
   if (media.canPlayType('application/vnd.apple.mpegurl')) {
     // Safari 原生能放 HLS，但带不出 Authorization 头，所以把令牌挂在查询串上
-    const token = localStorage.getItem('token') || ''
+    const token = localStorage.getItem('weitong.token') || ''
     media.src = url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token)
     media.load()
     return null
@@ -837,7 +838,7 @@ async function downloadCloudRow(row: EngineRow) {
   busyDownload.value = true
   try {
     const res = await fetch(getDownloadUrl(lane.recordingId), {
-      headers: { Authorization: 'Bearer ' + (localStorage.getItem('token') || '') },
+      headers: { Authorization: 'Bearer ' + (localStorage.getItem('weitong.token') || '') },
     })
     const ctype = res.headers.get('Content-Type') || ''
     if (!res.ok || ctype.includes('application/json')) {
@@ -1411,7 +1412,7 @@ async function attachSource() {
     if (Hls.isSupported()) {
       hlsInstance = new Hls({
         // 清单与分片都走我方后端代理，代理端点在 JWT 组内 —— 不带令牌会被 401 挡掉。
-        xhrSetup: (xhr) => xhr.setRequestHeader('Authorization', 'Bearer ' + (localStorage.getItem('token') || '')),
+        xhrSetup: (xhr) => xhr.setRequestHeader('Authorization', 'Bearer ' + (localStorage.getItem('weitong.token') || '')),
       })
       hlsInstance.loadSource(src)
       hlsInstance.attachMedia(el)
@@ -1422,7 +1423,7 @@ async function attachSource() {
       })
     } else if (el.canPlayType('application/vnd.apple.mpegurl')) {
       // Safari 原生播不了带不出 Authorization 头的清单，代理端点对录制只读资产放行票参。
-      const token = localStorage.getItem('token') || ''
+      const token = localStorage.getItem('weitong.token') || ''
       el.src = src + (src.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token)
     } else {
       loadError.value = '本浏览器无法在线播放，请换 Edge 或下载后观看'
@@ -1618,7 +1619,7 @@ async function onShare() {
     return
   }
   // 分享只能是这条回放地址本身：本系统没有"分享给某人"的授权接口，不做假动作。
-  const ok = await copyText(location.origin + route.fullPath)
+  const ok = await copyText(location.origin + sitePath(route.fullPath))
   if (ok) ElMessage.success('链接已复制；对方需用自己的账号登录')
   else ElMessage.info('复制失败，请手动复制地址栏链接')
 }
@@ -1671,7 +1672,7 @@ async function download() {
   busyDownload.value = true
   try {
     const res = await fetch(getDownloadUrl(rec), {
-      headers: { Authorization: 'Bearer ' + (localStorage.getItem('token') || '') },
+      headers: { Authorization: 'Bearer ' + (localStorage.getItem('weitong.token') || '') },
     })
     const ctype = res.headers.get('Content-Type') || ''
     if (!res.ok || ctype.includes('application/json')) {

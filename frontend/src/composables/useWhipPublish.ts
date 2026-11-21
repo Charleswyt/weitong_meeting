@@ -1,3 +1,4 @@
+import { sitePath } from '@/utils/sitePath'
 import { createPublication, stopPublication, type PublicationCreateBody } from '@/api/meeting'
 import { h264First } from '@/utils/codecPreference'
 import { normalizeVideoSpec } from '@/utils/videoSpec'
@@ -112,10 +113,10 @@ export function useWhipPublish(getMeetingId: () => number) {
     publicationId = ''
     if (conn) conn.close()
     if (!pub) return
-    const token = localStorage.getItem('token') || ''
+    const token = localStorage.getItem('weitong.token') || ''
     // 收尾清理是尽力而为：这条发布可能已经被上游收走了。失败只留日志，
     // 不要在用户已经离开的路上弹一句"发布不存在或已结束"（第 42 项）。
-    const res = await fetch(`/api/v1/meetings/${id}/publications/${pub}/whip`, {
+    const res = await fetch(sitePath(`/api/v1/meetings/${id}/publications/${pub}/whip`), {
       method: 'DELETE',
       headers: { Authorization: 'Bearer ' + token },
     }).catch((e) => { console.warn('[whip] 拆发布通道失败', e); return null })
@@ -205,8 +206,8 @@ export function useWhipPublish(getMeetingId: () => number) {
       throw new PublishError('这路媒体没准备好，请重试')
     }
 
-    const token = localStorage.getItem('token') || ''
-    const res = await fetch(whipPath, {
+    const token = localStorage.getItem('weitong.token') || ''
+    const res = await fetch(sitePath(whipPath), {
       method: 'POST',
       headers: { 'Content-Type': 'application/sdp', Authorization: 'Bearer ' + token },
       body: conn.localDescription?.sdp ?? '',

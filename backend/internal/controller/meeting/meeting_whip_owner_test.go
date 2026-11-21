@@ -2,6 +2,7 @@ package meeting
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -27,7 +28,9 @@ func TestWhipEntriesAreOwnershipScoped(t *testing.T) {
 	}
 
 	create := controllerFuncBody(t, "CreatePublication")
-	if !strings.Contains(create, "BindWhip(pubId, session.WhipTarget{OfferURL: whipURL, UserId: userId})") {
+	bound := regexp.MustCompile(`room\.BindWhip\(pubId,\s*session\.WhipTarget\{([^}]*)\}\)`).FindStringSubmatch(create)
+	if len(bound) != 2 || !regexp.MustCompile(`\bUserId:\s*userId\b`).MatchString(bound[1]) ||
+		!regexp.MustCompile(`\bOfferURL:\s*whipURL\b`).MatchString(bound[1]) {
 		t.Fatal("创建发布时没写归属 —— 表里全是零值 UserId，带归属的读法会把本人也挡在外面")
 	}
 

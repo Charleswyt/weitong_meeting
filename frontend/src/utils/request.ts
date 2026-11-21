@@ -1,3 +1,4 @@
+import { sitePath } from '@/utils/sitePath'
 import axios from 'axios'
 import type { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios'
 import { ElMessage } from 'element-plus'
@@ -37,7 +38,7 @@ export class ApiError extends Error {
 }
 
 const service: AxiosInstance = axios.create({
-  baseURL: '',
+  baseURL: import.meta.env.BASE_URL,
   // 超时上限 10 秒：请求要么在这个时间里回来，要么由后端回一个可重试的中间态。
   // 不允许把用户挂在「转圈几十秒」上。
   timeout: 10000,
@@ -45,7 +46,7 @@ const service: AxiosInstance = axios.create({
 
 service.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('token')
+    const token = localStorage.getItem('weitong.token')
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
@@ -76,7 +77,7 @@ interface RetriedConfig extends AxiosRequestConfig {
 // 反向引用会让两边互相依赖。为什么这一步必须有：令牌有效期 24 小时，板卡在船上跑满一天
 // 就会全部回 401 —— 而免登录模式下的用户手里没有口令，把他踢回登录页等于把人锁在门外。
 async function renewAutoLoginToken(config: RetriedConfig): Promise<string> {
-  if (localStorage.getItem('autoLogin') !== '1') return ''
+  if (localStorage.getItem('weitong.autoLogin') !== '1') return ''
   if (config.__autoLoginRetried) return ''
   // 重签请求自己绝不能再触发重签，否则后端哪天对这条路径也回个 401 就成无限递归。
   if (config.url === AUTO_LOGIN_PATH) return ''
@@ -105,7 +106,7 @@ service.interceptors.response.use(
       if (res.code === 401) {
         const renewed = await renewAutoLoginToken(response.config as RetriedConfig)
         if (renewed) {
-          localStorage.setItem('token', renewed)
+          localStorage.setItem('weitong.token', renewed)
           const retry: RetriedConfig = {
             ...response.config,
             __autoLoginRetried: true,
@@ -115,8 +116,8 @@ service.interceptors.response.use(
           // 中间换了令牌（第 1 项口径：能自己收的尾不要报给用户）。
           return service.request(retry) as any
         }
-        localStorage.removeItem('token')
-        localStorage.removeItem('autoLogin')
+        localStorage.removeItem('weitong.token')
+        localStorage.removeItem('weitong.autoLogin')
         router.push('/login')
       }
       return Promise.reject(new ApiError(res.msg || '请求失败', res.code, res.reason))
@@ -176,7 +177,8 @@ export function getPage<T = any>(url: string, config?: RequestOptions): Promise<
 // 这类请求走不了 axios 拦截器，带不了 Authorization 头；后端只对**只读资产**放行票参。
 export function assetUrl(path: string | undefined | null): string {
   if (!path) return ''
-  const token = localStorage.getItem('token') || ''
+  const token = localStorage.getItem('weitong.token') || ''
   const sep = path.includes('?') ? '&' : '?'
-  return `${path}${sep}token=${encodeURIComponent(token)}`
+  if (!path.startsWith('/') || path.startsWith('//')) return ''
+  return `${sitePath(path)}${sep}token=${encodeURIComponent(token)}`
 }

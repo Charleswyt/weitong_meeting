@@ -2,6 +2,7 @@ package thirdparty
 
 import (
 	"context"
+	"os"
 	"sync"
 	"time"
 
@@ -29,14 +30,14 @@ func NewTokenManager(adapter *Adapter) *TokenManager {
 	}
 }
 
-func (m *TokenManager) GetToken(ctx context.Context, userId int64, account, password string) (string, error) {
-	token, _, err := m.GetTokenWithAuth(ctx, userId, account, password)
+func (m *TokenManager) GetToken(ctx context.Context, userId int64, account, password, username, displayName string) (string, error) {
+	token, _, err := m.GetTokenWithAuth(ctx, userId, account, password, username, displayName)
 	return token, err
 }
 
 // GetTokenWithAuth 返回 token 与三方 AuthResult（含 accountType）；
 // 缓存命中时从缓存条目重建 AuthResult。
-func (m *TokenManager) GetTokenWithAuth(ctx context.Context, userId int64, account, password string) (string, *AuthResult, error) {
+func (m *TokenManager) GetTokenWithAuth(ctx context.Context, userId int64, account, password, username, displayName string) (string, *AuthResult, error) {
 	m.mu.RLock()
 	entry, ok := m.entries[userId]
 	m.mu.RUnlock()
@@ -45,17 +46,21 @@ func (m *TokenManager) GetTokenWithAuth(ctx context.Context, userId int64, accou
 		return entry.token, &AuthResult{Token: entry.token, AccountType: entry.accountType}, nil
 	}
 
-	token, err := m.refreshToken(ctx, userId, account, password)
+	token, err := m.refreshToken(ctx, userId, account, password, username, displayName)
 	if err != nil {
 		return "", nil, err
 	}
 	m.mu.RLock()
 	e := m.entries[userId]
+	accountType := ""
+	if e != nil {
+		accountType = e.accountType
+	}
 	m.mu.RUnlock()
-	return token, &AuthResult{Token: token, AccountType: e.accountType}, nil
+	return token, &AuthResult{Token: token, AccountType: accountType}, nil
 }
 
-func (m *TokenManager) refreshToken(ctx context.Context, userId int64, account, password string) (string, error) {
+func (m *TokenManager) refreshToken(ctx context.Context, userId int64, account, password, username, displayName string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -63,7 +68,13 @@ func (m *TokenManager) refreshToken(ctx context.Context, userId int64, account, 
 		return entry.token, nil
 	}
 
-	result, err := m.adapter.Login(ctx, account, password)
+	var result *AuthResult
+	var err error
+	if bridge := os.Getenv("WEITONG_MEDIA_EXCHANGE_URL"); bridge != "" && m.adapter.IsSinosatV1(ctx) {
+		result, err = exchangeSinosatIdentity(ctx, bridge, userId, username, displayName)
+	} else {
+		result, err = m.adapter.Login(ctx, account, password)
+	}
 	if err != nil {
 		return "", err
 	}

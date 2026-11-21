@@ -614,7 +614,7 @@ async function download(r: RecordingVo) {
   }
   try {
     const res = await fetch(getDownloadUrl(r.recordingId), {
-      headers: { Authorization: 'Bearer ' + (localStorage.getItem('token') || '') },
+      headers: { Authorization: 'Bearer ' + (localStorage.getItem('weitong.token') || '') },
     })
     const ctype = res.headers.get('Content-Type') || ''
     if (!res.ok || ctype.includes('application/json')) {

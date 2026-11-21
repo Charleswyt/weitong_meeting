@@ -1,0 +1,25 @@
+[Unit]
+Description=Weitong public meeting web backend
+After=network-online.target sinosat-meeting.service
+Wants=network-online.target
+
+[Service]
+User=weitong-meeting
+Group=weitong-meeting
+WorkingDirectory=/var/lib/weitong-meeting
+ExecStart=/opt/weitong-meeting/current/weitong-meeting
+Environment=AUTH_AUTOLOGIN_ENABLED=false
+Environment=WEITONG_MEDIA_EXCHANGE_URL=http://127.0.0.1:19894/zwt-meeting/api/v1/session/weitong
+Environment=WEITONG_MEDIA_TOKEN_FILE=/etc/weitong-meeting/media-token
+StateDirectory=weitong-meeting
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

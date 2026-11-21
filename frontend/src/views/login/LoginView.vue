@@ -256,7 +256,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { ApiError } from "@/utils/request";
 import * as authApi from "@/api/auth";
@@ -269,6 +269,11 @@ import LegalDocDialog from "@/components/dialogs/LegalDocDialog.vue";
 import VersionDialog from "@/components/dialogs/VersionDialog.vue";
 
 const router = useRouter();
+const route = useRoute();
+function afterLogin() {
+  const path = route.query.meeting;
+  return typeof path === "string" && /^\/meeting\/pre\/(?:no\/)?[0-9]{1,20}$/.test(path) ? path : "/";
+}
 const userStore = useUserStore();
 const appStore = useAppStore();
 const loading = ref(false);
@@ -463,7 +468,7 @@ async function handlePhoneLogin() {
         userStore.linkReason || "会议链路未打通，录制、会中等功能暂不可用",
       );
     }
-    router.push("/");
+    router.replace(afterLogin());
   } catch (err) {
     if (err instanceof ApiError)
       ElMessage.error({ message: err.message, grouping: true });
@@ -489,7 +494,7 @@ async function handleEmailLogin() {
         userStore.linkReason || "会议链路未打通，录制、会中等功能暂不可用",
       );
     }
-    router.push("/");
+    router.replace(afterLogin());
   } catch (err) {
     if (err instanceof ApiError)
       ElMessage.error({ message: err.message, grouping: true });
@@ -544,7 +549,7 @@ async function handleLogin() {
         userStore.linkReason || "会议链路未打通，录制、会中等功能暂不可用",
       );
     }
-    router.push("/");
+    router.replace(afterLogin());
   } catch (err) {
     if (err instanceof ApiError)
       ElMessage.error({ message: err.message, grouping: true });

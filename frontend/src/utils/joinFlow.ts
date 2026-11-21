@@ -1,3 +1,4 @@
+import { sitePath } from '@/utils/sitePath'
 import type { MeetingVo } from '@/api/meeting'
 import { businessClock, businessDayKey } from '@/utils/time'
 
@@ -159,7 +160,7 @@ export async function ensureShareOrigin(): Promise<string> {
 // 粘贴回系统时仍从路径解析（见 parseMeetingNoFromText）。
 export function joinUrlFor(meetingNo: string): string {
   if (!meetingNo) return ''
-  return `${shareOrigin()}${preJoinPathByNumber(meetingNo)}`
+  return `${shareOrigin()}${sitePath(preJoinPathByNumber(meetingNo))}`
 }
 
 /** 邀请文案里的会议号：三位一组、短横线分隔（旧粘贴兼容 / 系统内展示仍可用）。 */

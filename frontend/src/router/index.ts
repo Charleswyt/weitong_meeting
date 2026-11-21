@@ -78,14 +78,20 @@ const routes: RouteRecordRaw[] = [
 ]
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes,
 })
 
 router.beforeEach((to, _from, next) => {
-  const token = localStorage.getItem('token')
+  // Links copied by the previous public meeting UI contained ?room= followed by ten digits.
+  if (to.path === '/' && typeof to.query.room === 'string' && /^\d{10}$/.test(to.query.room)) {
+    next({ path: '/meeting/pre/no/' + to.query.room, replace: true })
+    return
+  }
+  const token = localStorage.getItem('weitong.token')
   if (to.meta.requiresAuth && !token) {
-    next('/login')
+    next(to.name === 'PreMeetingByNo' || to.name === 'PreMeeting'
+      ? { path: '/login', query: { meeting: to.path } } : '/login')
     return
   }
   if (to.path === '/login' && token) {

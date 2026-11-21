@@ -637,7 +637,7 @@ function errName(e: unknown): string {
 
 async function makeContainerSource(lane: ComposeLane, container: RunContainer): Promise<CustomSource | UrlSource> {
   if (container.remoteUrl) {
-    const token = localStorage.getItem('token') || ''
+    const token = localStorage.getItem('weitong.token') || ''
     return new UrlSource(container.remoteUrl, {
       requestInit: { headers: token ? { Authorization: `Bearer ${token}` } : {} },
       maxCacheSize: 8 << 20,

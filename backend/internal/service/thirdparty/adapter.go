@@ -598,26 +598,30 @@ func (a *Adapter) PreparePublication(ctx context.Context, participantToken, publ
 // 外部会议没有本地预约单，详情就靠它，不必先把人拉进会。
 func (a *Adapter) GetMeetingByNumber(ctx context.Context, bearerToken, meetingNumber string) (*MeetingInfo, error) {
 	if a.IsSinosatV1(ctx) {
-		// 入会前无匿名详情口；权威「是否仍在跑」看 GET /rooms（只列未结束）。
-		// 以前一律伪造 running，导致 Reconcile 永远回写不了终态、首页僵尸「进行中」。
-		page, err := a.listRoomsSinosat(ctx, bearerToken)
+		data, err := a.doRequest(ctx, http.MethodGet, "/rooms/"+url.PathEscape(meetingNumber)+"/precheck", nil, bearerToken, authBearer)
 		if err != nil {
+			var upstream *UpstreamError
+			if errors.As(err, &upstream) {
+				switch upstream.StatusCode {
+				case http.StatusNotFound:
+					return nil, fmt.Errorf("meeting_not_found")
+				case http.StatusGone:
+					return nil, fmt.Errorf("meeting_ended")
+				}
+			}
 			return nil, err
 		}
-		for _, m := range page.Meetings {
-			if m.MeetingNumber == meetingNumber || m.MeetingId == meetingNumber {
-				return &MeetingInfo{
-					Title:         m.Title,
-					MeetingNumber: m.MeetingNumber,
-					MeetingId:     m.MeetingId,
-					Status:        m.Status,
-					StartAt:       m.StartAt,
-					CloudRecord:   m.CloudRecord,
-					HostUsername:  m.HostUsername,
-				}, nil
-			}
+		var room struct {
+			RoomId, Title string
+			CreatedAt     float64
 		}
-		return nil, fmt.Errorf("meeting_not_found")
+		if err := json.Unmarshal(data, &room); err != nil {
+			return nil, err
+		}
+		if room.RoomId != meetingNumber {
+			return nil, fmt.Errorf("会议号校验失败")
+		}
+		return &MeetingInfo{Title: room.Title, MeetingNumber: room.RoomId, MeetingId: room.RoomId, StartAt: int64(room.CreatedAt), Status: "running"}, nil
 	}
 	path := fmt.Sprintf("/api/conference/meetings/%s", meetingNumber)
 	data, err := a.doRequest(ctx, http.MethodGet, path, nil, bearerToken, authBearer)

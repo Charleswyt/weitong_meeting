@@ -446,6 +446,7 @@
 </template>
 
 <script setup lang="ts">
+import { sitePath } from '@/utils/sitePath'
 import {
   computed,
   nextTick,
@@ -757,7 +758,7 @@ async function probeCameraFpsOptions() {
   }
   let stream: MediaStream | null = null;
   try {
-    const video: MediaTrackConstraints = form.cameraDeviceId
+    const video = form.cameraDeviceId
       ? { deviceId: { ideal: form.cameraDeviceId } }
       : true;
     stream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
@@ -831,7 +832,7 @@ let pickerWinTimer: number | null = null;
  */
 function openDirPickerWindow() {
   const win = window.open(
-    new URL("/recording-dir-picker", location.href).href,
+    new URL(sitePath("/recording-dir-picker"), location.href).href,
     "conference-dir-picker",
     "width=430,height=250",
   );

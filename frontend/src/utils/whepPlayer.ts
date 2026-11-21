@@ -1,3 +1,4 @@
+import { sitePath } from '@/utils/sitePath'
 // WHEP 订阅通道：这条流没有可直连的地址、只有 WHEP 订阅入口时走这里。
 // 实测两种形态需要它：岸端手机推的音频只有 WHEP；**船端形态下云端参会者的视频只有
 // RK 局域网 WHEP 这一条腿**（网关一条直连地址都不给，2026-10-10 实测）。
@@ -99,11 +100,11 @@ async function subscribeWhep(
   await pc.setLocalDescription(offer)
   await waitIceComplete(pc)
 
-  const res = await fetch(path, {
+  const res = await fetch(sitePath(path), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/sdp',
-      Authorization: 'Bearer ' + (localStorage.getItem('token') || ''),
+      Authorization: 'Bearer ' + (localStorage.getItem('weitong.token') || ''),
     },
     body: pc.localDescription?.sdp ?? '',
   })

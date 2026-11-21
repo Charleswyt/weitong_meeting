@@ -113,7 +113,7 @@ func (s *AuthService) findUserByUsername(ctx context.Context, username string) (
 func (s *AuthService) issueToken(ctx context.Context, user *entity.SysUser) (*LoginResult, error) {
 	res := &LoginResult{User: user}
 
-	_, thirdAuth, err := s.tokenManager.GetTokenWithAuth(ctx, user.Id, user.ThirdPartyAccount, user.ThirdPartyPassword)
+	_, thirdAuth, err := s.tokenManager.GetTokenWithAuth(ctx, user.Id, user.ThirdPartyAccount, user.ThirdPartyPassword, user.Username, user.DisplayName)
 	if err != nil {
 		// 本地控制面登录成立，但三方同步失败必须如实上报：
 		// 录制、会中等三方数据源页面会因此拿不到数据，UI 要据此提示，绝不伪造。
@@ -187,7 +187,7 @@ func (s *AuthService) GetThirdPartyToken(ctx context.Context, userId int64) (str
 	if err != nil {
 		return "", fmt.Errorf("查询用户失败: %w", err)
 	}
-	return s.tokenManager.GetToken(ctx, userId, user.ThirdPartyAccount, user.ThirdPartyPassword)
+	return s.tokenManager.GetToken(ctx, userId, user.ThirdPartyAccount, user.ThirdPartyPassword, user.Username, user.DisplayName)
 }
 
 func (s *AuthService) generateJWT(ctx context.Context, user *entity.SysUser) (string, error) {

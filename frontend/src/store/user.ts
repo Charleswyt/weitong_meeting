@@ -7,7 +7,7 @@ import type { UserInfo } from '@/api/auth'
 export { type UserInfo }
 
 export const useUserStore = defineStore('user', () => {
-  const token = ref(localStorage.getItem('token') || '')
+  const token = ref(localStorage.getItem('weitong.token') || '')
   const userInfo = ref<UserInfo | null>(null)
   const linkSynced = ref(true)
   const linkReason = ref('')
@@ -18,7 +18,7 @@ export const useUserStore = defineStore('user', () => {
   // 免登录模式（临时方案）：这一台以配置里那一个固定账号在服务，界面上不该出现登录页。
   // 为什么要记在 localStorage 而不是每次问后端：刷新后仍要知道"退出入口该不该藏"，
   // 而此时守卫因为手里有令牌就不会再打 auto-login 了。手动口令登录成功会把它清掉。
-  const autoLoginMode = ref(localStorage.getItem('autoLogin') === '1')
+  const autoLoginMode = ref(localStorage.getItem('weitong.autoLogin') === '1')
 
   // 本轮页面加载内只试一次免登录：后端没起或开关关着时，每次导航都重打一回就是
   // 每跳一页白等一个 10 秒超时 —— 那看着像页面死了。刷新才重新试。
@@ -33,7 +33,7 @@ export const useUserStore = defineStore('user', () => {
   // `wangqiang` 换成 `chenfang` 后，浏览器仍以 wangqiang 在跑 —— 页面进得去，但一发起会议
   // 就被船端网关 401 拒掉，看着像功能坏了。手动登录过的那台（autoLogin 位已清）照旧不重签。
   async function bootstrapSession(): Promise<boolean> {
-    const autoLoginBefore = localStorage.getItem('autoLogin') === '1'
+    const autoLoginBefore = localStorage.getItem('weitong.autoLogin') === '1'
     if (token.value && !autoLoginBefore) return true
     if (autoLoginInflight) return autoLoginInflight
     if (autoLoginTried) return false
@@ -43,16 +43,16 @@ export const useUserStore = defineStore('user', () => {
       try {
         const res = await authApi.autoLogin()
         token.value = res.token
-        localStorage.setItem('token', res.token)
+        localStorage.setItem('weitong.token', res.token)
         userInfo.value = res.user || null
         linkSynced.value = res.linkSynced !== false
         linkReason.value = res.linkReason || ''
         autoLoginMode.value = true
-        localStorage.setItem('autoLogin', '1')
+        localStorage.setItem('weitong.autoLogin', '1')
         return true
       } catch {
         autoLoginMode.value = false
-        localStorage.removeItem('autoLogin')
+        localStorage.removeItem('weitong.autoLogin')
         return false
       } finally {
         autoLoginInflight = null
@@ -63,14 +63,14 @@ export const useUserStore = defineStore('user', () => {
 
   function applyLoginResult(res: authApi.LoginResult) {
     token.value = res.token
-    localStorage.setItem('token', res.token)
+    localStorage.setItem('weitong.token', res.token)
     userInfo.value = res.user || null
     linkSynced.value = res.linkSynced !== false
     linkReason.value = res.linkReason || ''
     // 有人主动登录，这一台就不再是免登录那台了：模式位必须跟着清，
     // 否则「退出登录」会被继续藏起来，点不到的按钮留着就是骗人。
     autoLoginMode.value = false
-    localStorage.removeItem('autoLogin')
+    localStorage.removeItem('weitong.autoLogin')
   }
 
   async function login(username: string, password: string, remember = false) {
@@ -140,8 +140,8 @@ export const useUserStore = defineStore('user', () => {
       linkSynced.value = true
       linkReason.value = ''
       autoLoginMode.value = false
-      localStorage.removeItem('token')
-      localStorage.removeItem('autoLogin')
+      localStorage.removeItem('weitong.token')
+      localStorage.removeItem('weitong.autoLogin')
       // 会议态和登录态同生共死：不清它就会在下一次登录后直接落进一场已结束的会中页。
       useMeetingStore().clear()
     }

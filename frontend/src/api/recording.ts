@@ -1,3 +1,4 @@
+import { sitePath } from '@/utils/sitePath'
 import { get, del, getPage } from '@/utils/request'
 import type { components } from '@/types/api.gen'
 
@@ -39,7 +40,7 @@ export function getPlayback(meetingId: string) {
 }
 
 export function getDownloadUrl(recordingId: string) {
-  return `/api/v1/recordings/${recordingId}/download`
+  return sitePath(`/api/v1/recordings/${recordingId}/download`)
 }
 
 export function deleteRecording(recordingId: string) {

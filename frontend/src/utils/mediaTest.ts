@@ -1,3 +1,4 @@
+import { sitePath } from '@/utils/sitePath'
 // 扬声器测试与网络探测的真实实现。
 const TONE_HZ = 660
 const TONE_MS = 400
@@ -221,7 +222,7 @@ export interface NetProbe {
 async function rttSample(url: string, i: number): Promise<number | null> {
   const t0 = performance.now()
   try {
-    await fetch(`${url}${url.includes('?') ? '&' : '?'}_=${i}`, { cache: 'no-store' })
+    await fetch(sitePath(`${url}${url.includes('?') ? '&' : '?'}_=${i}`), { cache: 'no-store' })
   } catch {
     return null
   }
@@ -274,7 +275,7 @@ function mbps(bytes: number, ms: number): number {
   return Math.round((bytes * 8 / (ms / 1000)) / 1e6 * 10) / 10
 }
 
-function randomPayload(bytes: number): Uint8Array {
+function randomPayload(bytes: number) {
   const body = new Uint8Array(bytes)
   // 分块填高熵数据，避免全零被代理 gzip 压扁后解压计字节造成假千兆。
   const chunk = new Uint8Array(65536)
@@ -299,7 +300,7 @@ export interface NetQuality {
 
 async function measureDown(headers: Record<string, string>): Promise<number | null> {
   const t0 = performance.now()
-  const res = await fetch(`/api/v1/net-probe/down?kb=${DOWN_KIB}&_=${Date.now()}`, {
+  const res = await fetch(sitePath(`/api/v1/net-probe/down?kb=${DOWN_KIB}&_=${Date.now()}`), {
     headers: { ...headers, 'Accept-Encoding': 'identity' },
     cache: 'no-store',
   })
@@ -328,7 +329,7 @@ async function measureDown(headers: Record<string, string>): Promise<number | nu
 async function measureUp(headers: Record<string, string>): Promise<number | null> {
   const body = randomPayload(UP_BYTES)
   const t0 = performance.now()
-  const res = await fetch('/api/v1/net-probe/up', {
+  const res = await fetch(sitePath('/api/v1/net-probe/up'), {
     method: 'POST',
     headers: { ...headers, 'Content-Type': 'application/octet-stream' },
     body,
@@ -342,7 +343,7 @@ async function measureUp(headers: Record<string, string>): Promise<number | null
 
 async function measureUpstreamRtt(headers: Record<string, string>): Promise<number | null> {
   try {
-    const res = await fetch(`/api/v1/net-probe/upstream?_=${Date.now()}`, {
+    const res = await fetch(sitePath(`/api/v1/net-probe/upstream?_=${Date.now()}`), {
       headers,
       cache: 'no-store',
     })
@@ -361,7 +362,7 @@ export async function measureNetwork(
   url = '/api/v1/dicts/meeting_status',
   onProgress?: (elapsedMs: number) => void,
 ): Promise<NetQuality> {
-  const token = localStorage.getItem('token') || ''
+  const token = localStorage.getItem('weitong.token') || ''
   const headers = { Authorization: `Bearer ${token}` }
   const startedAt = performance.now()
   onProgress?.(0)

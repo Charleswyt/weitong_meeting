@@ -1,3 +1,4 @@
+import { sitePath } from '@/utils/sitePath'
 import { ImageSegmenter } from '@mediapipe/tasks-vision'
 import type { MPMask } from '@mediapipe/tasks-vision'
 import { blockUsageTelemetry, getWasmFileset, INIT_STEP_TIMEOUT_MS, withTimeout } from './mediapipeRuntime'
@@ -20,7 +21,7 @@ export interface BgBlurOptions {
   onDegrade?: (reason: string) => void
 }
 
-const MODEL_ASSET_PATH = '/mediapipe/selfie_segmenter.tflite'
+const MODEL_ASSET_PATH = sitePath('/mediapipe/selfie_segmenter.tflite')
 // 掩膜边缘羽化半径：分割边界是逐像素硬阈值，不羽化会出现锯齿与"剪纸"边。
 const MASK_FEATHER_PX = 1.5
 

@@ -1,3 +1,4 @@
+import { sitePath } from '@/utils/sitePath'
 import { FaceDetector } from '@mediapipe/tasks-vision'
 import { blockUsageTelemetry, getWasmFileset, INIT_STEP_TIMEOUT_MS, withTimeout } from './mediapipeRuntime'
 import { normalizeRegions, type FaceRegion, type RawFaceBox } from './faceRegions'
@@ -18,7 +19,7 @@ export interface FaceRoiObserver {
   stop: () => void
 }
 
-const FACE_MODEL_PATH = '/mediapipe/blaze_face_short_range.tflite'
+const FACE_MODEL_PATH = sitePath('/mediapipe/blaze_face_short_range.tflite')
 const MIN_INTERVAL_MS = 125
 const MAX_INTERVAL_MS = 500
 

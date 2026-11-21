@@ -613,7 +613,6 @@ const canPublish = computed(() => {
 let pendingSelfPublish = false
 const myName = computed(() => meetingStore.self?.name || userStore.userInfo?.displayName || '我')
 const isHost = computed(() => !!participants.value.find((p) => p.id === myId.value)?.isHost)
-const selfNode = computed(() => meetingStore.self?.nodeType || 'edge')
 // 自己的发布不订阅：否则会出现一个永远黑屏的"自己"窗格（实测出现过）。
 // 瓦片只挂带视频的流；独立 audio 发布按三方惯例作为"伴随音频"订阅播放，不占一格。
 const remoteStreams = computed(() =>
@@ -2322,7 +2321,6 @@ function setStreamBytes(id: string, bytes: number) {
   const prev = streamStats.value[id] ?? { pts: 0, captureMs: 0, playMs: 0, delayMs: 0, decoded: 0, bytes: 0, w: 0, h: 0, fps: 0 }
   streamStats.value = { ...streamStats.value, [id]: { ...prev, bytes } }
 }
-const downlinkBytes = computed(() => Object.values(streamStats.value).reduce((a, s) => a + (s.bytes || 0), 0))
 const uplinkBytes = ref(0)
 // 统计条说的是**主画面那一格**，所以它的主体只能由 mainRow 决定。原先"没聚焦就取第一条
 // 有统计的流"，默认进会时主画面是自己、统计条却报别人那一路的数字 —— 第 2 项要的正是错位消失。
@@ -2579,12 +2577,6 @@ function sampleFocusRate() {
   ratePrev = { id, bytes: st.bytes, at: now }
 }
 
-function fmtBytes(n: number): string {
-  if (!n) return '—'
-  if (n < 1024) return n + ' B'
-  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
-  return (n / 1024 / 1024).toFixed(2) + ' MB'
-}
 
 watch(subscribableStreams, attachRemoteStreams, { deep: false })
 

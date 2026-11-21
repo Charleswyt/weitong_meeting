@@ -1,3 +1,4 @@
+import { sitePath } from '@/utils/sitePath'
 // 媒体播放器的加载与类型声明 —— 前端只认这一层，不关心它由谁实现。
 //
 // 资产经我方后端同源代理加载：浏览器 <script> 带不了鉴权头，且平台证书自签，
@@ -60,7 +61,7 @@ export interface MediaPlayer {
   DirectAudioPlayer: new (options: AudioPlayOptions) => MediaStreamPlayer
 }
 
-const PLAYER_ASSET_PATH = '/assets/media-player.js'
+const PLAYER_ASSET_PATH = sitePath('/assets/media-player.js')
 
 // 资产注册的全局符号由平台命名，前端无法改；除此之外不在页面代码里出现厂商词。
 declare const window: Window & { ZwtDirectMedia?: MediaPlayer }
@@ -89,5 +90,5 @@ export function loadMediaPlayer(): Promise<MediaPlayer> {
 }
 
 export function authHeaders(): Record<string, string> {
-  return { Authorization: 'Bearer ' + (localStorage.getItem('token') || '') }
+  return { Authorization: 'Bearer ' + (localStorage.getItem('weitong.token') || '') }
 }
