@@ -1,0 +1,8 @@
+[Unit]
+Description=Archive new encrypted Weitong recording tracks
+[Timer]
+OnBootSec=90
+OnUnitInactiveSec=90
+Unit=weitong-recording-archive.service
+[Install]
+WantedBy=timers.target

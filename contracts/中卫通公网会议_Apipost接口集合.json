@@ -209,6 +209,46 @@
       "value": "",
       "type": "string",
       "description": "填写目标远端的 data.streams[].id，通常以 st_ 开头。"
+    },
+    {
+      "key": "assistantUrl",
+      "value": "https://47.114.83.151/zwt-meeting/assist/v1",
+      "type": "string"
+    },
+    {
+      "key": "meetingAccessToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "assistantMeetingId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "roiAdminToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "segmentId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "fileId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "materialId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "chunkUuid",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -6683,6 +6723,1026 @@
             "description": "释放本端与这路视频或音频的观看连接。发布者及云端压缩继续。"
           },
           "response": []
+        }
+      ]
+    },
+    {
+      "name": "07 会议助手与 ROI 在会运维",
+      "item": [
+        {
+          "name": "会议状态与增量转录",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{meetingAccessToken}}"
+              }
+            ],
+            "description": "查询参数 after 为最后已读转录 ID，默认 0，每页最多 100 条。返回 host/live/history、languages、terms、captions、voiceBound、consent、capture、files、minutes 和 materials。",
+            "url": {
+              "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/state?after=0",
+              "host": [
+                "{{assistantUrl}}"
+              ],
+              "path": [
+                "meetings",
+                "{{assistantMeetingId}}",
+                "state"
+              ],
+              "query": [
+                {
+                  "key": "after",
+                  "value": "0"
+                }
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "成功示例",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{meetingAccessToken}}"
+                  }
+                ],
+                "description": "查询参数 after 为最后已读转录 ID，默认 0，每页最多 100 条。返回 host/live/history、languages、terms、captions、voiceBound、consent、capture、files、minutes 和 materials。",
+                "url": {
+                  "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/state?after=0",
+                  "host": [
+                    "{{assistantUrl}}"
+                  ],
+                  "path": [
+                    "meetings",
+                    "{{assistantMeetingId}}",
+                    "state"
+                  ],
+                  "query": [
+                    {
+                      "key": "after",
+                      "value": "0"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"meeting\": 42,\n  \"title\": \"技术例会\",\n  \"host\": true,\n  \"live\": true,\n  \"history\": true,\n  \"languages\": {\n    \"zh\": \"中文\",\n    \"en\": \"English\"\n  },\n  \"terms\": {\n    \"Ka 卫星\": [\n      \"卡卫星\"\n    ]\n  },\n  \"voiceBound\": true,\n  \"consent\": [\n    \"camera\"\n  ],\n  \"capture\": {\n    \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n    \"audience\": \"attendees\",\n    \"at\": 1795600000.0\n  },\n  \"files\": [\n    {\n      \"id\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\n      \"kind\": \"camera\",\n      \"owner\": 12,\n      \"status\": \"ready\",\n      \"bytes\": 87040,\n      \"at\": 1795600000.0,\n      \"archived\": true\n    }\n  ],\n  \"materials\": [\n    {\n      \"id\": \"cccccccccccccccccccccccc\",\n      \"name\": \"议程.pdf\",\n      \"size\": 512,\n      \"digest\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"at\": 1795600000.0,\n      \"downloads\": 2\n    }\n  ],\n  \"minutes\": {\n    \"revision\": 2,\n    \"body\": \"# 技术例会\",\n    \"at\": 1795600000.0\n  },\n  \"captions\": [\n    {\n      \"id\": 1,\n      \"uid\": 12,\n      \"raw\": \"卡卫星\",\n      \"text\": \"Ka 卫星\",\n      \"lang\": \"zh\",\n      \"speaker\": \"测试用户\",\n      \"speaker_id\": 12,\n      \"attribution\": \"voice\",\n      \"at\": 1795600000.0\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "导入会议术语",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{meetingAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "主持人提交后，后续语音保留原文 raw 和纠正后 text。terms 接受 JSON 映射或 CSV 字符串。",
+            "url": {
+              "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/terms",
+              "host": [
+                "{{assistantUrl}}"
+              ],
+              "path": [
+                "meetings",
+                "{{assistantMeetingId}}",
+                "terms"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"terms\": {\n    \"Ka 卫星\": [\n      \"卡卫星\"\n    ],\n    \"昇腾\": [\n      \"升腾\"\n    ]\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "成功示例",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{meetingAccessToken}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "description": "主持人提交后，后续语音保留原文 raw 和纠正后 text。terms 接受 JSON 映射或 CSV 字符串。",
+                "url": {
+                  "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/terms",
+                  "host": [
+                    "{{assistantUrl}}"
+                  ],
+                  "path": [
+                    "meetings",
+                    "{{assistantMeetingId}}",
+                    "terms"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"terms\": {\n    \"Ka 卫星\": [\n      \"卡卫星\"\n    ],\n    \"昇腾\": [\n      \"升腾\"\n    ]\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"count\": 3\n}"
+            }
+          ]
+        },
+        {
+          "name": "绑定自己的声纹",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{meetingAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "audio/wav"
+              }
+            ],
+            "description": "本人在会；上传 2 至 16 秒、16 kHz 单声道 PCM16 WAV；仅保存本场加密特征。",
+            "url": {
+              "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/voice",
+              "host": [
+                "{{assistantUrl}}"
+              ],
+              "path": [
+                "meetings",
+                "{{assistantMeetingId}}",
+                "voice"
+              ]
+            },
+            "body": {
+              "mode": "file",
+              "file": {
+                "src": ""
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "成功示例",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{meetingAccessToken}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "audio/wav"
+                  }
+                ],
+                "description": "本人在会；上传 2 至 16 秒、16 kHz 单声道 PCM16 WAV；仅保存本场加密特征。",
+                "url": {
+                  "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/voice",
+                  "host": [
+                    "{{assistantUrl}}"
+                  ],
+                  "path": [
+                    "meetings",
+                    "{{assistantMeetingId}}",
+                    "voice"
+                  ]
+                },
+                "body": {
+                  "mode": "file",
+                  "file": {
+                    "src": ""
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"bound\": true\n}"
+            }
+          ]
+        },
+        {
+          "name": "删除自己的声纹",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{meetingAccessToken}}"
+              }
+            ],
+            "description": "删除本场账号的声纹模板。",
+            "url": {
+              "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/voice",
+              "host": [
+                "{{assistantUrl}}"
+              ],
+              "path": [
+                "meetings",
+                "{{assistantMeetingId}}",
+                "voice"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "成功示例",
+              "originalRequest": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{meetingAccessToken}}"
+                  }
+                ],
+                "description": "删除本场账号的声纹模板。",
+                "url": {
+                  "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/voice",
+                  "host": [
+                    "{{assistantUrl}}"
+                  ],
+                  "path": [
+                    "meetings",
+                    "{{assistantMeetingId}}",
+                    "voice"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"bound\": false\n}"
+            }
+          ]
+        },
+        {
+          "name": "上传发言分段",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{meetingAccessToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{chunkUuid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "audio/wav"
+              }
+            ],
+            "description": "本人在会，传 0.35 至 16 秒 WAV 和每段唯一的 Idempotency-Key。返回 id，静音则返回 null。",
+            "url": {
+              "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/captions",
+              "host": [
+                "{{assistantUrl}}"
+              ],
+              "path": [
+                "meetings",
+                "{{assistantMeetingId}}",
+                "captions"
+              ]
+            },
+            "body": {
+              "mode": "file",
+              "file": {
+                "src": ""
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "成功示例",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{meetingAccessToken}}"
+                  },
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{chunkUuid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "audio/wav"
+                  }
+                ],
+                "description": "本人在会，传 0.35 至 16 秒 WAV 和每段唯一的 Idempotency-Key。返回 id，静音则返回 null。",
+                "url": {
+                  "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/captions",
+                  "host": [
+                    "{{assistantUrl}}"
+                  ],
+                  "path": [
+                    "meetings",
+                    "{{assistantMeetingId}}",
+                    "captions"
+                  ]
+                },
+                "body": {
+                  "mode": "file",
+                  "file": {
+                    "src": ""
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"id\": 1\n}"
+            }
+          ]
+        },
+        {
+          "name": "翻译一条发言",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{meetingAccessToken}}"
+              }
+            ],
+            "description": "返回 text；目标可选 zh/en/ja/ko/fr/de/es/ru。其他会议片段不可访问。",
+            "url": {
+              "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/translations/{{segmentId}}?lang=en",
+              "host": [
+                "{{assistantUrl}}"
+              ],
+              "path": [
+                "meetings",
+                "{{assistantMeetingId}}",
+                "translations",
+                "{{segmentId}}"
+              ],
+              "query": [
+                {
+                  "key": "lang",
+                  "value": "en"
+                }
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "成功示例",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{meetingAccessToken}}"
+                  }
+                ],
+                "description": "返回 text；目标可选 zh/en/ja/ko/fr/de/es/ru。其他会议片段不可访问。",
+                "url": {
+                  "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/translations/{{segmentId}}?lang=en",
+                  "host": [
+                    "{{assistantUrl}}"
+                  ],
+                  "path": [
+                    "meetings",
+                    "{{assistantMeetingId}}",
+                    "translations",
+                    "{{segmentId}}"
+                  ],
+                  "query": [
+                    {
+                      "key": "lang",
+                      "value": "en"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"text\": \"satellite\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "发布会前材料",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{meetingAccessToken}}"
+              },
+              {
+                "key": "X-File-Name",
+                "value": "agenda.pdf"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/octet-stream"
+              }
+            ],
+            "description": "主持人；X-File-Name 为 UTF-8 百分号编码文件名，每件最多 16 MiB，每场最多 64 MiB。",
+            "url": {
+              "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/materials",
+              "host": [
+                "{{assistantUrl}}"
+              ],
+              "path": [
+                "meetings",
+                "{{assistantMeetingId}}",
+                "materials"
+              ]
+            },
+            "body": {
+              "mode": "file",
+              "file": {
+                "src": ""
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "成功示例",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{meetingAccessToken}}"
+                  },
+                  {
+                    "key": "X-File-Name",
+                    "value": "agenda.pdf"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/octet-stream"
+                  }
+                ],
+                "description": "主持人；X-File-Name 为 UTF-8 百分号编码文件名，每件最多 16 MiB，每场最多 64 MiB。",
+                "url": {
+                  "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/materials",
+                  "host": [
+                    "{{assistantUrl}}"
+                  ],
+                  "path": [
+                    "meetings",
+                    "{{assistantMeetingId}}",
+                    "materials"
+                  ]
+                },
+                "body": {
+                  "mode": "file",
+                  "file": {
+                    "src": ""
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"id\": \"cccccccccccccccccccccccc\",\n  \"sha256\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "领取单份材料",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{meetingAccessToken}}"
+              }
+            ],
+            "description": "受邀用户会前可领取，按账号登记下载。",
+            "url": {
+              "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/materials/{{materialId}}",
+              "host": [
+                "{{assistantUrl}}"
+              ],
+              "path": [
+                "meetings",
+                "{{assistantMeetingId}}",
+                "materials",
+                "{{materialId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "领取整场 ZIP 材料包",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{meetingAccessToken}}"
+              }
+            ],
+            "description": "返回 application/zip。",
+            "url": {
+              "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/package",
+              "host": [
+                "{{assistantUrl}}"
+              ],
+              "path": [
+                "meetings",
+                "{{assistantMeetingId}}",
+                "package"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "指定本人允许云录的轨道",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{meetingAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "本次入会有效。传空数组撤销，camera/microphone/screen 可独立授权。",
+            "url": {
+              "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/consent",
+              "host": [
+                "{{assistantUrl}}"
+              ],
+              "path": [
+                "meetings",
+                "{{assistantMeetingId}}",
+                "consent"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kinds\": [\n    \"microphone\",\n    \"camera\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "成功示例",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{meetingAccessToken}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "description": "本次入会有效。传空数组撤销，camera/microphone/screen 可独立授权。",
+                "url": {
+                  "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/consent",
+                  "host": [
+                    "{{assistantUrl}}"
+                  ],
+                  "path": [
+                    "meetings",
+                    "{{assistantMeetingId}}",
+                    "consent"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"kinds\": [\n    \"microphone\",\n    \"camera\"\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"kinds\": [\n    \"camera\"\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "开始加密云录制",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{meetingAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "主持人在会；audience 可选 attendees、host 或 selected，selected 需传账号整数 ID 数组。",
+            "url": {
+              "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/capture",
+              "host": [
+                "{{assistantUrl}}"
+              ],
+              "path": [
+                "meetings",
+                "{{assistantMeetingId}}",
+                "capture"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"audience\": \"attendees\",\n  \"users\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "成功示例",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{meetingAccessToken}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "description": "主持人在会；audience 可选 attendees、host 或 selected，selected 需传账号整数 ID 数组。",
+                "url": {
+                  "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/capture",
+                  "host": [
+                    "{{assistantUrl}}"
+                  ],
+                  "path": [
+                    "meetings",
+                    "{{assistantMeetingId}}",
+                    "capture"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"audience\": \"attendees\",\n  \"users\": []\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"running\": true,\n  \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "结束加密云录制",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{meetingAccessToken}}"
+              }
+            ],
+            "description": "停止读轨并完成加密分片。",
+            "url": {
+              "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/capture",
+              "host": [
+                "{{assistantUrl}}"
+              ],
+              "path": [
+                "meetings",
+                "{{assistantMeetingId}}",
+                "capture"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "成功示例",
+              "originalRequest": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{meetingAccessToken}}"
+                  }
+                ],
+                "description": "停止读轨并完成加密分片。",
+                "url": {
+                  "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/capture",
+                  "host": [
+                    "{{assistantUrl}}"
+                  ],
+                  "path": [
+                    "meetings",
+                    "{{assistantMeetingId}}",
+                    "capture"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"running\": false\n}"
+            }
+          ]
+        },
+        {
+          "name": "导出带领取人水印的录制",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{meetingAccessToken}}"
+              }
+            ],
+            "description": "需要录制对应的回放权限。返回 MP4，每次均嵌入独立领取流水。",
+            "url": {
+              "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/files/{{fileId}}",
+              "host": [
+                "{{assistantUrl}}"
+              ],
+              "path": [
+                "meetings",
+                "{{assistantMeetingId}}",
+                "files",
+                "{{fileId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "生成或保存纪要",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{meetingAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "主持人传 generate=true 生成；手动保存传 body 和当前 revision，版本不符返回 409。",
+            "url": {
+              "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/minutes",
+              "host": [
+                "{{assistantUrl}}"
+              ],
+              "path": [
+                "meetings",
+                "{{assistantMeetingId}}",
+                "minutes"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"generate\": true,\n  \"revision\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "成功示例",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{meetingAccessToken}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "description": "主持人传 generate=true 生成；手动保存传 body 和当前 revision，版本不符返回 409。",
+                "url": {
+                  "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/minutes",
+                  "host": [
+                    "{{assistantUrl}}"
+                  ],
+                  "path": [
+                    "meetings",
+                    "{{assistantMeetingId}}",
+                    "minutes"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"generate\": true,\n  \"revision\": 0\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"revision\": 2,\n  \"body\": \"# 技术例会\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "下载会议纪要",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{meetingAccessToken}}"
+              }
+            ],
+            "description": "返回 UTF-8 Markdown，包含来源发言。",
+            "url": {
+              "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/minutes/export",
+              "host": [
+                "{{assistantUrl}}"
+              ],
+              "path": [
+                "meetings",
+                "{{assistantMeetingId}}",
+                "minutes",
+                "export"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "ROI 运维在会状态",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{roiAdminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rooms/operations/activity",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rooms",
+                "operations",
+                "activity"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "成功示例",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{roiAdminToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/rooms/operations/activity",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "rooms",
+                    "operations",
+                    "activity"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"sampledAt\": 1795600000.0,\n  \"rooms\": [\n    {\n      \"meetingNumber\": \"1234567890\",\n      \"members\": 2,\n      \"publications\": 1,\n      \"names\": [\n        \"主持人\",\n        \"参会人\"\n      ]\n    }\n  ],\n  \"members\": 2,\n  \"idle\": false,\n  \"maintenance\": false\n}"
+            }
+          ]
         }
       ]
     }

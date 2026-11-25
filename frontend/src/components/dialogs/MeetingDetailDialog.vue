@@ -33,14 +33,17 @@
           </div>
         </div>
         <div class="modal-footer">
+          <button class="link-copy" @click="assistantOpen=true">材料与会议助手</button>
           <button class="btn-cancel" @click="close">关闭</button>
         </div>
       </div>
     </div>
   </Teleport>
+  <MeetingAssistant v-if="meeting && modelValue" v-model="assistantOpen" :meeting-id="Number(meeting.id)" :number="String(meeting.meetingNo || '')" initial-tab="materials" />
 </template>
 
 <script setup lang="ts">
+import MeetingAssistant from '@/components/meeting/MeetingAssistant.vue'
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { MeetingVo } from '@/api/meeting'
@@ -52,6 +55,7 @@ import { copyText } from '@/utils/clipboard'
 const props = defineProps<{ modelValue: boolean; meeting: MeetingVo | null }>()
 const emit = defineEmits<{ (e: 'update:modelValue', v: boolean): void }>()
 
+const assistantOpen = ref(false)
 const originTick = ref(0)
 // 链接用可分享 origin（localhost → 局域网 IP），不再由后端下发。
 const joinLink = computed(() => {
@@ -72,6 +76,7 @@ getDict(DICT.meetingStatus)
 getDict(DICT.localSyncStatus)
 
 function close() {
+  assistantOpen.value=false
   emit('update:modelValue', false)
 }
 function statusText(s: string) {

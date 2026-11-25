@@ -2253,3 +2253,990 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Envelope' }
+  # BEGIN Weitong meeting assistant
+  /assist/v1/meetings/{assistantMeetingId}/state:
+    servers:
+    - url: https://47.114.83.151/zwt-meeting
+    get:
+      summary: 会议状态与增量转录
+      description: 查询参数 after 为最后已读转录 ID，默认 0，每页最多 100 条。返回 host/live/history、languages、terms、captions、voiceBound、consent、capture、files、minutes
+        和 materials。
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: assistantMeetingId
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - in: query
+        name: number
+        required: false
+        description: 无本地预约单的会议传真实会议号
+        schema:
+          type: string
+      - in: query
+        name: after
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - meeting
+                - title
+                - host
+                - live
+                - history
+                - languages
+                - terms
+                - voiceBound
+                - consent
+                - capture
+                - files
+                - materials
+                - minutes
+                - captions
+                properties:
+                  meeting:
+                    type: integer
+                  title:
+                    type: string
+                  host:
+                    type: boolean
+                  live:
+                    type: boolean
+                  history:
+                    type: boolean
+                  languages:
+                    type: object
+                    additionalProperties:
+                      type: string
+                  terms:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  voiceBound:
+                    type: boolean
+                  consent:
+                    type: array
+                    items:
+                      type: string
+                  capture:
+                    anyOf:
+                    - type: object
+                      required:
+                      - id
+                      - audience
+                      - at
+                      properties:
+                        id:
+                          type: string
+                        audience:
+                          type: string
+                        at:
+                          type: number
+                    - type: 'null'
+                  files:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - id
+                      - kind
+                      - owner
+                      - status
+                      - bytes
+                      - at
+                      - archived
+                      properties:
+                        id:
+                          type: string
+                        kind:
+                          type: string
+                        owner:
+                          type: integer
+                        status:
+                          type: string
+                        bytes:
+                          type: integer
+                        at:
+                          type: number
+                        archived:
+                          type: boolean
+                  materials:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - id
+                      - name
+                      - size
+                      - digest
+                      - at
+                      - downloads
+                      properties:
+                        id:
+                          type: string
+                        name:
+                          type: string
+                        size:
+                          type: integer
+                        digest:
+                          type: string
+                        at:
+                          type: number
+                        downloads:
+                          type: integer
+                  minutes:
+                    anyOf:
+                    - type: object
+                      required:
+                      - revision
+                      - body
+                      - at
+                      properties:
+                        revision:
+                          type: integer
+                        body:
+                          type: string
+                        at:
+                          type: number
+                    - type: 'null'
+                  captions:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - id
+                      - uid
+                      - raw
+                      - text
+                      - lang
+                      - speaker
+                      - speaker_id
+                      - attribution
+                      - at
+                      properties:
+                        id:
+                          type: integer
+                        uid:
+                          type: integer
+                        raw:
+                          type: string
+                        text:
+                          type: string
+                        lang:
+                          type: string
+                        speaker:
+                          type: string
+                        speaker_id:
+                          type: integer
+                        attribution:
+                          type: string
+                        at:
+                          type: number
+              example:
+                meeting: 42
+                title: 技术例会
+                host: true
+                live: true
+                history: true
+                languages:
+                  zh: 中文
+                  en: English
+                terms:
+                  Ka 卫星:
+                  - 卡卫星
+                voiceBound: true
+                consent:
+                - camera
+                capture:
+                  id: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                  audience: attendees
+                  at: 1795600000.0
+                files:
+                - id: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+                  kind: camera
+                  owner: 12
+                  status: ready
+                  bytes: 87040
+                  at: 1795600000.0
+                  archived: true
+                materials:
+                - id: cccccccccccccccccccccccc
+                  name: 议程.pdf
+                  size: 512
+                  digest: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                  at: 1795600000.0
+                  downloads: 2
+                minutes:
+                  revision: 2
+                  body: '# 技术例会'
+                  at: 1795600000.0
+                captions:
+                - id: 1
+                  uid: 12
+                  raw: 卡卫星
+                  text: Ka 卫星
+                  lang: zh
+                  speaker: 测试用户
+                  speaker_id: 12
+                  attribution: voice
+                  at: 1795600000.0
+        '401':
+          description: 请重新登录
+        '403':
+          description: 没有会议或录制权限
+        '409':
+          description: 状态或版本冲突
+        '429':
+          description: 处理繁忙，请稍后重试
+  /assist/v1/meetings/{assistantMeetingId}/terms:
+    servers:
+    - url: https://47.114.83.151/zwt-meeting
+    put:
+      summary: 导入会议术语
+      description: 主持人提交后，后续语音保留原文 raw 和纠正后 text。terms 接受 JSON 映射或 CSV 字符串。
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: assistantMeetingId
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - in: query
+        name: number
+        required: false
+        description: 无本地预约单的会议传真实会议号
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - count
+                properties:
+                  count:
+                    type: integer
+              example:
+                count: 3
+        '401':
+          description: 请重新登录
+        '403':
+          description: 没有会议或录制权限
+        '409':
+          description: 状态或版本冲突
+        '429':
+          description: 处理繁忙，请稍后重试
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+            example:
+              terms:
+                Ka 卫星:
+                - 卡卫星
+                昇腾:
+                - 升腾
+  /assist/v1/meetings/{assistantMeetingId}/voice:
+    servers:
+    - url: https://47.114.83.151/zwt-meeting
+    put:
+      summary: 绑定自己的声纹
+      description: 本人在会；上传 2 至 16 秒、16 kHz 单声道 PCM16 WAV；仅保存本场加密特征。
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: assistantMeetingId
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - in: query
+        name: number
+        required: false
+        description: 无本地预约单的会议传真实会议号
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - bound
+                properties:
+                  bound:
+                    type: boolean
+              example:
+                bound: true
+        '401':
+          description: 请重新登录
+        '403':
+          description: 没有会议或录制权限
+        '409':
+          description: 状态或版本冲突
+        '429':
+          description: 处理繁忙，请稍后重试
+      requestBody:
+        required: true
+        content:
+          audio/wav:
+            schema:
+              type: string
+              format: binary
+    delete:
+      summary: 删除自己的声纹
+      description: 删除本场账号的声纹模板。
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: assistantMeetingId
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - in: query
+        name: number
+        required: false
+        description: 无本地预约单的会议传真实会议号
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - bound
+                properties:
+                  bound:
+                    type: boolean
+              example:
+                bound: false
+        '401':
+          description: 请重新登录
+        '403':
+          description: 没有会议或录制权限
+        '409':
+          description: 状态或版本冲突
+        '429':
+          description: 处理繁忙，请稍后重试
+  /assist/v1/meetings/{assistantMeetingId}/captions:
+    servers:
+    - url: https://47.114.83.151/zwt-meeting
+    post:
+      summary: 上传发言分段
+      description: 本人在会，传 0.35 至 16 秒 WAV 和每段唯一的 Idempotency-Key。返回 id，静音则返回 null。
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: assistantMeetingId
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - in: query
+        name: number
+        required: false
+        description: 无本地预约单的会议传真实会议号
+        schema:
+          type: string
+      - in: header
+        required: true
+        name: Idempotency-Key
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - id
+                properties:
+                  id:
+                    type:
+                    - integer
+                    - 'null'
+              example:
+                id: 1
+        '401':
+          description: 请重新登录
+        '403':
+          description: 没有会议或录制权限
+        '409':
+          description: 状态或版本冲突
+        '429':
+          description: 处理繁忙，请稍后重试
+      requestBody:
+        required: true
+        content:
+          audio/wav:
+            schema:
+              type: string
+              format: binary
+  /assist/v1/meetings/{assistantMeetingId}/translations/{segmentId}:
+    servers:
+    - url: https://47.114.83.151/zwt-meeting
+    get:
+      summary: 翻译一条发言
+      description: 返回 text；目标可选 zh/en/ja/ko/fr/de/es/ru。其他会议片段不可访问。
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: assistantMeetingId
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - in: query
+        name: number
+        required: false
+        description: 无本地预约单的会议传真实会议号
+        schema:
+          type: string
+      - in: path
+        name: segmentId
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: lang
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - text
+                properties:
+                  text:
+                    type: string
+              example:
+                text: satellite
+        '401':
+          description: 请重新登录
+        '403':
+          description: 没有会议或录制权限
+        '409':
+          description: 状态或版本冲突
+        '429':
+          description: 处理繁忙，请稍后重试
+  /assist/v1/meetings/{assistantMeetingId}/materials:
+    servers:
+    - url: https://47.114.83.151/zwt-meeting
+    post:
+      summary: 发布会前材料
+      description: 主持人；X-File-Name 为 UTF-8 百分号编码文件名，每件最多 16 MiB，每场最多 64 MiB。
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: assistantMeetingId
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - in: query
+        name: number
+        required: false
+        description: 无本地预约单的会议传真实会议号
+        schema:
+          type: string
+      - in: header
+        required: true
+        name: X-File-Name
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - id
+                - sha256
+                properties:
+                  id:
+                    type: string
+                  sha256:
+                    type: string
+              example:
+                id: cccccccccccccccccccccccc
+                sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        '401':
+          description: 请重新登录
+        '403':
+          description: 没有会议或录制权限
+        '409':
+          description: 状态或版本冲突
+        '429':
+          description: 处理繁忙，请稍后重试
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+  /assist/v1/meetings/{assistantMeetingId}/materials/{materialId}:
+    servers:
+    - url: https://47.114.83.151/zwt-meeting
+    get:
+      summary: 领取单份材料
+      description: 受邀用户会前可领取，按账号登记下载。
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: assistantMeetingId
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - in: query
+        name: number
+        required: false
+        description: 无本地预约单的会议传真实会议号
+        schema:
+          type: string
+      - in: path
+        name: materialId
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '401':
+          description: 请重新登录
+        '403':
+          description: 没有会议或录制权限
+        '409':
+          description: 状态或版本冲突
+        '429':
+          description: 处理繁忙，请稍后重试
+  /assist/v1/meetings/{assistantMeetingId}/package:
+    servers:
+    - url: https://47.114.83.151/zwt-meeting
+    get:
+      summary: 领取整场 ZIP 材料包
+      description: 返回 application/zip。
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: assistantMeetingId
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - in: query
+        name: number
+        required: false
+        description: 无本地预约单的会议传真实会议号
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '401':
+          description: 请重新登录
+        '403':
+          description: 没有会议或录制权限
+        '409':
+          description: 状态或版本冲突
+        '429':
+          description: 处理繁忙，请稍后重试
+  /assist/v1/meetings/{assistantMeetingId}/consent:
+    servers:
+    - url: https://47.114.83.151/zwt-meeting
+    put:
+      summary: 指定本人允许云录的轨道
+      description: 本次入会有效。传空数组撤销，camera/microphone/screen 可独立授权。
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: assistantMeetingId
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - in: query
+        name: number
+        required: false
+        description: 无本地预约单的会议传真实会议号
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - kinds
+                properties:
+                  kinds:
+                    type: array
+                    items:
+                      type: string
+              example:
+                kinds:
+                - camera
+        '401':
+          description: 请重新登录
+        '403':
+          description: 没有会议或录制权限
+        '409':
+          description: 状态或版本冲突
+        '429':
+          description: 处理繁忙，请稍后重试
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+            example:
+              kinds:
+              - microphone
+              - camera
+  /assist/v1/meetings/{assistantMeetingId}/capture:
+    servers:
+    - url: https://47.114.83.151/zwt-meeting
+    post:
+      summary: 开始加密云录制
+      description: 主持人在会；audience 可选 attendees、host 或 selected，selected 需传账号整数 ID 数组。
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: assistantMeetingId
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - in: query
+        name: number
+        required: false
+        description: 无本地预约单的会议传真实会议号
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - running
+                - id
+                properties:
+                  running:
+                    type: boolean
+                  id:
+                    type: string
+              example:
+                running: true
+                id: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        '401':
+          description: 请重新登录
+        '403':
+          description: 没有会议或录制权限
+        '409':
+          description: 状态或版本冲突
+        '429':
+          description: 处理繁忙，请稍后重试
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+            example:
+              audience: attendees
+              users: []
+    delete:
+      summary: 结束加密云录制
+      description: 停止读轨并完成加密分片。
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: assistantMeetingId
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - in: query
+        name: number
+        required: false
+        description: 无本地预约单的会议传真实会议号
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - running
+                properties:
+                  running:
+                    type: boolean
+              example:
+                running: false
+        '401':
+          description: 请重新登录
+        '403':
+          description: 没有会议或录制权限
+        '409':
+          description: 状态或版本冲突
+        '429':
+          description: 处理繁忙，请稍后重试
+  /assist/v1/meetings/{assistantMeetingId}/files/{fileId}:
+    servers:
+    - url: https://47.114.83.151/zwt-meeting
+    get:
+      summary: 导出带领取人水印的录制
+      description: 需要录制对应的回放权限。返回 MP4，每次均嵌入独立领取流水。
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: assistantMeetingId
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - in: query
+        name: number
+        required: false
+        description: 无本地预约单的会议传真实会议号
+        schema:
+          type: string
+      - in: path
+        name: fileId
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        '401':
+          description: 请重新登录
+        '403':
+          description: 没有会议或录制权限
+        '409':
+          description: 状态或版本冲突
+        '429':
+          description: 处理繁忙，请稍后重试
+  /assist/v1/meetings/{assistantMeetingId}/minutes:
+    servers:
+    - url: https://47.114.83.151/zwt-meeting
+    put:
+      summary: 生成或保存纪要
+      description: 主持人传 generate=true 生成；手动保存传 body 和当前 revision，版本不符返回 409。
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: assistantMeetingId
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - in: query
+        name: number
+        required: false
+        description: 无本地预约单的会议传真实会议号
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - revision
+                - body
+                properties:
+                  revision:
+                    type: integer
+                  body:
+                    type: string
+              example:
+                revision: 2
+                body: '# 技术例会'
+        '401':
+          description: 请重新登录
+        '403':
+          description: 没有会议或录制权限
+        '409':
+          description: 状态或版本冲突
+        '429':
+          description: 处理繁忙，请稍后重试
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+            example:
+              generate: true
+              revision: 0
+  /assist/v1/meetings/{assistantMeetingId}/minutes/export:
+    servers:
+    - url: https://47.114.83.151/zwt-meeting
+    get:
+      summary: 下载会议纪要
+      description: 返回 UTF-8 Markdown，包含来源发言。
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: assistantMeetingId
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - in: query
+        name: number
+        required: false
+        description: 无本地预约单的会议传真实会议号
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            text/markdown:
+              schema:
+                type: string
+                format: binary
+        '401':
+          description: 请重新登录
+        '403':
+          description: 没有会议或录制权限
+        '409':
+          description: 状态或版本冲突
+        '429':
+          description: 处理繁忙，请稍后重试
+  /rooms/operations/activity:
+    get:
+      summary: ROI 超级管理员查询实时在会状态
+      description: 需要 ROI 登录 Bearer。包括静音且未发布摄像头的成员。状态不可读应暂缓更新。
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: sampledAt、idle、maintenance、members、rooms[]（meetingNumber、members、publications、names）
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - sampledAt
+                - rooms
+                - members
+                - idle
+                - maintenance
+                properties:
+                  sampledAt:
+                    type: number
+                  rooms:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - meetingNumber
+                      - members
+                      - publications
+                      - names
+                      properties:
+                        meetingNumber:
+                          type: string
+                        members:
+                          type: integer
+                        publications:
+                          type: integer
+                        names:
+                          type: array
+                          items:
+                            type: string
+                  members:
+                    type: integer
+                  idle:
+                    type: boolean
+                  maintenance:
+                    type: boolean
+              example:
+                sampledAt: 1795600000.0
+                rooms:
+                - meetingNumber: '1234567890'
+                  members: 2
+                  publications: 1
+                  names:
+                  - 主持人
+                  - 参会人
+                members: 2
+                idle: false
+                maintenance: false
+        '403':
+          description: 需要 ROI 超级管理员

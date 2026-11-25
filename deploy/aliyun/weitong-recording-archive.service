@@ -1,0 +1,18 @@
+[Unit]
+Description=Verify encrypted Weitong recording copies in the private OSS archive
+After=network-online.target weitong-assistant.service
+ConditionPathExists=/etc/weitong-assistant/archive.json
+ConditionPathExists=/var/lib/weitong-assistant/assistant.db
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3.10 -B /opt/weitong-assistant/current/archive.py /etc/weitong-assistant/archive.json
+UMask=0077
+Nice=15
+CPUQuota=40%
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+StateDirectory=weitong-recording-archive
+ReadWritePaths=/var/lib/weitong-recording-archive /var/lib/weitong-assistant
+ReadOnlyPaths=/var/lib/weitong-assistant/recordings /var/lib/weitong-assistant/assistant.db

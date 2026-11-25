@@ -1,0 +1,28 @@
+[Unit]
+Description=Weitong meeting transcription, materials and encrypted recordings
+After=network.target weitong-meeting.service sinosat-meeting.service
+
+[Service]
+User=weitong-meeting
+Group=weitong-meeting
+Environment=PYTHONPATH=/opt/weitong-assistant-runtime/python
+Environment=OPENBLAS_NUM_THREADS=1
+Environment=OMP_NUM_THREADS=2
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3.10 /opt/weitong-assistant/current/server.py /etc/weitong-assistant/config.json
+StateDirectory=weitong-assistant
+StateDirectoryMode=0700
+UMask=0077
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+Nice=6
+CPUQuota=350%
+MemoryMax=3800M
+TasksMax=384
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

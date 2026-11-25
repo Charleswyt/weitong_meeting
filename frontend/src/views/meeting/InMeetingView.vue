@@ -341,9 +341,10 @@
           :title="boardRecordingHint"
           @click="toggleCloudRecord"
         >
-          <i class="ri-cloud-line" /><span>{{ cloudRecording ? '停止云端录制' : '云端录制' }}</span>
+          <i class="ri-cloud-line" /><span>加密云录制</span>
         </button>
 
+        <button v-if="!isCompact" class="im-btn" @click="openAssistant('captions')"><i class="ri-file-list-3-line" /><span>会议助手</span></button>
         <!-- 窄屏：成员 + 更多（邀请/聊天/共享/录制/设置） -->
         <button
           v-if="isCompact"
@@ -359,6 +360,7 @@
           </button>
           <template #dropdown>
             <el-dropdown-menu class="im-more-menu">
+              <el-dropdown-item command="assistant"><i class="ri-file-list-3-line" /> 会议助手</el-dropdown-item>
               <el-dropdown-item command="invite"><i class="ri-user-add-line" /> 邀请</el-dropdown-item>
               <el-dropdown-item command="chat"><i class="ri-chat-3-line" /> 聊天{{ messages.length ? ` (${messages.length})` : '' }}</el-dropdown-item>
               <el-dropdown-item command="share"><i class="ri-airplay-line" /> {{ sharing ? '停止共享' : '共享屏幕' }}</el-dropdown-item>
@@ -369,7 +371,7 @@
               </el-dropdown-item>
               <el-dropdown-item command="cloud-rec">
                 <i class="ri-cloud-line" />
-                {{ cloudRecording ? '停止云端录制' : '云端录制' }}
+                加密云录制
               </el-dropdown-item>
               <el-dropdown-item v-if="isPhone" command="settings" divided><i class="ri-settings-3-line" /> 设置</el-dropdown-item>
               <el-dropdown-item v-if="isHost" command="end" divided><i class="ri-shut-down-line" /> 结束会议</el-dropdown-item>
@@ -386,6 +388,7 @@
       </div>
     </footer>
 
+    <MeetingAssistant v-model="showAssistant" :initial-tab="assistantTab" :meeting-id="meetingId" :number="String(meetingStore.meetingNo || '')" :stream="selfStream" :mic="micOn" in-meeting />
     <MeetingSettingsPopover v-model="showSettings" :apply-live="applyVideoDelivery" @changed="onPrefsChanged" />
     <InviteMeetingDialog
       v-model="showInvite"
@@ -400,6 +403,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, ElDropdown, ElDropdownMenu, ElDropdownItem } from 'element-plus'
+import MeetingAssistant from '@/components/meeting/MeetingAssistant.vue'
 import MeetingSettingsPopover from '@/components/dialogs/MeetingSettingsPopover.vue'
 import InviteMeetingDialog from '@/components/dialogs/InviteMeetingDialog.vue'
 import MemberPanel, { type MemberRow } from '@/components/panels/MemberPanel.vue'
@@ -409,7 +413,6 @@ import {
   getMeetingDetail,
   endMeeting,
   focusStream,
-  setRecording,
   reportMediaState,
   reportTelemetry,
   mediaUrl,
@@ -912,7 +915,10 @@ const netText = computed(() => (net.value ? net.value.label + ' · ' + net.value
 const netLevel = computed(() => net.value?.level || '')
 
 const cloudRecording = computed(() => !!meetingStore.state?.recording.active)
-const boardRecordingHint = '云端录制由服务端承载，本页面发起可能被拒'
+const boardRecordingHint = '管理加密录制与回放权限'
+const assistantTab = ref('captions')
+const showAssistant = ref(false)
+function openAssistant(tab: string) { assistantTab.value = tab; showAssistant.value = true }
 const sharingName = computed(() => participants.value.find((p) => p.sharing)?.name || '')
 const shareTrackLabel = computed(() => {
   const label = shareStream.value?.getVideoTracks()[0]?.label || ''
@@ -1017,11 +1023,12 @@ function toggleDock(id: Exclude<DockId, 'none'>) {
   }
 }
 
-type MoreCmd = 'invite' | 'chat' | 'share' | 'stats' | 'local-rec' | 'cloud-rec' | 'settings' | 'end'
+type MoreCmd = 'assistant' | 'invite' | 'chat' | 'share' | 'stats' | 'local-rec' | 'cloud-rec' | 'settings' | 'end'
 
 function onMoreCommand(cmd: string | number | object) {
   const c = String(cmd) as MoreCmd
-  if (c === 'invite') showInvite.value = true
+  if (c === 'assistant') openAssistant('captions')
+  else if (c === 'invite') showInvite.value = true
   else if (c === 'chat') toggleDock('chat')
   else if (c === 'share') void toggleShare()
   else if (c === 'stats') toggleDock('stats')
@@ -1493,18 +1500,7 @@ async function toggleShare() {
   }
 }
 
-async function toggleCloudRecord() {
-  const action = cloudRecording.value ? 'stop' : 'start'
-  try {
-    await setRecording(meetingId, action)
-    ElMessage.success(action === 'start' ? '云端录制已开启' : '云端录制已停止')
-    const state = await getMeetingState(meetingId)
-    meetingStore.applyState(state.data!)
-  } catch (e) {
-    console.warn('[meeting] 云端录制指令失败', e)
-    ElMessage.error('云端录制开关没有生效，请稍后重试')
-  }
-}
+function toggleCloudRecord() { openAssistant('record') }
 
 // —— 本地录制（第 15/17 项）——————————————————————————————————————————
 // 以前是一条混合流：把舞台画到一张画布上录，谁后来入会、谁关了摄像头都不在文件里，

@@ -24,3 +24,13 @@
 将现场提供的 `config.yaml` 和 `smtp.local.yaml` 放到源码的 `backend/manifest/config/`。原项目运行时读取 `config.yaml`。本次部署将后者中的邮件设置合并进生效配置，并为新实例生成专用 JWT 签名密钥、SM2 私钥和媒体交换凭据。更新时保留已生效的密钥和数据库。首次建库包含业务表及基础字典，正式用户通过邮箱注册。
 
 原项目接口定义位于 `contracts/api.openapi.yaml`。在当前站点调用时以 `/zwt-meeting` 为服务前缀。现有中卫通媒体接口仍使用 `/zwt-meeting/api/v1/rooms` 和 `/zwt-meeting/api/v1/session`。
+
+## 会议助手
+
+`weitong-assistant.service` 在回环地址 19917 提供服务。程序位于 `/opt/weitong-assistant/current`，Python 运行时使用 `/usr/bin/python3.10`。将 `assistant/requirements.txt` 中的依赖安装至 `/opt/weitong-assistant-runtime/python`，按照 `assistant/models.lock.json` 下载并核对模型至同一运行时的 `models` 目录。FFmpeg 需要 RTSP、Matroska、libx264、AAC、drawtext 和 DejaVu Sans 字体。
+
+现场配置为 `/etc/weitong-assistant/config.json`，由 root 和会议服务组读取。配置项 `authUrl` 指向会议账号服务的 `/api/v1/auth/me`，`presenceUrl` 指向本机媒体服务的 `/internal/weitong/activity`。`bridge` 为现有媒体桥接凭据。`meetings` 指向会议业务 SQLite，`data` 指向独立状态目录，`models` 指向校验后的模型目录。`rtspPort`、`mediaUser`、`mediaPassword` 复用本机媒体网关配置。`key` 是初装时用系统随机源生成并以 Base64 编码的 32 字节密钥，升级应保留。备份与恢复需要会议数据库、助手数据库、归档回执和独立保管的该密钥。
+
+`weitong-recording-archive.timer` 调用独立归档服务。`/etc/weitong-assistant/archive.json` 的 `clientDirectory` 指向现有 OSS 归档客户端所在目录，`archiveConfig` 指向既有归档配置。上传范围为 `weitong-meeting/recordings/v1/<会议内部ID>/<轨道文件ID>.enc`。归档服务设置私有 ACL，核对本地和 OSS 字节数、CRC64，回执记录 SHA-256。会议网页通过会议助手鉴权导出；对象存储凭据由归档服务持有。
+
+发布前在阿里云使用 `/usr/local/sbin/weitong-meeting-release-guard acquire`，切换与健康检查结束后执行 `release`。安装这条命令的源码为 `deploy/aliyun/roi/release_guard.py`。ROI 导航绑定 `data-weitong-presence`，使用同目录的 `meeting-activity.js`。公网用户指南包含操作入口、权限和验收范围。[会议助手与在会运维](../../docs/中卫通公网会议助手与在会运维.md)
