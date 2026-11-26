@@ -178,6 +178,8 @@ export async function createVideoEnhanceTrack(
     stencil: false,
     preserveDrawingBuffer: false,
     powerPreference: 'high-performance',
+    // Software WebGL can stall capture and microphone publication on low-power clients.
+    failIfMajorPerformanceCaveat: true,
   })
   if (!gl) return null
 
