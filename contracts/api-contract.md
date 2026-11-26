@@ -461,7 +461,7 @@ GET /api/v1/<resource>/list?pageNum=1&pageSize=10&orderByColumn=startTime&isAsc=
 
 #### 中卫通公网会议的视频传输
 
-账号视频偏好 `videoTargetBitrateKbps` 通过 `GET/PUT /api/v1/settings/` 读写。未保存过偏好时返回 500 kbps，保存的 0 表示自适应。浏览器按每路摄像头或共享屏幕的视频编码器设置上限，同时发布两路时分别计量。
+账号视频偏好 `videoTargetBitrateKbps` 通过 `GET/PUT /api/v1/settings/` 读写。默认返回 0，浏览器按上行网络自适应编码。选定数值时，每路摄像头或共享屏幕分别使用指定的 kbps 编码上限。
 
 同一账号可为摄像头和共享屏幕分别设置原始转发或阿里云 H.264 压缩。三种云端策略为 `source_frames`、`bandwidth_first` 和 `optimized`。Web 通过创建发布和发布设置 PUT 传递选择，接收端依据 `streams[].revision` 重连媒体。码率单位为 kbps。端点、字段和可直接发出的请求见 [网页 OpenAPI](./api.openapi.yaml) 和 [Apipost 第 06 组](./中卫通公网会议_Apipost接口集合.json)。
 

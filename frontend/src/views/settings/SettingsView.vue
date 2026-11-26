@@ -114,7 +114,7 @@
                 <div class="setting-left">
                   <span class="setting-label">浏览器视频上行上限</span>
                   <span class="setting-desc"
-                    >摄像头和共享屏幕每路默认按 500 kbps 上限编码。重新开启视频后生效。</span
+                    >摄像头和共享屏幕默认根据上行网络自动调整码率。重新开启视频后生效。</span
                   >
                 </div>
                 <div class="setting-right">
@@ -122,7 +122,7 @@
                     v-model.number="form.videoTargetBitrateKbps"
                     class="setting-select"
                   >
-                    <option :value="0">自适应</option>
+                    <option :value="0">自适应（默认）</option>
                     <option :value="20">20 Kbps</option>
                     <option :value="40">40 Kbps</option>
                     <option :value="60">60 Kbps</option>
@@ -132,7 +132,7 @@
                     <option :value="200">200 Kbps</option>
                     <option :value="300">300 Kbps</option>
                     <option :value="400">400 Kbps</option>
-                    <option :value="500">500 Kbps（默认）</option>
+                    <option :value="500">500 Kbps</option>
                     <option :value="600">600 Kbps</option>
                     <option :value="700">700 Kbps</option>
                     <option :value="800">800 Kbps</option>

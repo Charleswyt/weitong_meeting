@@ -667,7 +667,7 @@ components:
         speakerDeviceId: { type: string, maxLength: 128, x-source: settings.go:8 }
         videoResolution: { type: string, enum: [480p, 720p, 1080p], x-source: settings.go:9 }
         videoMaxFps: { type: integer, minimum: 5, maximum: 60, description: 采集约束的 ideal 上限，与下面录制帧率是两件事, x-source: settings.go:10 }
-        videoTargetBitrateKbps: { type: integer, minimum: 0, maximum: 1000, default: 500, description: '浏览器每路摄像头或共享屏幕的 WebRTC 视频编码上限，单位 kbps。未保存偏好时为 500，显式 0 表示自适应，可选 20–1000。云端二次压缩目标单独设置。', x-source: settings.go:12 }
+        videoTargetBitrateKbps: { type: integer, minimum: 0, maximum: 1000, default: 0, description: '摄像头和共享屏幕默认按上行网络自适应编码（0）。可选 20–1000 kbps 作为每路 WebRTC 视频编码上限。云端二次压缩目标单独设置。', x-source: settings.go:12 }
         vbMode: { type: string, enum: [off, blur, custom], description: "背景虚化的唯一生效真源；custom 本期无实现，按 off 处理", x-source: settings.go:12 }
         vbCustomImageUrl: { type: string, maxLength: 256, description: 本期无消费方, x-source: settings.go:13 }
         faceEnhancement: { type: integer, enum: [0, 1], description: 0/1 而不是 bool（列是 TINYINT）, x-source: settings.go:14 }

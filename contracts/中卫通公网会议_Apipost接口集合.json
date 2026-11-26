@@ -6948,7 +6948,7 @@
                 ""
               ]
             },
-            "description": "未保存偏好的账号默认返回 videoTargetBitrateKbps=500。",
+            "description": "默认返回 videoTargetBitrateKbps=0，表示浏览器按上行网络自适应编码。",
             "header": [
               {
                 "key": "Authorization",
@@ -6977,7 +6977,7 @@
                 ""
               ]
             },
-            "description": "发送完整偏好对象。请先读取当前值，再修改所需字段。videoTargetBitrateKbps 单位为 kbps，每路视频独立编码，0 表示自适应。",
+            "description": "发送完整偏好对象。请先读取当前设置，再修改目标字段。videoTargetBitrateKbps 默认取 0 表示自适应，20–1000 表示每路视频的编码上限，单位 kbps。",
             "header": [
               {
                 "key": "Authorization",
@@ -6992,7 +6992,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"cameraDeviceId\": \"\",\n  \"microphoneDeviceId\": \"\",\n  \"speakerDeviceId\": \"\",\n  \"videoResolution\": \"1080p\",\n  \"videoMaxFps\": 30,\n  \"videoTargetBitrateKbps\": 500,\n  \"vbMode\": \"off\",\n  \"vbCustomImageUrl\": \"\",\n  \"faceEnhancement\": 0,\n  \"cloudRecordDefault\": 1,\n  \"recordingQuality\": \"high\",\n  \"recordingFps\": 30,\n  \"mirrorVideo\": true,\n  \"bgBlur\": false,\n  \"micVolume\": 80,\n  \"autoGain\": true,\n  \"noiseSuppression\": true,\n  \"recordingSaveDir\": \"\"\n}",
+              "raw": "{\n  \"cameraDeviceId\": \"\",\n  \"microphoneDeviceId\": \"\",\n  \"speakerDeviceId\": \"\",\n  \"videoResolution\": \"1080p\",\n  \"videoMaxFps\": 30,\n  \"videoTargetBitrateKbps\": 0,\n  \"vbMode\": \"off\",\n  \"vbCustomImageUrl\": \"\",\n  \"faceEnhancement\": 0,\n  \"cloudRecordDefault\": 1,\n  \"recordingQuality\": \"high\",\n  \"recordingFps\": 30,\n  \"mirrorVideo\": true,\n  \"bgBlur\": false,\n  \"micVolume\": 80,\n  \"autoGain\": true,\n  \"noiseSuppression\": true,\n  \"recordingSaveDir\": \"\"\n}",
               "options": {
                 "raw": {
                   "language": "json"

@@ -31,7 +31,7 @@ func DefaultPreferenceVo() *PreferenceVo {
 	return &PreferenceVo{
 		VideoResolution:        "1080p",
 		VideoMaxFps:            30,
-		VideoTargetBitrateKbps: 500,
+		VideoTargetBitrateKbps: 0,
 		VbMode:                 "off",
 		FaceEnhancement:        0,
 		CloudRecordDefault:     1,

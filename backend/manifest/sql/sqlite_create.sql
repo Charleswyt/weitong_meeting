@@ -129,7 +129,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   SPEAKER_DEVICE_ID          VARCHAR(128) DEFAULT '',      -- 同上，扬声器
   VIDEO_RESOLUTION           VARCHAR(16)  DEFAULT '1080p', -- 字典 video_resolution，作为采集约束的 ideal 值
   VIDEO_MAX_FPS              INT          DEFAULT 20,      -- 最大帧率 ideal 值
-  VIDEO_TARGET_BITRATE_KBPS  INT          DEFAULT 500,       -- 浏览器每路视频默认编码上限 500 kbps，0 表示自适应
+  VIDEO_TARGET_BITRATE_KBPS  INT          DEFAULT 0,       -- 浏览器视频默认自适应（0），正数为每路编码上限，单位 kbps
   VB_MODE                    VARCHAR(16)  DEFAULT 'off',   -- 字典 vb_mode：off/blur/custom
   VB_CUSTOM_IMAGE_URL        VARCHAR(256) DEFAULT '',      -- 自定义背景图 URL，vb_mode=custom 时生效
   FACE_ENHANCEMENT           TINYINT      DEFAULT 0,       -- 浏览器端美颜开关
@@ -298,6 +298,6 @@ VALUES
 INSERT OR IGNORE INTO user_settings
   (USER_ID, VIDEO_RESOLUTION, VIDEO_MAX_FPS, VIDEO_TARGET_BITRATE_KBPS, VB_MODE, FACE_ENHANCEMENT, CLOUD_RECORD_DEFAULT, RECORDING_QUALITY)
 VALUES
-  (1, '1080p', 30, 500, 'off',  0, 1, 'high'),
-  (2, '1080p', 30, 500, 'off',  0, 1, 'high'),
-  (3, '720p',  15, 300, 'blur', 1, 1, 'medium');
+  (1, '1080p', 30, 0, 'off',  0, 1, 'high'),
+  (2, '1080p', 30, 0, 'off',  0, 1, 'high'),
+  (3, '720p',  15, 0, 'blur', 1, 1, 'medium');
