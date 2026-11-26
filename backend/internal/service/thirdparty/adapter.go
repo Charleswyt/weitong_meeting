@@ -132,6 +132,9 @@ func (a *Adapter) resolveTarget(ctx context.Context, targetURL string) string {
 	return b.ResolveReference(ref).String()
 }
 
+// ErrEmptyRoomEnded denotes an empty room closed by the public meeting service.
+var ErrEmptyRoomEnded = errors.New("meeting_ended:empty_timeout")
+
 // UpstreamError 三方非 2xx 的回答：保留状态码与原始 body，让调用方按业务码分句，
 // 而不是只拿到一个被拼平的字符串。**Error() 的文本与旧实现逐字相同** —— 各处 UserMessage
 // 归译都按 err.Error() 做字符串匹配，改文本会把它们一起改坏。
@@ -425,7 +428,7 @@ func (a *Adapter) GetRecordingGroups(ctx context.Context, token string, q Record
 func (a *Adapter) ScheduleMeeting(ctx context.Context, token string, req *ScheduleReq) (*ThirdMeeting, error) {
 	// 公网会议族没有预约时刻：上游只建即时房间，本地预约单仍由我方库承载。
 	if a.IsSinosatV1(ctx) {
-		return a.createRoomSinosat(ctx, token, req.Title)
+		return a.createRoomSinosat(ctx, token, req.Title, false)
 	}
 	data, err := a.doRequest(ctx, http.MethodPost, "/api/frontend/conference-management/meetings", req, token, authBearer)
 	if err != nil {
@@ -442,7 +445,7 @@ func (a *Adapter) ScheduleMeeting(ctx context.Context, token string, req *Schedu
 
 func (a *Adapter) QuickStart(ctx context.Context, token string, req *QuickStartReq) (*ThirdMeeting, error) {
 	if a.IsSinosatV1(ctx) {
-		return a.createRoomSinosat(ctx, token, req.Title)
+		return a.createRoomSinosat(ctx, token, req.Title, true)
 	}
 	data, err := a.doRequest(ctx, http.MethodPost, "/api/frontend/conference-management/meetings/quick-start", req, token, authBearer)
 	if err != nil {
@@ -606,6 +609,12 @@ func (a *Adapter) GetMeetingByNumber(ctx context.Context, bearerToken, meetingNu
 				case http.StatusNotFound:
 					return nil, fmt.Errorf("meeting_not_found")
 				case http.StatusGone:
+					var ended struct {
+						Reason string `json:"endReason"`
+					}
+					if json.Unmarshal(upstream.Body, &ended) == nil && ended.Reason == "empty_timeout" {
+						return nil, ErrEmptyRoomEnded
+					}
 					return nil, fmt.Errorf("meeting_ended")
 				}
 			}

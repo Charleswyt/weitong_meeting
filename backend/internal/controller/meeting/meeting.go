@@ -2,6 +2,7 @@ package meeting
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/gogf/gf/v2/net/ghttp"
@@ -355,6 +356,8 @@ func (c *Controller) Precheck(r *ghttp.Request) {
 		// 三方确认不存在或已结束 → 顺手回写本地，修掉列表"进行中"的过期显示。
 		if local != nil {
 			switch {
+			case errors.Is(err, thirdparty.ErrEmptyRoomEnded):
+				_ = c.meetingSvc.SyncUpstreamStatus(ctx, local.Id, consts.MeetingEndReasonEmpty)
 			case strings.Contains(msg, "meeting_ended"),
 				strings.Contains(msg, "meeting_not_found"):
 				_ = c.meetingSvc.SyncUpstreamStatus(ctx, local.Id, "ended")
@@ -563,8 +566,10 @@ func (c *Controller) Leave(r *ghttp.Request) {
 		glog.Warningf(r.Context(), "离会时上游已无此端 meeting=%d user=%d: %v", req.MeetingId, userId, err)
 	}
 	c.registry.Leave(req.MeetingId, userId)
-	if m, err := c.meetingSvc.GetDetail(r.Context(), req.MeetingId); err == nil && m != nil && m.CreatorId == userId {
-		c.meetingSvc.MarkHostLeft(req.MeetingId, userId)
+	if !c.adapter.IsSinosatV1(r.Context()) {
+		if m, err := c.meetingSvc.GetDetail(r.Context(), req.MeetingId); err == nil && m != nil && m.CreatorId == userId {
+			c.meetingSvc.MarkHostLeft(req.MeetingId, userId)
+		}
 	}
 	response.OkWithMessage(r, "已离开会议")
 }
@@ -619,7 +624,6 @@ func (c *Controller) End(r *ghttp.Request) {
 	}
 	response.OkWithMessage(r, "会议已结束")
 }
-
 
 func (c *Controller) Cancel(r *ghttp.Request) {
 	var req v1.MeetingCancelReq

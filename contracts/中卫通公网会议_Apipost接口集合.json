@@ -254,6 +254,14 @@
       "key": "captureId",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "webMeetingPassword",
+      "value": ""
+    },
+    {
+      "key": "webParticipantId",
+      "value": ""
     }
   ],
   "item": [
@@ -6178,7 +6186,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"meetingNo\": \"{{webMeetingNo}}\"\n}",
+              "raw": "{\n  \"meetingNo\": \"{{webMeetingNo}}\",\n  \"password\": \"{{webMeetingPassword}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -6726,6 +6734,203 @@
               }
             ],
             "description": "释放本端与这路视频或音频的观看连接。发布者及云端压缩继续。"
+          },
+          "response": []
+        },
+        {
+          "name": "预约带入会密码的会议",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/meetings/schedule",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "meetings",
+                "schedule"
+              ]
+            },
+            "description": "空密码表示公开入会。",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{webToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"预约会议\",\n  \"startTime\": \"2026-12-01T09:00:00+08:00\",\n  \"durationMinutes\": 30,\n  \"password\": \"{{webMeetingPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "修改预约与入会密码",
+          "request": {
+            "method": "PUT",
+            "url": {
+              "raw": "{{baseUrl}}/meetings/{{webMeetingId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "meetings",
+                "{{webMeetingId}}"
+              ]
+            },
+            "description": "主持人可修改尚未开始的预约。省略 password 保留已有密码。",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{webToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"预约会议\",\n  \"startTime\": \"2026-12-01T09:00:00+08:00\",\n  \"durationMinutes\": 30,\n  \"password\": \"{{webMeetingPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "预检入会密码",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/meetings/precheck",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "meetings",
+                "precheck"
+              ]
+            },
+            "description": "requiresPassword 表示当前账号入会是否需要密码。",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{webToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"meetingNo\": \"{{webMeetingNo}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "主持人全员静音",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/meetings/{{webMeetingId}}/mute-all",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "meetings",
+                "{{webMeetingId}}",
+                "mute-all"
+              ]
+            },
+            "description": "向房间成员发送 mute_all 事件。",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{webToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "主持人移出成员",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/meetings/{{webMeetingId}}/kick",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "meetings",
+                "{{webMeetingId}}",
+                "kick"
+              ]
+            },
+            "description": "participantId 取自当前房间的参会列表。",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{webToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"participantId\": \"{{webParticipantId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           },
           "response": []
         }

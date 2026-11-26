@@ -14,6 +14,7 @@ export type MeetingVo = components['schemas']['MeetingVo'] & {
 
 export function endReasonLabel(reason?: string): string {
   if (reason === 'normal') return '正常结束'
+  if (reason === 'empty_timeout') return '空房满 5 分钟 · 自动结束'
   if (reason === 'abnormal_exit') return '异常退出 · 超时自动结束'
   return ''
 }

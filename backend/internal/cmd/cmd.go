@@ -65,9 +65,17 @@ var Main = gcmd.Command{
 			if n := meetingSvc.ReconcileStaleRunning(ctx); n > 0 {
 				glog.Infof(ctx, "核对并回写 %d 场已结束会议", n)
 			}
-			if n := meetingSvc.AutoEndIfHostAbsent(ctx, registry, 5*time.Minute); n > 0 {
-				glog.Infof(ctx, "开会人退出超 5 分钟，自动结束 %d 场会议", n)
+			if !adapter.IsSinosatV1(ctx) {
+				if n := meetingSvc.AutoEndIfHostAbsent(ctx, registry, 5*time.Minute); n > 0 {
+					glog.Infof(ctx, "开会人退出超 5 分钟，自动结束 %d 场会议", n)
+				}
 			}
+		}
+		ensureMeetingLaunchKindColumn(ctx)
+		ensureMeetingEndReasonColumn(ctx)
+		ensureMeetingPasswordColumn(ctx)
+		if err := g.DB().GetCore().ClearTableFields(ctx, "meeting_appointment"); err != nil {
+			return err
 		}
 		go reconcileStale(ctx)
 		if _, err := gcron.Add(ctx, "0 * * * * *", reconcileStale, "meeting-reconcile-stale"); err != nil {
@@ -81,9 +89,6 @@ var Main = gcmd.Command{
 
 		ensureUserMobileColumn(ctx)
 		ensureUserEmailColumn(ctx)
-		ensureMeetingLaunchKindColumn(ctx)
-		ensureMeetingEndReasonColumn(ctx)
-		ensureMeetingPasswordColumn(ctx)
 		ensureAccountTypeLabels(ctx)
 		smsProvider := sms.New(service.LoadSmsConfig(ctx))
 		smsAuthSvc := service.NewSmsAuthService(authSvc, smsProvider)

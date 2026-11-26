@@ -8,6 +8,7 @@ import (
 	v1 "cloud-conference-backend/api/v1"
 	"cloud-conference-backend/internal/response"
 	"cloud-conference-backend/internal/service"
+	"cloud-conference-backend/internal/service/thirdparty"
 	"cloud-conference-backend/internal/session"
 	"cloud-conference-backend/internal/websocket"
 )
@@ -27,12 +28,34 @@ func (c *Controller) requireHostControl(r *ghttp.Request, meetingId int64) (Call
 		}
 		return cu, true
 	}
-	// 外部会议：必须在会中
-	if _, ok := c.registry.Session(meetingId, cu.UserId); !ok {
+	// 外部会议的主持人身份由会议服务确认。
+	member, joined := c.registry.Session(meetingId, cu.UserId)
+	number, known := c.registry.ExternalNoFor(meetingId)
+	if !joined || !known {
 		response.Fail(r, "你尚未加入这场会议")
 		return cu, false
 	}
+	state, err := c.adapter.GetMeetingState(r.Context(), member.ParticipantToken, number)
+	if err != nil || !canControlExternalRoom(state, member.ParticipantId) {
+		response.Fail(r, "只有会议主持人可以执行此操作")
+		return cu, false
+	}
 	return cu, true
+}
+
+func canControlExternalRoom(state *thirdparty.MeetingResponse, participantId string) bool {
+	if state == nil || participantId == "" {
+		return false
+	}
+	if state.Meeting.HostParticipantId != "" {
+		return state.Meeting.HostParticipantId == participantId
+	}
+	for _, member := range state.Participants {
+		if member.ParticipantId == participantId {
+			return member.IsHost
+		}
+	}
+	return false
 }
 
 // MuteAll 主持人一键全员静音：向房间内所有其他参会人广播 mute_all 事件。

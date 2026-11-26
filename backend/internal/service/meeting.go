@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -529,6 +530,9 @@ func IsTerminalStatus(status string) bool {
 // 只允许 running/starting → 终态 这一个方向，不去猜或改写别的状态。
 // 键不是本系统预约单主键时（外部会议）库里没有对应记录，直接跳过。
 func (s *MeetingService) SyncUpstreamStatus(ctx context.Context, id int64, upstream string) error {
+	if upstream == consts.MeetingEndReasonEmpty {
+		return s.SyncUpstreamStatusWithReason(ctx, id, consts.MeetingStatusEnded, consts.MeetingEndReasonEmpty)
+	}
 	return s.SyncUpstreamStatusWithReason(ctx, id, upstream, "")
 }
 
@@ -669,7 +673,10 @@ func (s *MeetingService) upstreamEndStatus(ctx context.Context, row *staleAppoin
 	info, err := s.adapter.GetMeetingByNumber(ctx, token, row.ThirdPartyMeetingNumber)
 	if err != nil {
 		msg := err.Error()
-		if strings.Contains(msg, "not_found") || strings.Contains(msg, "404") {
+		if errors.Is(err, thirdparty.ErrEmptyRoomEnded) {
+			return consts.MeetingEndReasonEmpty, true
+		}
+		if strings.Contains(msg, "meeting_ended") || strings.Contains(msg, "not_found") || strings.Contains(msg, "404") {
 			return "ended", true
 		}
 		return "", false

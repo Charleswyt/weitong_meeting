@@ -88,8 +88,8 @@ func (a *Adapter) logoutSinosat(ctx context.Context, token string) error {
 	return err
 }
 
-func (a *Adapter) createRoomSinosat(ctx context.Context, token, title string) (*ThirdMeeting, error) {
-	body := map[string]string{}
+func (a *Adapter) createRoomSinosat(ctx context.Context, token, title string, startsImmediately bool) (*ThirdMeeting, error) {
+	body := map[string]interface{}{"startsImmediately": startsImmediately}
 	if strings.TrimSpace(title) != "" {
 		body["title"] = strings.TrimSpace(title)
 	}

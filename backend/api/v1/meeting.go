@@ -367,7 +367,7 @@ type MeetingVo struct {
 	StartedAt           string `json:"startedAt"`
 	DurationMinutes     int    `json:"durationMinutes"`
 	Status              string `json:"status"`
-	// EndReason：normal 正常结束 / abnormal_exit 异常退出（开会人离会超 5 分钟自动结束）。
+	// EndReason 记录正常结束、连续空房超时或历史异常退出。
 	EndReason           string `json:"endReason,omitempty"`
 	Managed             bool   `json:"managed"`
 	LocalStatus         string `json:"localStatus"`

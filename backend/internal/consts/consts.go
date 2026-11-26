@@ -46,13 +46,14 @@ const (
 const (
 	MeetingEndReasonNormal       = "normal"
 	MeetingEndReasonAbnormalExit = "abnormal_exit"
+	MeetingEndReasonEmpty        = "empty_timeout"
 )
 
 // 视频腿的通道机器值（对外契约 StreamVo.videoChannel，不是库里的字典列）。
 // 前端按它选播放器，不去猜错误文案：direct 走 GET 拉流，lanWhep 走 WHEP 订阅接口。
 const (
-	VideoChannelDirect   = "direct"
-	VideoChannelLanWhep  = "lanWhep"
+	VideoChannelDirect    = "direct"
+	VideoChannelLanWhep   = "lanWhep"
 	VideoChannelCloudWhep = "cloudWhep" // 公网会议族浏览器 WHEP（sinosat）
 )
 
