@@ -29,6 +29,8 @@ type MeetingAppointment struct {
 	LaunchKind              any         // quick/scheduled/share/voice
 	LocalStatus             any         // 字典 local_sync_status：pending/synced/failed，本系统与三方的同步态
 	Status                  any         // 字典 meeting_status：scheduled/starting/running/ended/failed/cancelled
+	EndReason               any         // normal 正常结束 / abnormal_exit 异常退出超时自动结束
+	MeetingPassword         any         // 入会密码（为空表示无密码）
 	CreatedAt               *gtime.Time // 创建时间
 	UpdatedAt               *gtime.Time // 更新时间
 	DeletedAt               *gtime.Time // 软删除时间戳

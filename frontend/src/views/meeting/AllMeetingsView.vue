@@ -46,16 +46,23 @@
                   <i v-else class="am-chip-icon" :class="chipGlyph(m)" />
                   {{ statusLabel(m.status) }}
                 </span>
+                <span
+                  v-if="m.status === 'ended' && endReasonLabel(m.endReason)"
+                  class="am-end-reason"
+                  :class="m.endReason === 'abnormal_exit' ? 'is-abnormal' : 'is-normal'"
+                >{{ endReasonLabel(m.endReason) }}</span>
               </div>
               <div class="am-row-no"><span class="am-no-icon">#</span> 会议号 {{ m.meetingNo ? formatMeetingNo(m.meetingNo) : '尚未同步' }}</div>
             </div>
             <div class="am-row-actions">
               <template v-if="isRunning(m)">
+                <button v-if="m.meetingNo" class="am-btn-line" @click="handleShare(m)"><i class="am-btn-icon ri-share-forward-line" />分享</button>
                 <button v-if="m.managed && m.isHost" class="am-btn-line" @click="handleStop(m)">结束会议</button>
                 <button v-if="isSelfIn(m)" class="am-btn-chip am-btn-joined"><i class="am-btn-icon ri-check-line" />已入会</button>
                 <button v-else class="am-btn-solid" @click="handleJoin(m)">入会</button>
               </template>
               <template v-else-if="isScheduled(m)">
+                <button v-if="m.meetingNo" class="am-btn-line" @click="handleShare(m)"><i class="am-btn-icon ri-share-forward-line" />分享</button>
                 <button v-if="m.managed && m.isHost" class="am-btn-line" @click="handleEdit(m)">修改会议</button>
                 <button v-if="m.managed && m.isHost" class="am-btn-line am-btn-danger" @click="handleCancel(m)">取消会议</button>
                 <button v-if="isSelfIn(m)" class="am-btn-chip am-btn-joined"><i class="am-btn-icon ri-check-line" />已入会</button>
@@ -89,11 +96,11 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import ScheduleMeetingDialog from '@/components/dialogs/ScheduleMeetingDialog.vue'
 import MeetingAssistant from '@/components/meeting/MeetingAssistant.vue'
 import MeetingDetailDialog from '@/components/dialogs/MeetingDetailDialog.vue'
-import { getMeetingList, cancelMeeting, stopMeeting, precheckMeeting, type MeetingVo } from '@/api/meeting'
+import { getMeetingList, cancelMeeting, stopMeeting, precheckMeeting, endReasonLabel, type MeetingVo } from '@/api/meeting'
 import { useMeetingStore } from '@/store/meeting'
 import { getDict, dictLabelSync, dictTagTypeSync, DICT } from '@/api/dict'
 import { formatTime } from '@/utils/time'
-import { preJoinPath } from '@/utils/joinFlow'
+import { copyMeetingInvite, preJoinPath } from '@/utils/joinFlow'
 import { formatMeetingNo } from '@/utils/meetingNo'
 
 const router = useRouter()
@@ -231,6 +238,18 @@ async function handleJoin(m: MeetingVo) {
     }
   }
   router.push(preJoinPath(m))
+}
+
+async function handleShare(m: MeetingVo) {
+  const ok = await copyMeetingInvite({
+    hostName: m.creatorName || m.hostName || '',
+    title: m.title,
+    meetingNo: m.meetingNo,
+    startTime: m.startTime || m.startedAt,
+    durationMinutes: m.durationMinutes,
+  })
+  if (ok) ElMessage.success('已复制会议邀请信息，可直接发送给参会人')
+  else ElMessage.warning('复制失败，请手动复制会议号')
 }
 
 function handleEdit(m: MeetingVo) {
@@ -685,5 +704,22 @@ onMounted(() => {
   margin-top: 6px;
   font-size: 13px;
   color: var(--text-muted);
+}
+.am-end-reason {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.am-end-reason.is-normal {
+  background: var(--bg-hover);
+  color: var(--text-muted);
+}
+.am-end-reason.is-abnormal {
+  background: rgba(245, 158, 11, 0.14);
+  color: var(--warning-text, #b45309);
 }
 </style>

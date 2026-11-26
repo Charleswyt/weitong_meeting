@@ -21,6 +21,25 @@
             ><i class="ri-sun-cloudy-line" />{{ weatherLine }}</span
           >
         </div>
+        <div
+          v-if="sunriseLine || sunsetLine || windLine"
+          class="home-weather-extra"
+        >
+          <span v-if="sunriseLine || sunsetLine" class="home-wx-detail">
+            <template v-if="sunriseLine">
+              <i class="ri-sun-line" />日出 {{ sunriseLine }}
+            </template>
+            <template v-if="sunriseLine && sunsetLine">
+              <span class="home-wx-sep">·</span>
+            </template>
+            <template v-if="sunsetLine">
+              <i class="ri-moon-clear-line" />日落 {{ sunsetLine }}
+            </template>
+          </span>
+          <span v-if="windLine" class="home-wx-detail">
+            <i class="ri-windy-line" />{{ windLine }}
+          </span>
+        </div>
       </div>
 
       <section class="home-launch" aria-label="会议入口">
@@ -108,15 +127,13 @@
           <span class="home-count">{{ allMeetings.length }}</span>
         </div>
         <div class="home-schedule-tools">
-          <button class="home-text-btn" type="button" @click="openSchedule">
-            预约
-          </button>
           <button
             class="home-text-btn"
             type="button"
             @click="router.push('/all-meetings')"
           >
-            全部
+            <span>查看全部</span>
+            <i class="ri-arrow-right-s-line" />
           </button>
         </div>
       </div>
@@ -133,8 +150,8 @@
           <ul class="home-meeting-list">
             <li v-for="m in group.items" :key="m.id" class="home-meeting-item">
               <div class="home-meeting-time">
-                <div class="time-start">{{ timeOf(m.startTime) }}</div>
-                <div class="time-end">{{ endTimeOf(m) }}</div>
+                <div class="time-start">{{ timeRangeOf(m) }}</div>
+                <div class="time-end">UTC+8 北京时间</div>
               </div>
               <div
                 class="home-meeting-rail"
@@ -142,11 +159,16 @@
               />
               <div class="home-meeting-info">
                 <div class="home-meeting-top">
-                  <span class="home-meeting-name">{{ m.title }}</span>
+                  <span class="home-meeting-name">{{ displayTitle(m) }}</span>
                   <span class="home-kind">{{ kindLabel(m.kind) }}</span>
                   <span class="home-status" :class="statusClass(m.status)">{{
                     statusLabel(m.status)
                   }}</span>
+                  <span
+                    v-if="m.status === 'ended' && endReasonLabel(m.endReason)"
+                    class="home-end-reason"
+                    :class="m.endReason === 'abnormal_exit' ? 'is-abnormal' : 'is-normal'"
+                  >{{ endReasonLabel(m.endReason) }}</span>
                 </div>
                 <div class="home-meeting-meta">
                   <span
@@ -155,6 +177,7 @@
                       m.meetingNo ? formatMeetingNo(m.meetingNo) : "尚未同步"
                     }}</span
                   >
+                  <span v-if="hostLabel(m)">· 发起人：{{ hostLabel(m) }}</span>
                   <span v-if="m.participantCount > 0"
                     >· {{ m.participantCount }} 人参加</span
                   >
@@ -185,6 +208,18 @@
                   @click="openPlayback(m)"
                 >
                   回放
+                </button>
+                <button
+                  v-if="
+                    m.meetingNo &&
+                    (m.status === 'scheduled' || m.status === 'running')
+                  "
+                  class="hm-btn"
+                  type="button"
+                  title="复制会议邀请链接与信息"
+                  @click="handleShare(m)"
+                >
+                  分享
                 </button>
                 <button
                   v-if="m.managed && m.isHost && m.status === 'scheduled'"
@@ -250,7 +285,7 @@
     <ScheduleMeetingDialog
       v-model="showScheduleDialog"
       :meeting="editingMeeting"
-      @created="load"
+      @created="load(true)"
     />
     <JoinMeetingDialog v-model="showJoinDialog" />
   </div>
@@ -267,6 +302,7 @@ import {
   cancelMeeting,
   stopMeeting,
   precheckMeeting,
+  endReasonLabel,
   type MeetingVo,
 } from "@/api/meeting";
 import { getRecordingList } from "@/api/recording";
@@ -278,6 +314,7 @@ import {
   businessWeekdayLabel,
 } from "@/utils/time";
 import {
+  copyMeetingInvite,
   parseMeetingNoFromText,
   preJoinPath,
   preJoinPathByNumber,
@@ -299,6 +336,9 @@ const starting = ref(false);
 const readyRecordingIds = ref<Set<string>>(new Set());
 const placeLine = ref("");
 const weatherLine = ref("");
+const sunriseLine = ref("");
+const sunsetLine = ref("");
+const windLine = ref("");
 let weatherAbort: AbortController | null = null;
 
 const now = new Date();
@@ -412,17 +452,17 @@ const groupedMeetings = computed<MeetingGroup[]>(() => {
     label,
     items: items.sort(
       (a, b) =>
-        new Date(a.startTime).getTime() - new Date(b.startTime).getTime(),
+        new Date(b.startTime).getTime() - new Date(a.startTime).getTime(),
     ),
   }));
-  return sorted.sort((a, b) => earliestOf(a.items) - earliestOf(b.items));
+  return sorted.sort((a, b) => latestOf(b.items) - latestOf(a.items));
 });
 
-function earliestOf(items: MeetingVo[]) {
+function latestOf(items: MeetingVo[]) {
   const ts = items
     .map((m) => new Date(m.startTime).getTime())
     .filter((t) => !isNaN(t));
-  return ts.length ? Math.min(...ts) : Number.MAX_SAFE_INTEGER;
+  return ts.length ? Math.max(...ts) : 0;
 }
 
 function timeOf(iso: string) {
@@ -433,6 +473,22 @@ function endTimeOf(m: MeetingVo) {
   if (isNaN(d.getTime())) return "";
   d.setMinutes(d.getMinutes() + m.durationMinutes);
   return businessClock(d);
+}
+function timeRangeOf(m: MeetingVo) {
+  const start = timeOf(m.startTime);
+  const end = endTimeOf(m);
+  if (start && end) return `${start} - ${end}`;
+  return start || end || "--:--";
+}
+function displayTitle(m: MeetingVo) {
+  const raw = (m.title || "").trim();
+  if (!raw) return "未命名会议";
+  // 左侧已明确展示起止时间，去掉「临时会议 12:15」末尾重复的时间后缀
+  const stripped = raw.replace(/\s+\d{1,2}:\d{2}$/, "").trim();
+  return stripped || raw;
+}
+function hostLabel(m: MeetingVo) {
+  return (m.creatorName || m.hostName || "").trim();
 }
 function statusLabel(s: string) {
   return (
@@ -471,9 +527,11 @@ function effectiveRecording(m: MeetingVo): string {
 }
 function recordingLabel(m: MeetingVo) {
   const state = effectiveRecording(m);
-  if (state === "ready") return "有录制";
-  if (state === "planned")
-    return m.status === "running" ? "云录制中" : "将云录制";
+  if (state === "ready") return "已有云录制";
+  if (state === "planned") {
+    if (m.status === "running") return "云录制中";
+    if (m.status === "scheduled" || m.status === "starting") return "已开启云录制";
+  }
   return "";
 }
 function openPlayback(m: MeetingVo) {
@@ -495,6 +553,18 @@ function openSchedule() {
   editingMeeting.value = null;
   showScheduleDialog.value = true;
 }
+async function handleShare(m: MeetingVo) {
+  const ok = await copyMeetingInvite({
+    hostName: m.creatorName || m.hostName || '',
+    title: m.title,
+    meetingNo: m.meetingNo,
+    startTime: m.startTime || m.startedAt,
+    durationMinutes: m.durationMinutes,
+  });
+  if (ok) ElMessage.success("已复制会议邀请信息，可直接发送给参会人");
+  else ElMessage.warning("复制失败，请手动复制会议号");
+}
+
 function openEdit(m: MeetingVo) {
   editingMeeting.value = m;
   showScheduleDialog.value = true;
@@ -510,8 +580,8 @@ async function goPreMeeting(m: MeetingVo) {
   router.push(preJoinPath(m));
 }
 
-async function load() {
-  loading.value = true;
+async function load(silent = false) {
+  if (!silent || !allMeetings.value.length) loading.value = true;
   try {
     const [scheduled, running, ended, recordings] = await Promise.all([
       getMeetingList({ pageNum: 1, pageSize: 50, status: "scheduled" }),
@@ -580,8 +650,10 @@ async function handleCancel(m: MeetingVo) {
   }
   try {
     await cancelMeeting(m.id);
+    // 就地更新状态并后台静默刷新，避免列表整体闪烁成「加载中…」
+    allMeetings.value = allMeetings.value.filter((item) => item.id !== m.id);
     ElMessage.success("会议已取消");
-    load();
+    void load(true);
   } catch {
     /* 后端 msg 由 request 拦截器统一弹一次 */
   }
@@ -601,8 +673,14 @@ async function handleStop(m: MeetingVo) {
   }
   try {
     await stopMeeting(m.id);
+    // 先就地切换该行状态，再静默同步后端列表，消除整屏重载闪烁
+    allMeetings.value = allMeetings.value.map((item) =>
+      item.id === m.id
+        ? { ...item, status: "ended", endReason: "normal" }
+        : item,
+    );
     ElMessage.success("会议已结束");
-    load();
+    void load(true);
   } catch {
     /* 后端 msg 由 request 拦截器统一弹一次 */
   }
@@ -615,6 +693,9 @@ onMounted(() => {
   void fetchGeoWeather(weatherAbort.signal).then((g) => {
     placeLine.value = g.place;
     weatherLine.value = g.weather;
+    sunriseLine.value = g.sunrise;
+    sunsetLine.value = g.sunset;
+    windLine.value = [g.windDirection, g.windScale].filter(Boolean).join(" ");
   });
 });
 
@@ -717,6 +798,36 @@ onBeforeUnmount(() => {
   font-size: 13px;
   color: var(--text-muted);
   flex-shrink: 0;
+}
+
+.home-weather-extra {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 14px;
+  border-left: 1px solid var(--border-soft);
+  min-width: 0;
+}
+
+.home-wx-detail {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.home-wx-detail i {
+  font-size: 13px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.home-wx-sep {
+  margin: 0 2px;
+  color: var(--text-muted);
 }
 
 .home-launch {
@@ -957,19 +1068,33 @@ onBeforeUnmount(() => {
 .home-text-btn {
   display: inline-flex;
   align-items: center;
-  height: 28px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--primary-text);
-  font-size: 13px;
-  font-weight: 550;
+  gap: 3px;
+  height: 30px;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
   cursor: pointer;
+  transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+}
+
+.home-text-btn i {
+  font-size: 15px;
+  line-height: 1;
+  transition: transform 0.16s ease;
 }
 
 .home-text-btn:hover {
   background: var(--primary-soft);
+  border-color: rgba(59, 130, 246, 0.3);
+  color: var(--primary-text);
+}
+
+.home-text-btn:hover i {
+  transform: translateX(2px);
 }
 
 .home-loading {
@@ -1030,24 +1155,25 @@ onBeforeUnmount(() => {
 
 .home-meeting-time {
   flex-shrink: 0;
-  width: 48px;
+  width: 108px;
   text-align: right;
 }
 
 .time-start {
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 650;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
   line-height: 1.25;
+  white-space: nowrap;
 }
 
 .time-end {
-  margin-top: 2px;
-  font-size: 12px;
+  margin-top: 3px;
+  font-size: 11px;
   color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
   line-height: 1.2;
+  white-space: nowrap;
 }
 
 .home-meeting-rail {
@@ -1298,5 +1424,22 @@ onBeforeUnmount(() => {
     min-height: 36px;
     padding: 0 12px;
   }
+}
+.home-end-reason {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.home-end-reason.is-normal {
+  background: var(--bg-hover);
+  color: var(--text-muted);
+}
+.home-end-reason.is-abnormal {
+  background: rgba(245, 158, 11, 0.14);
+  color: var(--warning-text, #b45309);
 }
 </style>

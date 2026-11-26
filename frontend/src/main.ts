@@ -5,7 +5,6 @@ import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import 'element-plus/dist/index.css'
 // 原型图标体系是 remixicon，全局引一次，组件里只用 `ri-*` 字形类。
 import 'remixicon/fonts/remixicon.css'
-import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 
 import App from './App.vue'
 import router from './router'
@@ -20,13 +19,23 @@ void ensureShareOrigin()
 
 const app = createApp(App)
 
+// 全局错误捕获：统一记录未处理的组件渲染错误与异步 Rejection，避免异常静默导致白屏或无从排查。
+app.config.errorHandler = (err, instance, info) => {
+  console.error('[app-error]', {
+    component: instance?.$options?.name || instance?.$options?.__name || 'anonymous',
+    info,
+    message: err instanceof Error ? err.message : String(err),
+    stack: err instanceof Error ? err.stack : undefined,
+  })
+}
+window.addEventListener('unhandledrejection', (event) => {
+  const reason = event.reason
+  console.error('[unhandled-rejection]', reason instanceof Error ? reason.message : reason)
+})
+
 const pinia = createPinia()
 app.use(pinia)
 app.use(ElementPlus, { locale: zhCn })
-
-for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
-  app.component(key, component)
-}
 
 // 免登录（2026-10-08 起的临时方案，契约 §5.1）：先问一次后端"这台免不免登录"，再挂路由。
 // 为什么答案必须由后端给：前端产物是构建期烘死的，容器运行时的环境变量改不动它。

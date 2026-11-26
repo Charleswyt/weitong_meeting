@@ -1,7 +1,7 @@
 import type { Router } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { quickStartMeeting } from '@/api/meeting'
-import { getPreferences } from '@/api/settings'
+import { useMediaSettings } from '@/composables/useMediaSettings'
 import { preJoinPathByNumber } from '@/utils/joinFlow'
 
 export type LaunchKind = 'quick' | 'share' | 'voice'
@@ -22,10 +22,14 @@ export async function startQuickMeeting(
   opts: { launchKind?: LaunchKind } = {},
 ): Promise<boolean> {
   const launchKind = opts.launchKind || 'quick'
+  // 预加载过渡页与会中页代码块，缩短跳转白屏等待
+  void import('@/views/meeting/PreMeetingView.vue')
+  void import('@/views/meeting/InMeetingView.vue')
+
   let cloudRecord = true
   try {
-    const prefs = await getPreferences()
-    if (prefs.data) cloudRecord = !!prefs.data.cloudRecordDefault
+    const prefs = await useMediaSettings().loadPreferences()
+    if (prefs) cloudRecord = !!prefs.cloudRecordDefault
   } catch {
     /* 读不到偏好就按默认开云端录制，不拦住开会 */
   }

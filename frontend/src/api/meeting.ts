@@ -5,7 +5,18 @@ import type { components, operations } from '@/types/api.gen'
 // 域语义备注：thirdPartyMeetingId（UUID 形）回放页用它查录制清单；managed=false 表示这场会只在三方
 // 存在（手机/板卡发起），本系统没有预约单，不能改、不能取消；isHost 只有主持人可修改/取消预约。
 // 接线时暴露的分叉：旧手写版 creatorName/creatorPositionName 标可选，契约按后端运行时恒出现（外部会议为 ""）。
-export type MeetingVo = components['schemas']['MeetingVo']
+export type MeetingVo = components['schemas']['MeetingVo'] & {
+  /** 会议结束原因：normal 正常结束 / abnormal_exit 开会人退出超 5 分钟自动结束 */
+  endReason?: string
+  /** 是否设置了入会密码 */
+  hasPassword?: boolean
+}
+
+export function endReasonLabel(reason?: string): string {
+  if (reason === 'normal') return '正常结束'
+  if (reason === 'abnormal_exit') return '异常退出 · 超时自动结束'
+  return ''
+}
 
 export type RecordingStateVo = components['schemas']['RecordingStateVo']
 
@@ -33,7 +44,9 @@ export type InitialMedia = components['schemas']['InitialMediaVo']
 // 判"到底进没进去"只看 waiting，不许按 participantId 空串判）。
 export type JoinResult = components['schemas']['JoinData']
 
-export type ScheduleReq = components['schemas']['ScheduleReq']
+export type ScheduleReq = components['schemas']['ScheduleReq'] & {
+  password?: string
+}
 
 export type MeetingListParams = components['schemas']['MeetingListParams']
 
@@ -88,15 +101,23 @@ export function stopMeeting(id: number) {
   return post(`/api/v1/meetings/${id}/stop`)
 }
 
-export function joinMeeting(data: { meetingNo: string; displayName?: string; recordingConsent?: boolean }) {
+export function joinMeeting(data: { meetingNo: string; displayName?: string; password?: string; recordingConsent?: boolean }) {
   return post<JoinResult>('/api/v1/meetings/join', data)
+}
+
+export function muteAllParticipants(meetingId: number) {
+  return post(`/api/v1/meetings/${meetingId}/mute-all`)
+}
+
+export function kickParticipant(meetingId: number, participantId: string) {
+  return post(`/api/v1/meetings/${meetingId}/kick`, { participantId })
 }
 
 // 入会前预检（第 27 项）：前端在跳预检页之前先确认三方还能加入，
 // 避免用户走完设备预览才发现"会议不存在"。契约硬规则：**只判 joinable，不许按 message 空串判分支**
 // （可入会时 message 键整个缺失，不是空串）。
 export function precheckMeeting(meetingNo: string) {
-  return post<components['schemas']['PrecheckData']>('/api/v1/meetings/precheck', { meetingNo })
+  return post<components['schemas']['PrecheckData'] & { requiresPassword?: boolean }>('/api/v1/meetings/precheck', { meetingNo })
 }
 
 // silent=true：离会是收尾清理调用，store 无论成败都会继续清本地会话态，失败不打扰用户。

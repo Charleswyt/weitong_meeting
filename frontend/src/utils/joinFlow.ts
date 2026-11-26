@@ -239,6 +239,31 @@ export function formatJoinInputMeetingNo(meetingNo: string): string {
   return digits.replace(/(\d{3})(?=\d)/g, '$1 ')
 }
 
+/** 一键复制会议邀请全文（含标题、预约时间、入会链接），不依赖先进入会议。 */
+export async function copyMeetingInvite(f: InviteFields): Promise<boolean> {
+  await ensureShareOrigin()
+  const text = inviteTextFor(f)
+  if (!text) return false
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    try {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(ta)
+      return ok
+    } catch {
+      return false
+    }
+  }
+}
+
 // 快速会议的旧地址。新的「开始会议」先建会、再按会议号进入，刷新不会再开一场。
 // 查询参数都可选：缺了就用已保存的设置和账号显示名。
 export function quickJoinPath(input: {

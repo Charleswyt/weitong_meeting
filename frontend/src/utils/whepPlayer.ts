@@ -62,14 +62,31 @@ export class SubscribeError extends Error {
 async function waitIceComplete(pc: RTCPeerConnection): Promise<void> {
   if (pc.iceGatheringState === 'complete') return
   await new Promise<void>((resolve) => {
+    let done = false
+    let settleTimer: ReturnType<typeof setTimeout> | null = null
+    const finish = () => {
+      if (done) return
+      done = true
+      pc.removeEventListener('icegatheringstatechange', onChange)
+      pc.removeEventListener('icecandidate', onCandidate)
+      if (settleTimer) clearTimeout(settleTimer)
+      clearTimeout(hardTimer)
+      resolve()
+    }
     const onChange = () => {
-      if (pc.iceGatheringState === 'complete') {
-        pc.removeEventListener('icegatheringstatechange', onChange)
-        resolve()
+      if (pc.iceGatheringState === 'complete') finish()
+    }
+    const onCandidate = (ev: RTCPeerConnectionIceEvent) => {
+      if (!ev.candidate) {
+        finish()
+        return
       }
+      if (settleTimer) clearTimeout(settleTimer)
+      settleTimer = setTimeout(finish, 450)
     }
     pc.addEventListener('icegatheringstatechange', onChange)
-    setTimeout(resolve, 2000)
+    pc.addEventListener('icecandidate', onCandidate)
+    const hardTimer = setTimeout(finish, 1500)
   })
 }
 
@@ -87,13 +104,30 @@ async function subscribeWhep(
   // 远端画面的声音由音频那条腿单独出，这一格必须静音，否则同一路声音响两遍。
   if (kind === 'video') el.muted = true
   const stream = new MediaStream()
+  let unlockCleanup: (() => void) | null = null
+  const scheduleAudioUnlock = () => {
+    if (kind !== 'audio' || unlockCleanup) return
+    const retry = () => {
+      unlockCleanup?.()
+      unlockCleanup = null
+      if (el.srcObject) void el.play().catch(() => { /* 仍被拒时静默 */ })
+    }
+    window.addEventListener('pointerdown', retry, { once: true, capture: true })
+    window.addEventListener('keydown', retry, { once: true, capture: true })
+    unlockCleanup = () => {
+      window.removeEventListener('pointerdown', retry, { capture: true })
+      window.removeEventListener('keydown', retry, { capture: true })
+    }
+  }
   const attach = (track: MediaStreamTrack) => {
     if (stream.getTracks().includes(track)) return
     stream.addTrack(track)
     el.srcObject = stream
-    // play() 被拒（自动播放策略、被新的 srcObject 打断）要留痕：以前这里静默吞掉，
-    // 表现就是"帧在解、字节在进，那一格永远黑"。
-    void el.play().catch((e) => console.warn('[whep] 元素没能播起来', kind, String(e)))
+    // play() 被拒（自动播放策略、被新的 srcObject 打断）要留痕；音频被自动播放拦截时在首次用户交互后自动解锁重试。
+    void el.play().catch((e) => {
+      console.warn('[whep] 元素没能播起来', kind, String(e))
+      scheduleAudioUnlock()
+    })
   }
   // ontrack 必须在 setRemoteDescription **之前**挂好：应用远端应答的那一刻轨道事件就发完了，
   // 事后挂的处理器永远收不到 —— 实测解码 287 帧而元素 readyState=0、paused=true 就是这么来的。
@@ -214,6 +248,8 @@ async function subscribeWhep(
     },
     stop: () => {
       if (timer) window.clearInterval(timer)
+      unlockCleanup?.()
+      unlockCleanup = null
       el.pause()
       el.srcObject = null
       el.remove()

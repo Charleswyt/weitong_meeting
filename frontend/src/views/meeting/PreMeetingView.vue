@@ -4,7 +4,24 @@
       <div class="gate-kicker">{{ isQuick ? '开始会议' : '进入会议' }}</div>
       <h1 class="gate-title">{{ heading }}</h1>
       <p class="gate-sub">{{ subline }}</p>
-      <button v-if="waitingForHost" class="gate-btn" @click="cancelWait = true">取消等待</button>
+      <form v-if="needPassword" class="gate-pwd-form" @submit.prevent="submitPassword">
+        <input
+          v-model="joinPassword"
+          type="password"
+          class="gate-pwd-input"
+          placeholder="请输入会议密码"
+          autocomplete="off"
+          autofocus
+        />
+        <p v-if="pwdError" class="gate-pwd-err">{{ pwdError }}</p>
+        <div class="gate-pwd-actions">
+          <button type="button" class="gate-btn gate-btn-quiet" @click="goBack">返回</button>
+          <button type="submit" class="gate-btn" :disabled="!joinPassword.trim() || pwdSubmitting">
+            {{ pwdSubmitting ? '验证中…' : '验证并入会' }}
+          </button>
+        </div>
+      </form>
+      <button v-else-if="waitingForHost" class="gate-btn" @click="cancelWait = true">取消等待</button>
       <button v-else-if="failed" class="gate-btn gate-btn-quiet" @click="goBack">返回</button>
     </div>
   </div>
@@ -29,6 +46,10 @@ const meeting = ref<MeetingVo | null>(null)
 const failed = ref(false)
 const failText = ref('')
 const displayName = ref('')
+const needPassword = ref(false)
+const joinPassword = ref('')
+const pwdError = ref('')
+const pwdSubmitting = ref(false)
 
 const isQuick = computed(() => route.params.id === 'quick' || route.query.quick === '1')
 const joinName = computed(() =>
@@ -36,11 +57,13 @@ const joinName = computed(() =>
 )
 
 const heading = computed(() => {
+  if (needPassword.value) return '请输入入会密码'
   if (waitingForHost.value) return '正在等待主持人'
   if (failed.value) return '没能进入会议'
   return meeting.value?.title || (isQuick.value ? '正在开始' : '正在进入')
 })
 const subline = computed(() => {
+  if (needPassword.value) return '该会议已开启密码保护，请输入主持人提供的入会密码'
   if (waitingForHost.value) return '主持人进入后会自动带你进去'
   if (failed.value) return failText.value || '请返回后重试'
   const no = meeting.value?.meetingNo
@@ -54,6 +77,11 @@ const micOn = ref(true)
 const cameraOn = ref(true)
 
 onMounted(async () => {
+  // 过渡页启动同时后台预加载会中页 chunk，入会接口返回后秒进会中
+  void import('@/views/meeting/InMeetingView.vue')
+  // 偏好加载与会议详情/预检并行，不再串行干等
+  const prefsPromise = loadPreferences().catch(() => null)
+
   displayName.value = String(route.query.name || userStore.userInfo?.displayName || '')
   if (route.query.micOn !== undefined) {
     micOn.value = route.query.micOn !== '0'
@@ -96,12 +124,22 @@ onMounted(async () => {
         fail(pc.data.message || '会议不可加入')
         return
       }
+      if (pc.data?.requiresPassword) {
+        await prefsPromise
+        sessionDevices.value = {
+          camera: prefs.value?.cameraDeviceId || '',
+          mic: prefs.value?.microphoneDeviceId || '',
+          speaker: prefs.value?.speakerDeviceId || '',
+        }
+        needPassword.value = true
+        return
+      }
     } catch {
       fail('会议暂时无法确认，请稍后重试', false)
       return
     }
   }
-  await loadPreferences()
+  await prefsPromise
   sessionDevices.value = {
     camera: prefs.value?.cameraDeviceId || '',
     mic: prefs.value?.microphoneDeviceId || '',
@@ -145,7 +183,18 @@ async function waitOrCancel(ms: number): Promise<boolean> {
   return cancelWait.value
 }
 
-async function handleJoin() {
+async function submitPassword() {
+  if (!joinPassword.value.trim() || pwdSubmitting.value) return
+  pwdError.value = ''
+  pwdSubmitting.value = true
+  try {
+    await handleJoin(joinPassword.value.trim())
+  } finally {
+    pwdSubmitting.value = false
+  }
+}
+
+async function handleJoin(password?: string) {
   cancelWait.value = false
   try {
     if (isQuick.value && !meeting.value) {
@@ -166,11 +215,12 @@ async function handleJoin() {
     let joined: JoinResult | null = null
     const deadline = Date.now() + HOST_WAIT_LIMIT_MS
     while (!joined) {
-      const res = await meetingStore.enter(meeting.value.meetingNo, joinName.value)
+      const res = await meetingStore.enter(meeting.value.meetingNo, joinName.value, true, password)
       if (!res.waiting) {
         joined = res
         break
       }
+      needPassword.value = false
       waitingForHost.value = true
       if (Date.now() + HOST_WAIT_RETRY_MS > deadline) {
         fail('主持人尚未入会，请稍后再试')
@@ -182,6 +232,7 @@ async function handleJoin() {
       }
     }
     if (disposed || !joined) return
+    needPassword.value = false
     if (micTouched.value || cameraTouched.value) {
       const booked = { ...meetingStore.initialMedia }
       meetingStore.initialMedia = {
@@ -190,7 +241,13 @@ async function handleJoin() {
       }
     }
     router.replace(`/meeting/${joined.meetingId}?name=${encodeURIComponent(joinName.value)}`)
-  } catch {
+  } catch (e: any) {
+    const msg = String(e?.message || '')
+    if (msg.includes('密码')) {
+      needPassword.value = true
+      pwdError.value = msg
+      return
+    }
     if (!disposed) fail('没能进入会议，请返回后重试', false)
   } finally {
     waitingForHost.value = false
@@ -248,5 +305,41 @@ async function handleJoin() {
   background: transparent;
   color: var(--text-secondary);
   border: 1px solid var(--border-color);
+}
+.gate-pwd-form {
+  margin-top: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.gate-pwd-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 14px;
+  outline: none;
+  box-sizing: border-box;
+}
+.gate-pwd-input:focus {
+  border-color: var(--primary);
+}
+.gate-pwd-err {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger-text);
+  text-align: left;
+}
+.gate-pwd-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+.gate-pwd-actions .gate-btn {
+  margin-top: 6px;
+  min-width: 120px;
 }
 </style>

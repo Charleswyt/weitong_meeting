@@ -20,6 +20,8 @@ export type WsEvent =
   | { type: 'chat'; data: components['schemas']['WsChatData'] }
   | { type: 'time'; data: components['schemas']['WsTimeData'] }
   | { type: 'speaking'; data: components['schemas']['WsSpeakingDown'] }
+  | { type: 'mute_all'; data: { byUserId?: number } }
+  | { type: 'kicked'; data: { meetingId?: number; reason?: string } }
   // 未知 type 后端静默丢（`hub.go:456-462`），所以这里必须容得下没见过的帧
   | { type: string; data: null }
 
@@ -65,6 +67,10 @@ export function useWebSocket() {
   let reconnectDelay = 1000
   let closedByUs = false
   let currentMeetingId = 0
+  let onMuteAllCb: (() => void) | null = null
+  let onKickedCb: ((reason: string) => void) | null = null
+  let onReconnectedCb: (() => void) | null = null
+  let hasOpenedOnce = false
 
   // 状态通道的三种真实形态：连着 / 断了但在重连 / 断了且已经持续一会儿（该说"画面可能不再更新"）。
   function markUp() {
@@ -102,8 +108,11 @@ export function useWebSocket() {
     ws = new WebSocket(url)
 
     ws.onopen = () => {
+      const wasReconnect = hasOpenedOnce
+      hasOpenedOnce = true
       markUp()
       reconnectDelay = 1000
+      if (wasReconnect) onReconnectedCb?.()
     }
 
     ws.onmessage = (ev) => {
@@ -149,6 +158,12 @@ export function useWebSocket() {
           break
         case 'speaking':
           speakingMap.value = { ...speakingMap.value, [evt.data.participantId]: !!evt.data.speaking }
+          break
+        case 'mute_all':
+          onMuteAllCb?.()
+          break
+        case 'kicked':
+          onKickedCb?.(String((evt.data as { reason?: string })?.reason || '你已被主持人移出会议'))
           break
       }
     }
@@ -231,6 +246,27 @@ export function useWebSocket() {
     meetingStore.wsConnected = false
   }
 
+  async function reconnectNow() {
+    if (!currentMeetingId || !meetingStore.inMeeting) return
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+    if (ws) {
+      try {
+        ws.onclose = null
+        ws.close()
+      } catch { /* ignore */ }
+      ws = null
+    }
+    reconnectDelay = 1000
+    await connect(currentMeetingId)
+  }
+
+  function onMuteAll(cb: () => void) { onMuteAllCb = cb }
+  function onKicked(cb: (reason: string) => void) { onKickedCb = cb }
+  function onReconnected(cb: () => void) { onReconnectedCb = cb }
+
   onUnmounted(disconnect)
 
   return {
@@ -244,8 +280,12 @@ export function useWebSocket() {
     serverTime,
     clockDriftMs,
     connect,
+    reconnectNow,
     disconnect,
     send,
     sendChat,
+    onMuteAll,
+    onKicked,
+    onReconnected,
   }
 }

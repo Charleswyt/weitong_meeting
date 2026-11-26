@@ -11,7 +11,12 @@ export async function assistantRequest(path: string, options: RequestInit = {}, 
   const response = await fetch(url, { ...options, headers, cache: 'no-store' })
   if (!response.ok) {
     const error = await response.json().catch(() => ({}))
-    throw new Error(error.message || '会议服务请求失败 ' + response.status)
+    console.warn('[assistant] 请求失败', response.status, error)
+    throw new Error(error.message || '会议助手请求失败，请稍后重试')
+  }
+  const ct = response.headers.get('content-type') || ''
+  if (ct.includes('text/html')) {
+    throw new Error('会议助手服务未就绪或代理未配置')
   }
   return response
 }

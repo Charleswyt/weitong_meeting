@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/frame/g"
@@ -30,10 +32,18 @@ type MeetingService struct {
 	// roomKey 由 cmd 注入 session.Registry.RoomKey：日程里的会不一定有预约单，
 	// 前端要拿一个能访问 /meetings/{id}/... 的键，本库主键不够用。
 	roomKey func(localId int64, externalNo string) int64
+
+	// hostAbsentSince 记录「开会人（CreatorId）已退出但会议仍在 running」的起始时刻，
+	// 超过 5 分钟仍未重新入会则自动结束会议并标记 abnormal_exit，避免会议室持续被占用。
+	hostAbsentMu    sync.Mutex
+	hostAbsentSince map[int64]time.Time
 }
 
 func NewMeetingService(adapter *thirdparty.Adapter) *MeetingService {
-	return &MeetingService{adapter: adapter}
+	return &MeetingService{
+		adapter:         adapter,
+		hostAbsentSince: make(map[int64]time.Time),
+	}
 }
 
 func (s *MeetingService) WithThirdPartyToken(f func(ctx context.Context, userId int64) (string, error)) *MeetingService {
@@ -92,6 +102,7 @@ func (s *MeetingService) Schedule(ctx context.Context, userId int64, in *Schedul
 		CameraOffOnJoin:       boolToInt(in.CameraOffOnJoin),
 		AllowWaiting:          boolToInt(in.AllowWaiting),
 		LaunchKind:            NormalizeLaunchKind(in.LaunchKind, true),
+		MeetingPassword:       strings.TrimSpace(in.Password),
 		LocalStatus:           consts.LocalStatusPending,
 		Status:                consts.MeetingStatusScheduled,
 	}
@@ -137,6 +148,8 @@ type ScheduleInput struct {
 	MuteOnJoin      bool
 	CameraOffOnJoin bool
 	AllowWaiting    bool
+	Password        string
+	PasswordSet     bool
 	StartTime       string
 	DurationMinutes int
 	CloudRecord     bool
@@ -302,6 +315,16 @@ func (s *MeetingService) Start(ctx context.Context, id, userId int64, account st
 	return "", nil
 }
 
+// MarkRunning 将仍处于 scheduled 的本地预约单推进为 running（用于首次有人通过门禁入会时）。
+func (s *MeetingService) MarkRunning(ctx context.Context, id int64) {
+	if id <= 0 {
+		return
+	}
+	if err := s.setStatus(ctx, id, consts.MeetingStatusRunning); err != nil {
+		glog.Warningf(ctx, "入会后回写会议 %d running 状态失败: %v", id, err)
+	}
+}
+
 func (s *MeetingService) Stop(ctx context.Context, id, userId int64) (string, error) {
 	m, err := s.GetDetail(ctx, id)
 	if err != nil {
@@ -310,16 +333,18 @@ func (s *MeetingService) Stop(ctx context.Context, id, userId int64) (string, er
 	if reason := s.callManagement(ctx, userId, m, "stop"); reason != "" {
 		// 平台侧已经不在跑：本地仍要落终态，否则首页永远挂着「进行中」。
 		if platformAlreadyStopped(reason) {
-			if err := s.setStatus(ctx, id, consts.MeetingStatusEnded); err != nil {
+			if err := s.setStatusWithReason(ctx, id, consts.MeetingStatusEnded, consts.MeetingEndReasonNormal); err != nil {
 				return "", err
 			}
+			s.ClearHostAbsent(id)
 			return "", nil
 		}
 		return reason, nil
 	}
-	if err := s.setStatus(ctx, id, consts.MeetingStatusEnded); err != nil {
+	if err := s.setStatusWithReason(ctx, id, consts.MeetingStatusEnded, consts.MeetingEndReasonNormal); err != nil {
 		return "", err
 	}
+	s.ClearHostAbsent(id)
 	return "", nil
 }
 
@@ -385,12 +410,108 @@ func managementUserMessage(raw, action string) string {
 }
 
 func (s *MeetingService) setStatus(ctx context.Context, id int64, status string) error {
+	return s.setStatusWithReason(ctx, id, status, "")
+}
+
+func (s *MeetingService) setStatusWithReason(ctx context.Context, id int64, status, endReason string) error {
+	data := do.MeetingAppointment{Status: status}
+	if endReason != "" {
+		data.EndReason = endReason
+	}
 	_, err := dao.MeetingAppointment.Ctx(ctx).
 		Where(do.MeetingAppointment{Id: id}).
-		Data(do.MeetingAppointment{Status: status}).
+		Data(data).
 		Update()
 	clearScheduleCache()
 	return err
+}
+
+// MarkHostLeft 记录开会人离开时刻（主动离会或幽灵回收时调用），用于 5 分钟超时自动结束计时。
+func (s *MeetingService) MarkHostLeft(meetingId, userId int64) {
+	if !session.IsManaged(meetingId) {
+		return
+	}
+	s.hostAbsentMu.Lock()
+	defer s.hostAbsentMu.Unlock()
+	if s.hostAbsentSince == nil {
+		s.hostAbsentSince = make(map[int64]time.Time)
+	}
+	if _, exists := s.hostAbsentSince[meetingId]; !exists {
+		s.hostAbsentSince[meetingId] = time.Now()
+	}
+}
+
+// ClearHostAbsent 清除某场会议的开会人缺席计时（重新入会或会议结束时调用）。
+func (s *MeetingService) ClearHostAbsent(meetingId int64) {
+	s.hostAbsentMu.Lock()
+	delete(s.hostAbsentSince, meetingId)
+	s.hostAbsentMu.Unlock()
+}
+
+// AutoEndIfHostAbsent 巡检所有进行中的会议：判断开会人当前是否在会中，
+// 若开会人已退出超过 grace（默认 5 分钟），自动结束会议并标记为 abnormal_exit，避免会议室持续被占用。
+func (s *MeetingService) AutoEndIfHostAbsent(ctx context.Context, registry *session.Registry, grace time.Duration) int {
+	if registry == nil || grace <= 0 {
+		return 0
+	}
+	var running []*entity.MeetingAppointment
+	if err := dao.MeetingAppointment.Ctx(ctx).
+		Where(do.MeetingAppointment{Status: consts.MeetingStatusRunning}).
+		Limit(200).
+		Scan(&running); err != nil {
+		glog.Warningf(ctx, "扫描进行中会议（开会人离会超时检测）失败: %v", err)
+		return 0
+	}
+
+	now := time.Now()
+	activeIds := make(map[int64]struct{}, len(running))
+	ended := 0
+
+	for _, m := range running {
+		activeIds[m.Id] = struct{}{}
+		// 判断开会人当前是否在会中（有活跃会话即视为在会）
+		if _, inMeeting := registry.Session(m.Id, m.CreatorId); inMeeting {
+			s.ClearHostAbsent(m.Id)
+			continue
+		}
+
+		s.hostAbsentMu.Lock()
+		if s.hostAbsentSince == nil {
+			s.hostAbsentSince = make(map[int64]time.Time)
+		}
+		since, recorded := s.hostAbsentSince[m.Id]
+		if !recorded {
+			since = now
+			s.hostAbsentSince[m.Id] = since
+		}
+		s.hostAbsentMu.Unlock()
+
+		if now.Sub(since) < grace {
+			continue
+		}
+
+		// 开会人退出已满 5 分钟：通知三方停会并落库为异常退出（abnormal_exit）
+		if reason := s.callManagement(ctx, m.CreatorId, m, "stop"); reason != "" && !platformAlreadyStopped(reason) {
+			glog.Warningf(ctx, "自动结束超时会议 %d 调用三方停会未确认（仍将落库终态）: %s", m.Id, reason)
+		}
+		if err := s.setStatusWithReason(ctx, m.Id, consts.MeetingStatusEnded, consts.MeetingEndReasonAbnormalExit); err != nil {
+			glog.Warningf(ctx, "自动结束超时会议 %d 回写终态失败: %v", m.Id, err)
+			continue
+		}
+		s.ClearHostAbsent(m.Id)
+		ended++
+		glog.Infof(ctx, "会议 %d（%s）开会人已退出超过 %s，已自动结束（abnormal_exit）", m.Id, m.ThirdPartyMeetingNumber, grace)
+	}
+
+	// 清理已非 running 状态的旧计时项
+	s.hostAbsentMu.Lock()
+	for id := range s.hostAbsentSince {
+		if _, ok := activeIds[id]; !ok {
+			delete(s.hostAbsentSince, id)
+		}
+	}
+	s.hostAbsentMu.Unlock()
+	return ended
 }
 
 // IsTerminalStatus 判断会议状态是否已是终态：进了这个集合就不会再回到 running，
@@ -408,6 +529,10 @@ func IsTerminalStatus(status string) bool {
 // 只允许 running/starting → 终态 这一个方向，不去猜或改写别的状态。
 // 键不是本系统预约单主键时（外部会议）库里没有对应记录，直接跳过。
 func (s *MeetingService) SyncUpstreamStatus(ctx context.Context, id int64, upstream string) error {
+	return s.SyncUpstreamStatusWithReason(ctx, id, upstream, "")
+}
+
+func (s *MeetingService) SyncUpstreamStatusWithReason(ctx context.Context, id int64, upstream, endReason string) error {
 	if !session.IsManaged(id) {
 		return nil
 	}
@@ -429,7 +554,8 @@ func (s *MeetingService) SyncUpstreamStatus(ctx context.Context, id int64, upstr
 	if m.Status != consts.MeetingStatusRunning && m.Status != consts.MeetingStatusStarting {
 		return nil
 	}
-	return s.setStatus(ctx, id, target)
+	s.ClearHostAbsent(id)
+	return s.setStatusWithReason(ctx, id, target, endReason)
 }
 
 // staleAppointment 核对"僵尸会议"只用到这几个字段。
@@ -647,6 +773,9 @@ func (s *MeetingService) Update(ctx context.Context, id int64, in *ScheduleInput
 		MuteOnJoin:      boolToInt(in.MuteOnJoin),
 		CameraOffOnJoin: boolToInt(in.CameraOffOnJoin),
 		AllowWaiting:    boolToInt(in.AllowWaiting),
+	}
+	if in.PasswordSet {
+		data.MeetingPassword = strings.TrimSpace(in.Password)
 	}
 	if _, err := dao.MeetingAppointment.Ctx(ctx).Where(do.MeetingAppointment{Id: id}).Data(data).Update(); err != nil {
 		return nil, "", fmt.Errorf("修改会议失败: %w", err)

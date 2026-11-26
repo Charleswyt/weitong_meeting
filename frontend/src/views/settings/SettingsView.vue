@@ -1,442 +1,594 @@
 <template>
-  <div class="settings-page">
-    <div class="page-head"><h2>设置</h2></div>
+  <div class="settings-page" :class="{ 'has-video-preview': activeTab === 'meeting' && previewOpen }">
+    <div class="page-head">
+      <div class="page-head-row">
+        <h2>设置</h2>
+        <nav class="settings-tabs" role="tablist" aria-label="设置分区">
+          <button
+            type="button"
+            role="tab"
+            class="settings-tab"
+            :class="{ active: activeTab === 'meeting' }"
+            :aria-selected="activeTab === 'meeting'"
+            @click="activeTab = 'meeting'"
+          >
+            <i class="ri-vidicon-line" />
+            <span>会议功能</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            class="settings-tab"
+            :class="{ active: activeTab === 'assist' }"
+            :aria-selected="activeTab === 'assist'"
+            @click="activeTab = 'assist'"
+          >
+            <i class="ri-sparkling-2-line" />
+            <span>辅助功能</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            class="settings-tab"
+            :class="{ active: activeTab === 'system' }"
+            :aria-selected="activeTab === 'system'"
+            @click="activeTab = 'system'"
+          >
+            <i class="ri-user-settings-line" />
+            <span>账号与系统</span>
+          </button>
+        </nav>
+      </div>
+    </div>
 
     <div class="settings-body">
-      <!-- 账号信息：原型这两行是矢量图层，头像/登录名是我方已有能力，保留在最前 -->
-      <section class="settings-section">
-        <h3 class="section-title">账号信息</h3>
-        <div class="setting-row">
-          <div class="setting-left">
-            <span class="setting-label">头像</span>
-            <span class="setting-desc"
-              >支持 PNG / JPEG / WebP，上传前自动裁成 256×256</span
-            >
-          </div>
-          <div class="setting-right avatar-right">
-            <span class="avatar-preview">
-              <img
-                v-if="avatarSrc"
-                :src="avatarSrc"
-                alt="当前头像"
-                @error="onAvatarError"
-              />
-              <em v-else>{{ avatarChar }}</em>
-            </span>
-            <input
-              ref="avatarInputRef"
-              type="file"
-              accept="image/png,image/jpeg,image/webp"
-              hidden
-              @change="onAvatarPicked"
-            />
-            <el-button size="small" :loading="avatarBusy" @click="pickAvatar">
-              {{ avatarSrc ? "更换头像" : "上传头像" }}
-            </el-button>
-            <el-button
-              v-if="avatarSrc"
-              size="small"
-              type="danger"
-              plain
-              :loading="avatarBusy"
-              @click="removeAvatar"
-            >
-              移除
-            </el-button>
-          </div>
-        </div>
-        <div class="setting-row">
-          <div class="setting-left">
-            <span class="setting-label">登录账号</span>
-            <span class="setting-desc">{{
-              userStore.userInfo?.username || "–"
-            }}</span>
-          </div>
-          <div class="setting-right">
-            <!-- 账号名不可改，改的是"别人看到的我"：显示名（失焦即存，空值不覆盖） -->
-            <input
-              v-model="displayName"
-              class="setting-input"
-              maxlength="32"
-              placeholder="显示名"
-              @change="onDisplayNameBlur"
-            />
-          </div>
-        </div>
-      </section>
-
-      <section class="settings-section">
-        <h3 class="section-title">视频</h3>
-
-        <div class="setting-row">
-          <div class="setting-left">
-            <span class="setting-label">摄像头</span>
-            <span class="setting-desc">选择入会时使用的摄像头设备</span>
-          </div>
-          <div class="setting-right">
-            <select v-model="form.cameraDeviceId" class="setting-select">
-              <option value="">默认摄像头</option>
-              <option
-                v-for="d in devices.cameras"
-                :key="d.deviceId"
-                :value="d.deviceId"
-              >
-                {{ d.label || "摄像头 " + d.deviceId.slice(0, 8) }}
-              </option>
-            </select>
-          </div>
-        </div>
-
-        <div class="setting-row">
-          <div class="setting-left">
-            <span class="setting-label">视频分辨率</span>
-            <span class="setting-desc"
-              >采集期望值，实际以设备能力为准；越高越清晰、占带宽也越多</span
-            >
-          </div>
-          <div class="setting-right">
-            <select v-model="form.videoResolution" class="setting-select">
-              <option value="480p">480P 流畅</option>
-              <option value="720p">720P 标清</option>
-              <option value="1080p">1080P 高清（推荐）</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="setting-row">
-          <div class="setting-left">
-            <span class="setting-label">最大帧率</span>
-            <span class="setting-desc">按本机摄像头能力列出可选档位</span>
-          </div>
-          <div class="setting-right">
-            <select v-model.number="form.videoMaxFps" class="setting-select">
-              <option v-for="fps in fpsOptions" :key="fps" :value="fps">
-                {{ fps }} FPS
-              </option>
-            </select>
-          </div>
-        </div>
-
-        <div class="setting-row">
-          <div class="setting-left">
-            <span class="setting-label">浏览器视频上行上限</span>
-            <span class="setting-desc"
-              >自适应不设上限；选档位则限制上行码率，重新开启摄像头后生效</span
-            >
-          </div>
-          <div class="setting-right">
-            <select
-              v-model.number="form.videoTargetBitrateKbps"
-              class="setting-select"
-            >
-              <option :value="0">自适应</option>
-              <option :value="20">20 Kbps</option>
-              <option :value="40">40 Kbps</option>
-              <option :value="60">60 Kbps</option>
-              <option :value="80">80 Kbps</option>
-              <option :value="100">100 Kbps</option>
-              <option :value="150">150 Kbps</option>
-              <option :value="200">200 Kbps</option>
-              <option :value="300">300 Kbps</option>
-              <option :value="400">400 Kbps</option>
-              <option :value="500">500 Kbps</option>
-              <option :value="600">600 Kbps</option>
-              <option :value="700">700 Kbps</option>
-              <option :value="800">800 Kbps</option>
-              <option :value="900">900 Kbps</option>
-              <option :value="1000">1000 Kbps</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="setting-row">
-          <div class="setting-left">
-            <span class="setting-label">镜像我的视频</span>
-            <span class="setting-desc"
-              >本地预览画面左右翻转，观看方不受影响</span
-            >
-          </div>
-          <div class="setting-right">
-            <div
-              class="toggle-switch"
-              :class="{ on: form.mirrorVideo }"
-              @click="form.mirrorVideo = !form.mirrorVideo"
-            ></div>
-          </div>
-        </div>
-
-        <div v-if="BG_BLUR_AVAILABLE" class="setting-row">
-          <div class="setting-left">
-            <span class="setting-label">背景虚化</span>
-            <span class="setting-desc">自动识别人像并虚化背景</span>
-          </div>
-          <div class="setting-right">
-            <div
-              class="toggle-switch"
-              :class="{ on: form.vbMode === 'blur' }"
-              @click="form.vbMode = form.vbMode === 'blur' ? 'off' : 'blur'"
-            ></div>
-          </div>
-        </div>
-
-        <div class="setting-row">
-          <div class="setting-left">
-            <span class="setting-label">人脸增强</span>
-            <span class="setting-desc">{{
-              faceSupported ? "只影响对方看到的画面" : faceNotice
-            }}</span>
-          </div>
-          <div class="setting-right">
-            <div
-              class="toggle-switch"
-              :class="{ on: faceSupported && form.faceEnhancement === 1 }"
-              @click="toggleFace"
-            ></div>
-          </div>
-        </div>
-      </section>
-
-      <section class="settings-section">
-        <h3 class="section-title">视频传输</h3>
-        <VideoDeliverySettings />
-      </section>
-
-      <section class="settings-section"><h3 class="section-title">转录翻译术语库</h3><GlossarySettings /></section>
-
-      <section class="settings-section">
-        <h3 class="section-title">音频</h3>
-
-        <div class="setting-row">
-          <div class="setting-left">
-            <span class="setting-label">麦克风</span>
-            <span class="setting-desc">选择入会时使用的麦克风设备</span>
-          </div>
-          <div class="setting-right">
-            <select v-model="form.microphoneDeviceId" class="setting-select">
-              <option value="">默认麦克风</option>
-              <option
-                v-for="d in devices.microphones"
-                :key="d.deviceId"
-                :value="d.deviceId"
-              >
-                {{ d.label || "麦克风 " + d.deviceId.slice(0, 8) }}
-              </option>
-            </select>
-          </div>
-        </div>
-
-        <div class="setting-row">
-          <div class="setting-left">
-            <span class="setting-label">扬声器</span>
-            <span class="setting-desc">选择播放会议声音的输出设备</span>
-          </div>
-          <div class="setting-right">
-            <select v-model="form.speakerDeviceId" class="setting-select">
-              <option value="">默认扬声器</option>
-              <option
-                v-for="d in devices.speakers"
-                :key="d.deviceId"
-                :value="d.deviceId"
-              >
-                {{ d.label || "扬声器 " + d.deviceId.slice(0, 8) }}
-              </option>
-            </select>
-          </div>
-        </div>
-
-        <div class="setting-row">
-          <div class="setting-left">
-            <span class="setting-label">麦克风音量</span>
-            <span class="setting-desc">拖动滑块调整输入音量大小</span>
-          </div>
-          <div class="setting-right">
-            <div class="volume-control">
-              <input
-                type="range"
-                v-model.number="form.micVolume"
-                min="0"
-                max="100"
-                class="volume-slider"
-              />
-              <span class="volume-value">{{ form.micVolume }}%</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="setting-row">
-          <div class="setting-left">
-            <span class="setting-label">自动调节麦克风音量</span>
-            <span class="setting-desc">根据环境噪声自动调整输入音量</span>
-          </div>
-          <div class="setting-right">
-            <div
-              class="toggle-switch"
-              :class="{ on: form.autoGain }"
-              @click="form.autoGain = !form.autoGain"
-            ></div>
-          </div>
-        </div>
-
-        <div class="setting-row">
-          <div class="setting-left">
-            <span class="setting-label">音频降噪</span>
-            <span class="setting-desc">抑制键盘、风扇等背景噪声</span>
-          </div>
-          <div class="setting-right">
-            <div
-              class="toggle-switch"
-              :class="{ on: form.noiseSuppression }"
-              @click="form.noiseSuppression = !form.noiseSuppression"
-            ></div>
-          </div>
-        </div>
-      </section>
-
-      <section class="settings-section">
-        <h3 class="section-title">录制</h3>
-
-        <div class="setting-row">
-          <div class="setting-left">
-            <span class="setting-label">本地录制保存位置</span>
-            <span class="setting-desc">{{ saveDirDesc }}</span>
-          </div>
-          <div class="setting-right location-row">
-            <span class="location-path" :class="{ unset: !pickedDirName }">{{
-              saveDirText
-            }}</span>
+      <!-- ═══ Tab 1: 会议功能（视频 / 视频传输 / 音频） ═══ -->
+      <template v-if="activeTab === 'meeting'">
+        <section class="settings-section">
+          <div class="section-head">
+            <h3 class="section-title">视频</h3>
             <button
-              v-if="dirBlocker === 'ok'"
-              class="btn-ghost"
-              @click="crossOriginFrame ? openDirPickerWindow() : changePath()"
+              type="button"
+              class="preview-toggle-btn"
+              :class="{ active: previewOpen }"
+              :disabled="previewStarting"
+              @click="togglePreview"
             >
-              {{ pickedDirName ? "更换位置" : "选择位置" }}
-            </button>
-            <button v-if="pickedDirName" class="btn-ghost" @click="resetPath">
-              取消本机授权
-            </button>
-          </div>
-        </div>
-
-        <div class="setting-row">
-          <div class="setting-left">
-            <span class="setting-label">本地录制画质</span>
-            <span class="setting-desc"
-              >只改本机这份录制的码率与体积，不影响别人在会里看到的画面</span
-            >
-          </div>
-          <div class="setting-right">
-            <select v-model="form.recordingQuality" class="setting-select">
-              <option value="high">高（约 30 MB/分钟·路）</option>
-              <option value="medium">中（约 15 MB/分钟·路）</option>
-              <option value="low">低（约 8 MB/分钟·路）</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="setting-row">
-          <div class="setting-left">
-            <span class="setting-label">本地录制帧率</span>
-            <span class="setting-desc"
-              >每秒为每一路画几帧；源本身不足时不会补成重复帧</span
-            >
-          </div>
-          <div class="setting-right">
-            <select v-model.number="form.recordingFps" class="setting-select">
-              <option :value="25">25 帧/秒</option>
-              <option :value="30">30 帧/秒</option>
-              <option :value="60">60 帧/秒</option>
-              <option :value="120">120 帧/秒</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="setting-row">
-          <div class="setting-left">
-            <span class="setting-label">
-              入会时自动本地录制
-              <span class="todo-tag">暂未接入</span>
-            </span>
-            <span class="setting-desc">仅录制者本人可查看本机录制</span>
-          </div>
-          <div class="setting-right">
-            <div
-              class="toggle-switch disabled"
-              title="入会自动开录暂未实现，请在会中手动开录"
-            ></div>
-          </div>
-        </div>
-
-        <div class="setting-row">
-          <div class="setting-left">
-            <span class="setting-label">加密云录制</span>
-            <span class="setting-desc">由主持人在会中开启。成员同意后录制，回放由主持人分发。</span>
-          </div>
-        </div>
-      </section>
-
-      <section class="settings-section">
-        <h3 class="section-title">网络检测</h3>
-
-        <div class="setting-row">
-          <div class="setting-left">
-            <span class="setting-label">网络质量检测</span>
-            <span class="setting-desc"
-              >测的是浏览器到本会议服务的链路（同机/局域网常达百兆级），不是运营商公网测速；会中画面仍走会议平台</span
-            >
-          </div>
-          <div class="setting-right">
-            <button class="btn-primary" :disabled="netBusy" @click="runNetTest">
-              {{
-                netBusy
-                  ? `检测中 ${netElapsedText}`
-                  : netResult
-                    ? "重新检测"
-                    : "开始检测"
-              }}
+              <i :class="previewStarting ? 'ri-loader-4-line spin' : previewOpen ? 'ri-eye-off-line' : 'ri-camera-lens-line'" />
+              <span>{{ previewStarting ? '正在打开…' : previewOpen ? '关闭画面预览' : '预览画面' }}</span>
             </button>
           </div>
-        </div>
 
-        <div v-if="!netResult && !netBusy" class="net-hint">
-          <span class="net-hint-icon">ℹ️</span>
-          <span>尚未检测，点击「开始检测」了解当前网络质量</span>
-        </div>
-        <div v-else-if="netError" class="net-hint warn">
-          <span class="net-hint-icon ri-error-warning-line" />
-          <span>{{ netError }}</span>
-        </div>
+          <div class="video-layout" :class="{ 'with-preview': previewOpen }">
+            <div class="video-controls">
+              <div class="setting-row">
+                <div class="setting-left">
+                  <span class="setting-label">摄像头</span>
+                  <span class="setting-desc">选择入会时使用的摄像头设备</span>
+                </div>
+                <div class="setting-right">
+                  <select v-model="form.cameraDeviceId" class="setting-select">
+                    <option value="">默认摄像头</option>
+                    <option
+                      v-for="d in devices.cameras"
+                      :key="d.deviceId"
+                      :value="d.deviceId"
+                    >
+                      {{ d.label || "摄像头 " + d.deviceId.slice(0, 8) }}
+                    </option>
+                  </select>
+                </div>
+              </div>
 
-        <template v-if="netResult">
-          <div class="net-hint" :class="netResult.level">
-            <span class="net-hint-icon" :class="netResultIcon" />
-            <span>{{ netVerdict }}</span>
+              <div class="setting-row">
+                <div class="setting-left">
+                  <span class="setting-label">视频分辨率</span>
+                  <span class="setting-desc"
+                    >采集期望值，实际以设备能力为准；越高越清晰、占带宽也越多</span
+                  >
+                </div>
+                <div class="setting-right">
+                  <select v-model="form.videoResolution" class="setting-select">
+                    <option value="480p">480P 流畅</option>
+                    <option value="720p">720P 标清</option>
+                    <option value="1080p">1080P 高清（推荐）</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="setting-row">
+                <div class="setting-left">
+                  <span class="setting-label">最大帧率</span>
+                  <span class="setting-desc">按本机摄像头能力列出可选档位</span>
+                </div>
+                <div class="setting-right">
+                  <select v-model.number="form.videoMaxFps" class="setting-select">
+                    <option v-for="fps in fpsOptions" :key="fps" :value="fps">
+                      {{ fps }} FPS
+                    </option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="setting-row">
+                <div class="setting-left">
+                  <span class="setting-label">浏览器视频上行上限</span>
+                  <span class="setting-desc"
+                    >自适应不设上限；选档位则限制上行码率，重新开启摄像头后生效</span
+                  >
+                </div>
+                <div class="setting-right">
+                  <select
+                    v-model.number="form.videoTargetBitrateKbps"
+                    class="setting-select"
+                  >
+                    <option :value="0">自适应</option>
+                    <option :value="20">20 Kbps</option>
+                    <option :value="40">40 Kbps</option>
+                    <option :value="60">60 Kbps</option>
+                    <option :value="80">80 Kbps</option>
+                    <option :value="100">100 Kbps</option>
+                    <option :value="150">150 Kbps</option>
+                    <option :value="200">200 Kbps</option>
+                    <option :value="300">300 Kbps</option>
+                    <option :value="400">400 Kbps</option>
+                    <option :value="500">500 Kbps</option>
+                    <option :value="600">600 Kbps</option>
+                    <option :value="700">700 Kbps</option>
+                    <option :value="800">800 Kbps</option>
+                    <option :value="900">900 Kbps</option>
+                    <option :value="1000">1000 Kbps</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="setting-row">
+                <div class="setting-left">
+                  <span class="setting-label">画质降噪与弱光增强</span>
+                  <span class="setting-desc"
+                    >GPU 实时保边降噪并柔和提亮暗部，本端与观看方同时生效</span
+                  >
+                </div>
+                <div class="setting-right">
+                  <div
+                    class="toggle-switch"
+                    :class="{ on: videoEnhanceEnabled }"
+                    @click="toggleVideoEnhance"
+                  ></div>
+                </div>
+              </div>
+
+              <div class="setting-row">
+                <div class="setting-left">
+                  <span class="setting-label">镜像我的视频</span>
+                  <span class="setting-desc"
+                    >本地预览画面左右翻转，观看方不受影响</span
+                  >
+                </div>
+                <div class="setting-right">
+                  <div
+                    class="toggle-switch"
+                    :class="{ on: form.mirrorVideo }"
+                    @click="form.mirrorVideo = !form.mirrorVideo"
+                  ></div>
+                </div>
+              </div>
+
+              <div v-if="BG_BLUR_AVAILABLE" class="setting-row">
+                <div class="setting-left">
+                  <span class="setting-label">背景虚化</span>
+                  <span class="setting-desc">自动识别人像并虚化背景，可在右侧预览实时查看效果</span>
+                </div>
+                <div class="setting-right">
+                  <div
+                    class="toggle-switch"
+                    :class="{ on: form.vbMode === 'blur' }"
+                    @click="form.vbMode = form.vbMode === 'blur' ? 'off' : 'blur'"
+                  ></div>
+                </div>
+              </div>
+
+              <div class="setting-row">
+                <div class="setting-left">
+                  <span class="setting-label">人脸增强</span>
+                  <span class="setting-desc">{{
+                    faceSupported
+                      ? "识别人脸区域并优先保障编码清晰度，开启预览可实时查看锁定区域"
+                      : faceNotice
+                  }}</span>
+                </div>
+                <div class="setting-right">
+                  <div
+                    class="toggle-switch"
+                    :class="{ on: faceSupported && form.faceEnhancement === 1 }"
+                    @click="toggleFace"
+                  ></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 右侧实时画面预览面板（复用同一份摄像头流，不重复抢占设备） -->
+            <aside v-if="previewOpen" class="video-preview-pane">
+              <div class="vp-card">
+                <div class="vp-head">
+                  <span class="vp-title">
+                    <i class="vp-live-dot" />
+                    实时预览
+                  </span>
+                  <span v-if="previewMeta" class="vp-meta">{{ previewMeta }}</span>
+                </div>
+
+                <div class="vp-stage">
+                  <video
+                    ref="previewVideoRef"
+                    class="vp-video"
+                    :class="{ 'is-mirror': form.mirrorVideo }"
+                    autoplay
+                    playsinline
+                    muted
+                  />
+
+                  <!-- 人脸增强开启时：实时叠加人脸锁定框与轻度清晰高亮示意 -->
+                  <div
+                    v-if="facePreviewActive && previewFaceBoxes.length"
+                    class="vp-face-layer"
+                    aria-hidden="true"
+                  >
+                    <div
+                      v-for="(box, idx) in previewFaceBoxes"
+                      :key="idx"
+                      class="vp-face-box"
+                      :style="faceBoxStyle(box)"
+                    >
+                      <span class="vp-face-tag">人脸增强区域</span>
+                    </div>
+                  </div>
+
+                  <div v-if="previewBusyText" class="vp-overlay-badge">
+                    <i class="ri-loader-4-line spin" />
+                    <span>{{ previewBusyText }}</span>
+                  </div>
+
+                  <div v-if="previewError" class="vp-error-mask">
+                    <i class="ri-camera-off-line" />
+                    <p>{{ previewError }}</p>
+                    <button type="button" class="btn-ghost" @click="startVideoPreview(true)">重新尝试</button>
+                  </div>
+                </div>
+
+                <div class="vp-tags">
+                  <span class="vp-chip" :class="{ on: videoEnhanceEnabled }">
+                    <i class="ri-magic-line" /> 降噪增强 {{ videoEnhanceEnabled ? '开' : '关' }}
+                  </span>
+                  <span v-if="BG_BLUR_AVAILABLE" class="vp-chip" :class="{ on: form.vbMode === 'blur' }">
+                    <i class="ri-contrast-drop-2-line" /> 背景虚化 {{ form.vbMode === 'blur' ? '开' : '关' }}
+                  </span>
+                  <span class="vp-chip" :class="{ on: facePreviewActive }">
+                    <i class="ri-user-smile-line" /> 人脸增强 {{ facePreviewActive ? '开' : '关' }}
+                  </span>
+                </div>
+
+                <p v-if="previewNotice" class="vp-notice">{{ previewNotice }}</p>
+                <p v-else class="vp-tip">
+                  复用当前摄像头数据流，切换左侧降噪、虚化、镜像与人脸增强时可实时对比画面差异。
+                </p>
+              </div>
+            </aside>
           </div>
-          <div class="net-metrics">
-            <div v-for="m in netMetrics" :key="m.label" class="net-metric">
-              <span class="net-metric-label">{{ m.label }}</span>
-              <span class="net-metric-value">{{ m.value }}</span>
+        </section>
+
+        <section class="settings-section">
+          <h3 class="section-title">视频传输</h3>
+          <VideoDeliverySettings />
+        </section>
+
+        <section class="settings-section">
+          <h3 class="section-title">音频</h3>
+
+          <div class="setting-row">
+            <div class="setting-left">
+              <span class="setting-label">麦克风</span>
+              <span class="setting-desc">选择入会时使用的麦克风设备</span>
+            </div>
+            <div class="setting-right">
+              <select v-model="form.microphoneDeviceId" class="setting-select">
+                <option value="">默认麦克风</option>
+                <option
+                  v-for="d in devices.microphones"
+                  :key="d.deviceId"
+                  :value="d.deviceId"
+                >
+                  {{ d.label || "麦克风 " + d.deviceId.slice(0, 8) }}
+                </option>
+              </select>
             </div>
           </div>
-          <p class="net-note">上下行测本机到会议服务的真实收发包；「会议链路延迟」是服务到三方平台的往返</p>
-        </template>
-      </section>
 
-      <!-- 关于：只放"我这是什么版本、每版改了什么"。部署细节、镜像名、提交号一概不放 ——
-           那些是给现场运维的发版说明里的事，用户读了只会更糊涂。 -->
-      <section class="settings-section">
-        <h3 class="section-title">关于</h3>
-        <div class="setting-row">
-          <div class="setting-left">
-            <span class="setting-label">版本信息</span>
-            <span class="setting-desc">{{ versionDesc }}</span>
+          <div class="setting-row">
+            <div class="setting-left">
+              <span class="setting-label">扬声器</span>
+              <span class="setting-desc">选择播放会议声音的输出设备</span>
+            </div>
+            <div class="setting-right">
+              <select v-model="form.speakerDeviceId" class="setting-select">
+                <option value="">默认扬声器</option>
+                <option
+                  v-for="d in devices.speakers"
+                  :key="d.deviceId"
+                  :value="d.deviceId"
+                >
+                  {{ d.label || "扬声器 " + d.deviceId.slice(0, 8) }}
+                </option>
+              </select>
+            </div>
           </div>
-          <div class="setting-right">
-            <button class="btn-ghost" @click="versionDialogVisible = true">
-              查看更新日志
-            </button>
+
+          <div class="setting-row">
+            <div class="setting-left">
+              <span class="setting-label">麦克风音量</span>
+              <span class="setting-desc">拖动滑块调整输入音量大小</span>
+            </div>
+            <div class="setting-right">
+              <div class="volume-control">
+                <input
+                  type="range"
+                  v-model.number="form.micVolume"
+                  min="0"
+                  max="100"
+                  class="volume-slider"
+                />
+                <span class="volume-value">{{ form.micVolume }}%</span>
+              </div>
+            </div>
           </div>
-        </div>
-      </section>
+
+          <div class="setting-row">
+            <div class="setting-left">
+              <span class="setting-label">自动调节麦克风音量</span>
+              <span class="setting-desc">根据环境噪声自动调整输入音量</span>
+            </div>
+            <div class="setting-right">
+              <div
+                class="toggle-switch"
+                :class="{ on: form.autoGain }"
+                @click="form.autoGain = !form.autoGain"
+              ></div>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-left">
+              <span class="setting-label">音频降噪</span>
+              <span class="setting-desc">抑制键盘、风扇等背景噪声</span>
+            </div>
+            <div class="setting-right">
+              <div
+                class="toggle-switch"
+                :class="{ on: form.noiseSuppression }"
+                @click="form.noiseSuppression = !form.noiseSuppression"
+              ></div>
+            </div>
+          </div>
+        </section>
+      </template>
+
+      <!-- ═══ Tab 2: 辅助功能（转录翻译术语库 / 录制） ═══ -->
+      <template v-else-if="activeTab === 'assist'">
+        <section class="settings-section">
+          <h3 class="section-title">转录翻译术语库</h3>
+          <GlossarySettings />
+        </section>
+
+        <section class="settings-section">
+          <h3 class="section-title">录制</h3>
+
+          <div class="setting-row">
+            <div class="setting-left">
+              <span class="setting-label">本地录制保存位置</span>
+              <span class="setting-desc">{{ saveDirDesc }}</span>
+            </div>
+            <div class="setting-right location-row">
+              <span class="location-path" :class="{ unset: !pickedDirName }">{{
+                saveDirText
+              }}</span>
+              <button
+                v-if="dirBlocker === 'ok'"
+                class="btn-ghost"
+                @click="crossOriginFrame ? openDirPickerWindow() : changePath()"
+              >
+                {{ pickedDirName ? "更换位置" : "选择位置" }}
+              </button>
+              <button v-if="pickedDirName" class="btn-ghost" @click="resetPath">
+                取消本机授权
+              </button>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-left">
+              <span class="setting-label">本地录制画质</span>
+              <span class="setting-desc"
+                >只改本机这份录制的码率与体积，不影响别人在会里看到的画面</span
+              >
+            </div>
+            <div class="setting-right">
+              <select v-model="form.recordingQuality" class="setting-select">
+                <option value="high">高（约 30 MB/分钟·路）</option>
+                <option value="medium">中（约 15 MB/分钟·路）</option>
+                <option value="low">低（约 8 MB/分钟·路）</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-left">
+              <span class="setting-label">本地录制帧率</span>
+              <span class="setting-desc"
+                >每秒为每一路画几帧；源本身不足时不会补成重复帧</span
+              >
+            </div>
+            <div class="setting-right">
+              <select v-model.number="form.recordingFps" class="setting-select">
+                <option :value="25">25 帧/秒</option>
+                <option :value="30">30 帧/秒</option>
+                <option :value="60">60 帧/秒</option>
+                <option :value="120">120 帧/秒</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-left">
+              <span class="setting-label">
+                入会时自动本地录制
+                <span class="todo-tag">暂未接入</span>
+              </span>
+              <span class="setting-desc">仅录制者本人可查看本机录制</span>
+            </div>
+            <div class="setting-right">
+              <div
+                class="toggle-switch disabled"
+                title="入会自动开录暂未实现，请在会中手动开录"
+              ></div>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-left">
+              <span class="setting-label">加密云录制</span>
+              <span class="setting-desc">由主持人在会中开启。成员同意后录制，回放由主持人分发。</span>
+            </div>
+          </div>
+        </section>
+      </template>
+
+      <!-- ═══ Tab 3: 账号与系统（账号信息 / 网络检测 / 关于） ═══ -->
+      <template v-else>
+        <!-- 账号信息：原型这两行是矢量图层，头像/登录名是我方已有能力 -->
+        <section class="settings-section">
+          <h3 class="section-title">账号信息</h3>
+          <div class="setting-row">
+            <div class="setting-left">
+              <span class="setting-label">头像</span>
+              <span class="setting-desc"
+                >支持 PNG / JPEG / WebP，上传前自动裁成 256×256</span
+              >
+            </div>
+            <div class="setting-right avatar-right">
+              <span class="avatar-preview">
+                <img
+                  v-if="avatarSrc"
+                  :src="avatarSrc"
+                  alt="当前头像"
+                  @error="onAvatarError"
+                />
+                <em v-else>{{ avatarChar }}</em>
+              </span>
+              <input
+                ref="avatarInputRef"
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                hidden
+                @change="onAvatarPicked"
+              />
+              <el-button size="small" :loading="avatarBusy" @click="pickAvatar">
+                {{ avatarSrc ? "更换头像" : "上传头像" }}
+              </el-button>
+              <el-button
+                v-if="avatarSrc"
+                size="small"
+                type="danger"
+                plain
+                :loading="avatarBusy"
+                @click="removeAvatar"
+              >
+                移除
+              </el-button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-left">
+              <span class="setting-label">登录账号</span>
+              <span class="setting-desc">{{
+                userStore.userInfo?.username || "–"
+              }}</span>
+            </div>
+            <div class="setting-right">
+              <!-- 账号名不可改，改的是"别人看到的我"：显示名（失焦即存，空值不覆盖） -->
+              <input
+                v-model="displayName"
+                class="setting-input"
+                maxlength="32"
+                placeholder="显示名"
+                @change="onDisplayNameBlur"
+              />
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3 class="section-title">网络检测</h3>
+
+          <div class="setting-row">
+            <div class="setting-left">
+              <span class="setting-label">网络质量检测</span>
+              <span class="setting-desc"
+                >测的是本机到当前会议系统的链路（同机/局域网常达百兆级），不是运营商公网测速；会中画面仍走会议平台</span
+              >
+            </div>
+            <div class="setting-right">
+              <button class="btn-primary" :disabled="netBusy" @click="runNetTest">
+                {{
+                  netBusy
+                    ? `检测中 ${netElapsedText}`
+                    : netResult
+                      ? "重新检测"
+                      : "开始检测"
+                }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="!netResult && !netBusy" class="net-hint">
+            <span class="net-hint-icon">ℹ️</span>
+            <span>尚未检测，点击「开始检测」了解当前网络质量</span>
+          </div>
+          <div v-else-if="netError" class="net-hint warn">
+            <span class="net-hint-icon ri-error-warning-line" />
+            <span>{{ netError }}</span>
+          </div>
+
+          <template v-if="netResult">
+            <div class="net-hint" :class="netResult.level">
+              <span class="net-hint-icon" :class="netResultIcon" />
+              <span>{{ netVerdict }}</span>
+            </div>
+            <div class="net-metrics">
+              <div v-for="m in netMetrics" :key="m.label" class="net-metric">
+                <span class="net-metric-label">{{ m.label }}</span>
+                <span class="net-metric-value">{{ m.value }}</span>
+              </div>
+            </div>
+            <p class="net-note">上下行测本机到当前系统的真实收发包；「会议链路延迟」是系统到会议平台的往返</p>
+          </template>
+        </section>
+
+        <!-- 关于：只放"我这是什么版本、每版改了什么"。 -->
+        <section class="settings-section">
+          <h3 class="section-title">关于</h3>
+          <div class="setting-row">
+            <div class="setting-left">
+              <span class="setting-label">版本信息</span>
+              <span class="setting-desc">{{ versionDesc }}</span>
+            </div>
+            <div class="setting-right">
+              <button class="btn-ghost" @click="versionDialogVisible = true">
+                查看更新日志
+              </button>
+            </div>
+          </div>
+        </section>
+      </template>
     </div>
 
     <VersionDialog v-model="versionDialogVisible" />
@@ -478,13 +630,31 @@ import { clearAvatar, updateDisplayName, uploadAvatar } from "@/api/user";
 import { toAvatarBlob } from "@/utils/avatarImage";
 import type { UserSettingsVo } from "@/api/settings";
 import { BG_BLUR_AVAILABLE } from "@/utils/virtualBackground";
+import { createBgBlurTrack, type BgBlurSession } from "@/utils/bgBlur";
+import { createVideoEnhanceTrack, type VideoEnhanceSession } from "@/utils/videoEnhance";
+import {
+  createFaceRoiObserver,
+  loadFaceDetector,
+  type FaceRegion,
+  type FaceRoiObserver,
+} from "@/utils/faceRoi";
 import { useFaceEnhancement } from "@/composables/useFaceEnhancement";
 import VersionDialog from "@/components/dialogs/VersionDialog.vue";
 import { currentRelease } from "@/data/changelog";
 import { businessDayKey, dashDateTime } from "@/utils/time";
 
-const { devices, loadPreferences, savePreferences, enumerateDevices } =
-  useMediaSettings();
+type SettingsTab = "meeting" | "assist" | "system";
+const activeTab = ref<SettingsTab>("meeting");
+
+const {
+  devices,
+  videoEnhanceEnabled,
+  setVideoEnhance,
+  capturedCameraTrack,
+  loadPreferences,
+  savePreferences,
+  enumerateDevices,
+} = useMediaSettings();
 const {
   supported: faceSupported,
   notice: faceNotice,
@@ -751,8 +921,35 @@ const form = reactive<UserSettingsVo>({
   recordingSaveDir: "",
 });
 
-/** 用本机摄像头 getCapabilities().frameRate 生成可选档；采不到则保留兜底列表。 */
+/** 用本机摄像头 getCapabilities().frameRate 生成可选档；优先复用已打开的摄像头轨道，避免抢占设备。 */
 async function probeCameraFpsOptions() {
+  const applyCaps = (track: MediaStreamTrack | undefined) => {
+    const caps = track?.getCapabilities?.() as
+      | (MediaTrackCapabilities & { frameRate?: { min?: number; max?: number } })
+      | undefined;
+    const maxRaw = caps?.frameRate?.max;
+    const max = maxRaw && Number.isFinite(maxRaw) ? Math.min(60, Math.round(maxRaw)) : 0;
+    if (max < 5) return false;
+    const candidates = [10, 15, 20, 25, 30, 60].filter((f) => f >= 5 && f <= max);
+    fpsOptions.value = candidates.length ? candidates : [Math.max(5, Math.min(60, max))];
+    if (!fpsOptions.value.includes(form.videoMaxFps)) {
+      const want = form.videoMaxFps;
+      form.videoMaxFps = fpsOptions.value.reduce((best, cur) =>
+        Math.abs(cur - want) < Math.abs(best - want) ? cur : best,
+      );
+    }
+    return true;
+  };
+
+  // 优先复用预览轨或会中正在采集的物理摄像头轨，不额外调用 getUserMedia。
+  const existing =
+    (previewRawTrack && previewRawTrack.readyState === "live" ? previewRawTrack : undefined) ||
+    (() => {
+      const t = capturedCameraTrack();
+      return t && t.readyState === "live" ? t : undefined;
+    })();
+  if (existing && applyCaps(existing)) return;
+
   if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
     return;
   }
@@ -762,31 +959,317 @@ async function probeCameraFpsOptions() {
       ? { deviceId: { ideal: form.cameraDeviceId } }
       : true;
     stream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
-    const track = stream.getVideoTracks()[0];
-    const caps = track?.getCapabilities?.() as
-      | (MediaTrackCapabilities & { frameRate?: { min?: number; max?: number } })
-      | undefined;
-    const maxRaw = caps?.frameRate?.max;
-    const max = maxRaw && Number.isFinite(maxRaw) ? Math.min(60, Math.round(maxRaw)) : 0;
-    if (max < 5) return;
-    const candidates = [10, 15, 20, 25, 30, 60].filter((f) => f >= 5 && f <= max);
-    if (!candidates.length) {
-      fpsOptions.value = [Math.max(5, Math.min(60, max))];
-    } else {
-      fpsOptions.value = candidates;
-    }
-    if (!fpsOptions.value.includes(form.videoMaxFps)) {
-      const want = form.videoMaxFps;
-      form.videoMaxFps = fpsOptions.value.reduce((best, cur) =>
-        Math.abs(cur - want) < Math.abs(best - want) ? cur : best,
-      );
-    }
+    applyCaps(stream.getVideoTracks()[0]);
   } catch {
     /* 权限/占用：保持兜底档，不挡设置页 */
   } finally {
     stream?.getTracks().forEach((t) => t.stop());
   }
 }
+
+/* ── 视频右侧实时预览（复用摄像头数据流，切换效果不重开摄像头） ── */
+const previewOpen = ref(false);
+const previewStarting = ref(false);
+const previewBusyText = ref("");
+const previewError = ref("");
+const previewNotice = ref("");
+const previewMeta = ref("");
+const previewVideoRef = ref<HTMLVideoElement | null>(null);
+const previewFaceBoxes = ref<FaceRegion[]>([]);
+
+const facePreviewActive = computed(
+  () => previewOpen.value && faceSupported.value && form.faceEnhancement === 1,
+);
+
+let previewRawTrack: MediaStreamTrack | null = null;
+let previewEnhanceSession: VideoEnhanceSession | null = null;
+let previewBlurSession: BgBlurSession | null = null;
+let previewOutStream: MediaStream | null = null;
+let previewFaceObserver: FaceRoiObserver | null = null;
+let previewSeq = 0;
+
+function toggleVideoEnhance() {
+  setVideoEnhance(!videoEnhanceEnabled.value);
+}
+
+function faceBoxStyle(box: FaceRegion) {
+  const left = form.mirrorVideo ? 1 - box.x - box.width : box.x;
+  return {
+    left: `${(Math.max(0, left) * 100).toFixed(2)}%`,
+    top: `${(Math.max(0, box.y) * 100).toFixed(2)}%`,
+    width: `${(Math.min(1, box.width) * 100).toFixed(2)}%`,
+    height: `${(Math.min(1, box.height) * 100).toFixed(2)}%`,
+  };
+}
+
+function buildPreviewConstraints(): MediaTrackConstraints {
+  const video: MediaTrackConstraints = {};
+  if (form.cameraDeviceId) video.deviceId = { ideal: form.cameraDeviceId };
+  if (form.videoResolution === "1080p") {
+    video.width = { ideal: 1920 };
+    video.height = { ideal: 1080 };
+  } else if (form.videoResolution === "720p") {
+    video.width = { ideal: 1280 };
+    video.height = { ideal: 720 };
+  } else if (form.videoResolution === "480p") {
+    video.width = { ideal: 854 };
+    video.height = { ideal: 480 };
+  }
+  if (form.videoMaxFps) {
+    video.frameRate = { ideal: form.videoMaxFps, max: form.videoMaxFps };
+  }
+  return video;
+}
+
+function disposePreviewEffects() {
+  previewFaceObserver?.stop();
+  previewFaceObserver = null;
+  previewFaceBoxes.value = [];
+
+  previewBlurSession?.dispose();
+  previewBlurSession = null;
+
+  previewEnhanceSession?.dispose();
+  previewEnhanceSession = null;
+
+  if (previewOutStream) {
+    previewOutStream.getTracks().forEach((t) => {
+      if (t !== previewRawTrack) {
+        try { t.stop(); } catch { /* ignore */ }
+      }
+    });
+    previewOutStream = null;
+  }
+}
+
+function stopVideoPreview() {
+  previewSeq++;
+  previewOpen.value = false;
+  previewStarting.value = false;
+  previewBusyText.value = "";
+  previewError.value = "";
+  previewNotice.value = "";
+  previewMeta.value = "";
+  disposePreviewEffects();
+  if (previewVideoRef.value) {
+    previewVideoRef.value.srcObject = null;
+  }
+  if (previewRawTrack) {
+    try { previewRawTrack.stop(); } catch { /* ignore */ }
+    previewRawTrack = null;
+  }
+}
+
+async function ensurePreviewSourceTrack(forceRebuild = false): Promise<MediaStreamTrack | null> {
+  if (!forceRebuild && previewRawTrack && previewRawTrack.readyState === "live") {
+    return previewRawTrack;
+  }
+
+  // 先释放旧源轨，避免同一设备双开导致 NotReadableError
+  disposePreviewEffects();
+  if (previewRawTrack) {
+    try { previewRawTrack.stop(); } catch { /* ignore */ }
+    previewRawTrack = null;
+  }
+
+  // 优先复用会中已经打开的物理摄像头轨道（clone 独立副本，关闭预览不影响会议）
+  const activeMeetingTrack = capturedCameraTrack();
+  if (activeMeetingTrack && activeMeetingTrack.readyState === "live") {
+    const activeDevId = activeMeetingTrack.getSettings?.().deviceId || "";
+    const matchDevice = !form.cameraDeviceId || !activeDevId || activeDevId === form.cameraDeviceId;
+    if (matchDevice) {
+      previewRawTrack = activeMeetingTrack.clone();
+      return previewRawTrack;
+    }
+  }
+
+  if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+    throw new Error("当前浏览器不支持摄像头采集");
+  }
+
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: buildPreviewConstraints(),
+    audio: false,
+  });
+  const track = stream.getVideoTracks()[0];
+  stream.getTracks().forEach((t) => {
+    if (t !== track) t.stop();
+  });
+  if (!track) throw new Error("未获取到摄像头视频轨");
+  previewRawTrack = track;
+  return track;
+}
+
+async function syncPreviewFaceObserver(seq: number) {
+  previewFaceObserver?.stop();
+  previewFaceObserver = null;
+  previewFaceBoxes.value = [];
+  if (!facePreviewActive.value || !previewVideoRef.value) return;
+
+  previewBusyText.value = "正在加载人脸识别…";
+  const detector = await loadFaceDetector();
+  if (seq !== previewSeq || !facePreviewActive.value || !previewVideoRef.value) {
+    if (seq === previewSeq) previewBusyText.value = "";
+    return;
+  }
+  if (seq === previewSeq) previewBusyText.value = "";
+  if (!detector) {
+    previewNotice.value = "人脸识别模型加载失败，暂无法在预览中绘制锁定框";
+    return;
+  }
+  previewFaceObserver = createFaceRoiObserver(
+    previewVideoRef.value,
+    (sample) => {
+      if (seq !== previewSeq || !facePreviewActive.value) return;
+      previewFaceBoxes.value = sample.regions;
+    },
+    () => {
+      if (seq === previewSeq) {
+        previewNotice.value = "人脸识别运行异常，暂无法绘制锁定框";
+      }
+    },
+  );
+}
+
+async function applyPreviewEffects(seq: number) {
+  if (!previewRawTrack || previewRawTrack.readyState !== "live") return;
+  disposePreviewEffects();
+  previewNotice.value = "";
+
+  // 每次把源轨 clone 一份喂给处理器，dispose 时绝不伤及底层 previewRawTrack
+  let currentTrack: MediaStreamTrack = previewRawTrack.clone();
+
+  if (videoEnhanceEnabled.value) {
+    previewBusyText.value = "正在应用画质降噪…";
+    try {
+      const enhanced = await createVideoEnhanceTrack(currentTrack, { fps: form.videoMaxFps });
+      if (seq !== previewSeq) {
+        enhanced?.dispose();
+        return;
+      }
+      if (enhanced) {
+        previewEnhanceSession = enhanced;
+        currentTrack = enhanced.track;
+      }
+    } catch {
+      /* 降噪失败时保持原轨 */
+    }
+  }
+
+  if (BG_BLUR_AVAILABLE && form.vbMode === "blur") {
+    previewBusyText.value = "正在加载背景虚化…";
+    try {
+      const blurred = await createBgBlurTrack(currentTrack, {
+        fps: form.videoMaxFps,
+        onDegrade: (reason) => {
+          if (seq === previewSeq) previewNotice.value = reason;
+        },
+      });
+      if (seq !== previewSeq) {
+        blurred?.dispose();
+        return;
+      }
+      if (blurred) {
+        previewBlurSession = blurred;
+        currentTrack = blurred.track;
+      }
+    } catch {
+      if (seq === previewSeq) previewNotice.value = "背景虚化初始化异常，已按原始画面预览";
+    }
+  }
+
+  if (seq !== previewSeq) return;
+  previewBusyText.value = "";
+
+  const outStream = new MediaStream([currentTrack]);
+  previewOutStream = outStream;
+  await nextTick();
+  const el = previewVideoRef.value;
+  if (!el || seq !== previewSeq) return;
+  el.srcObject = outStream;
+  try {
+    await el.play();
+  } catch {
+    /* 自动播放被拦时忽略 */
+  }
+
+  const s = previewRawTrack.getSettings?.();
+  if (s?.width && s?.height) {
+    const fps = s.frameRate ? Math.round(s.frameRate) : form.videoMaxFps;
+    previewMeta.value = `${s.width}×${s.height}${fps ? ` · ${fps}fps` : ""}`;
+  }
+
+  await syncPreviewFaceObserver(seq);
+}
+
+async function startVideoPreview(forceRebuild = false) {
+  const seq = ++previewSeq;
+  previewOpen.value = true;
+  previewStarting.value = true;
+  previewError.value = "";
+  previewNotice.value = "";
+  try {
+    await ensurePreviewSourceTrack(forceRebuild);
+    if (seq !== previewSeq) return;
+    await enumerateDevices();
+    await applyPreviewEffects(seq);
+  } catch (e: any) {
+    if (seq !== previewSeq) return;
+    const name = e?.name || "";
+    if (name === "NotAllowedError" || name === "SecurityError") {
+      previewError.value = "未获得摄像头权限，请在浏览器地址栏允许访问";
+    } else if (name === "NotReadableError" || name === "AbortError") {
+      previewError.value = "摄像头正被其他程序占用，请关闭占用软件后重试";
+    } else if (name === "NotFoundError") {
+      previewError.value = "未检测到可用摄像头";
+    } else {
+      previewError.value = e?.message || "无法打开摄像头预览，请重试";
+    }
+  } finally {
+    if (seq === previewSeq) previewStarting.value = false;
+  }
+}
+
+function togglePreview() {
+  if (previewOpen.value) {
+    stopVideoPreview();
+  } else {
+    void startVideoPreview(false);
+  }
+}
+
+// 切换 Tab 离开「会议功能」时自动关闭预览，释放摄像头占用
+watch(activeTab, (t) => {
+  if (t !== "meeting" && previewOpen.value) stopVideoPreview();
+});
+
+// 切换背景虚化 / 画质降噪：直接复用已有 previewRawTrack，不重开摄像头
+watch(
+  () => [form.vbMode, videoEnhanceEnabled.value],
+  () => {
+    if (!previewOpen.value || hydrating || !previewRawTrack) return;
+    const seq = ++previewSeq;
+    void applyPreviewEffects(seq);
+  },
+);
+
+// 切换人脸增强：仅启停人脸框检测，不打断视频流
+watch(
+  () => [form.faceEnhancement, faceSupported.value],
+  () => {
+    if (!previewOpen.value || hydrating) return;
+    void syncPreviewFaceObserver(previewSeq);
+  },
+);
+
+// 切换摄像头 / 分辨率 / 帧率：仅在预览开启时平滑重建源轨
+watch(
+  () => [form.cameraDeviceId, form.videoResolution, form.videoMaxFps],
+  () => {
+    if (!previewOpen.value || hydrating) return;
+    void startVideoPreview(true);
+  },
+);
 
 async function load() {
   hydrating = true;
@@ -929,8 +1412,9 @@ onMounted(async () => {
   await enumerateDevices();
 });
 
-// 防抖窗口内就切走页面会丢改动，卸载时立刻补存一次
+// 防抖窗口内就切走页面会丢改动，卸载时立刻补存一次，并释放摄像头预览
 onBeforeUnmount(() => {
+  stopVideoPreview();
   if (pickerWinTimer !== null) {
     window.clearInterval(pickerWinTimer);
     pickerWinTimer = null;
@@ -945,15 +1429,76 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .settings-page {
-  padding: 16px 20px 0;
+  padding: 16px 20px 28px;
   max-width: 900px;
+  transition: max-width 0.22s ease;
+}
+
+.settings-page.has-video-preview {
+  max-width: 1180px;
+}
+
+.page-head {
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.page-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
 }
 
 .page-head h2 {
-  margin: 0 0 8px;
+  margin: 0;
   font-size: 24px;
   font-weight: 700;
   color: var(--text-primary);
+}
+
+.settings-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 11px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+}
+
+.settings-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.16s, color 0.16s, box-shadow 0.16s;
+}
+
+.settings-tab i {
+  font-size: 15px;
+}
+
+.settings-tab:hover {
+  color: var(--text-primary);
+}
+
+.settings-tab.active {
+  background: var(--bg-card);
+  color: var(--primary-text, var(--primary));
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
 }
 
 .settings-body {
@@ -963,8 +1508,24 @@ onBeforeUnmount(() => {
 
 /* 原型是"整页浅底 + 分区之间一条发丝线"，不是每块一个卡片盒 */
 .settings-section {
-  padding: 8px 0;
+  padding: 12px 0;
   border-bottom: 1px solid var(--border-color);
+}
+
+.settings-section:last-child {
+  border-bottom: 0;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.section-head .section-title {
+  margin: 0;
 }
 
 .section-title {
@@ -972,6 +1533,254 @@ onBeforeUnmount(() => {
   font-size: 16px;
   font-weight: 700;
   color: var(--text-primary);
+}
+
+/* ── 视频预览按钮与左右布局 ── */
+.preview-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 9px;
+  border: 1px solid var(--primary);
+  background: var(--primary-soft, rgba(22, 93, 255, 0.1));
+  color: var(--primary-text, var(--primary));
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.16s;
+}
+
+.preview-toggle-btn:hover:not(:disabled) {
+  background: var(--primary);
+  color: #fff;
+}
+
+.preview-toggle-btn.active {
+  background: var(--primary);
+  color: #fff;
+}
+
+.preview-toggle-btn:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.video-layout {
+  display: block;
+}
+
+.video-layout.with-preview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 390px;
+  gap: 28px;
+  align-items: start;
+}
+
+.video-controls {
+  min-width: 0;
+}
+
+.video-preview-pane {
+  position: sticky;
+  top: 16px;
+}
+
+.vp-card {
+  padding: 14px;
+  border-radius: 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 6px 22px rgba(15, 23, 42, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.vp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.vp-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.vp-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.22);
+}
+
+.vp-meta {
+  font-size: 11.5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-input);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.vp-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0f172a;
+}
+
+.vp-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  background: #0f172a;
+}
+
+.vp-video.is-mirror {
+  transform: scaleX(-1);
+}
+
+.vp-face-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.vp-face-box {
+  position: absolute;
+  border: 2px solid #38bdf8;
+  border-radius: 10px;
+  box-shadow:
+    0 0 0 1px rgba(15, 23, 42, 0.45),
+    inset 0 0 18px rgba(56, 189, 248, 0.14);
+  backdrop-filter: brightness(1.06) contrast(1.05);
+  transition: left 0.14s linear, top 0.14s linear, width 0.14s linear, height 0.14s linear;
+}
+
+.vp-face-tag {
+  position: absolute;
+  left: 0;
+  top: -22px;
+  padding: 1px 7px;
+  border-radius: 5px;
+  background: rgba(14, 165, 233, 0.9);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.vp-overlay-badge {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.78);
+  color: #f8fafc;
+  font-size: 12px;
+  backdrop-filter: blur(6px);
+}
+
+.vp-error-mask {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 16px;
+  text-align: center;
+  background: rgba(15, 23, 42, 0.92);
+  color: #e2e8f0;
+}
+
+.vp-error-mask i {
+  font-size: 28px;
+  color: #f87171;
+}
+
+.vp-error-mask p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.vp-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.vp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  background: var(--bg-input);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+}
+
+.vp-chip.on {
+  background: var(--primary-soft, rgba(22, 93, 255, 0.12));
+  color: var(--primary-text, var(--primary));
+  border-color: rgba(22, 93, 255, 0.28);
+  font-weight: 600;
+}
+
+.vp-notice {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--warning-text, #d97706);
+}
+
+.vp-tip {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.spin {
+  display: inline-block;
+  animation: settings-spin 0.9s linear infinite;
+}
+
+@keyframes settings-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 1024px) {
+  .video-layout.with-preview {
+    grid-template-columns: 1fr;
+  }
+  .video-preview-pane {
+    position: static;
+    order: -1;
+  }
 }
 
 .setting-row {

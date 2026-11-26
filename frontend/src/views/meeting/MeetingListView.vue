@@ -62,6 +62,11 @@
               <div class="meeting-topic" style="font-size:16px;">
                 <!-- 原型的历史行没有「查看详情」按钮，详情入口挂在标题上 -->
                 <span class="ml-title" title="查看会议详情" @click="goDetail(m)">{{ m.title }}</span>
+                <span
+                  v-if="m.status === 'ended' && endReasonLabel(m.endReason)"
+                  class="ml-end-reason"
+                  :class="m.endReason === 'abnormal_exit' ? 'is-abnormal' : 'is-normal'"
+                >{{ endReasonLabel(m.endReason) }}</span>
               </div>
               <div class="meeting-meta" style="margin-top:6px;">
                 <span><i class="ri-calendar-line" /> {{ timeRange(m) }}</span>
@@ -72,11 +77,13 @@
             <!-- 原型 操作按钮组：待开始=修改/取消+入会；已结束=查看录制；契约只允许 managed 且本端是主持人的才给改/取消 -->
             <div class="ml-row-actions">
               <template v-if="isRunning(m)">
+                <button v-if="m.meetingNo" class="ml-btn-line" @click="handleShare(m)"><i class="ml-btn-icon ri-share-forward-line" />分享</button>
                 <button v-if="m.managed && m.isHost" class="ml-btn-line" @click="handleStop(m)">结束会议</button>
                 <button v-if="isSelfIn(m)" class="ml-btn-chip"><i class="ml-btn-icon ri-check-line" />已入会</button>
                 <button v-else class="ml-btn-solid sm" @click="handleJoin(m)">入会</button>
               </template>
               <template v-else-if="m.status === 'scheduled'">
+                <button v-if="m.meetingNo" class="ml-btn-line" @click="handleShare(m)"><i class="ml-btn-icon ri-share-forward-line" />分享</button>
                 <button v-if="m.managed && m.isHost" class="ml-btn-line" @click="handleEdit(m)">修改会议</button>
                 <button v-if="m.managed && m.isHost" class="ml-btn-line ml-btn-danger" @click="handleCancel(m)">取消会议</button>
                 <button v-if="isSelfIn(m)" class="ml-btn-chip"><i class="ml-btn-icon ri-check-line" />已入会</button>
@@ -128,11 +135,11 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import ScheduleMeetingDialog from '@/components/dialogs/ScheduleMeetingDialog.vue'
 import MeetingAssistant from '@/components/meeting/MeetingAssistant.vue'
 import MeetingDetailDialog from '@/components/dialogs/MeetingDetailDialog.vue'
-import { getMeetingList, getMeetingStats, cancelMeeting, stopMeeting, precheckMeeting, type MeetingVo } from '@/api/meeting'
+import { getMeetingList, getMeetingStats, cancelMeeting, stopMeeting, precheckMeeting, endReasonLabel, type MeetingVo } from '@/api/meeting'
 import { useMeetingStore } from '@/store/meeting'
 import { getDict, dictLabelSync, dictTagTypeSync, DICT } from '@/api/dict'
 import { formatDate, formatTime } from '@/utils/time'
-import { preJoinPath } from '@/utils/joinFlow'
+import { copyMeetingInvite, preJoinPath } from '@/utils/joinFlow'
 import { startQuickMeeting } from '@/utils/startMeeting'
 
 const router = useRouter()
@@ -275,6 +282,18 @@ async function startNow() {
 function goDetail(m: MeetingVo) {
   detailMeeting.value = m
   showDetail.value = true
+}
+
+async function handleShare(m: MeetingVo) {
+  const ok = await copyMeetingInvite({
+    hostName: m.creatorName || m.hostName || '',
+    title: m.title,
+    meetingNo: m.meetingNo,
+    startTime: m.startTime || m.startedAt,
+    durationMinutes: m.durationMinutes,
+  })
+  if (ok) ElMessage.success('已复制会议邀请信息，可直接发送给参会人')
+  else ElMessage.warning('复制失败，请手动复制会议号')
 }
 
 function handleEdit(m: MeetingVo) {
@@ -499,4 +518,22 @@ onMounted(() => {
 .today-sched.chip-info { border-left-color: var(--text-tertiary); }
 .today-sched.chip-danger { border-left-color: var(--danger); }
 .today-sched.chip-success { border-left-color: var(--success); }
+.ml-end-reason {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  vertical-align: middle;
+}
+.ml-end-reason.is-normal {
+  background: var(--bg-hover);
+  color: var(--text-muted);
+}
+.ml-end-reason.is-abnormal {
+  background: rgba(245, 158, 11, 0.14);
+  color: var(--warning-text, #b45309);
+}
 </style>

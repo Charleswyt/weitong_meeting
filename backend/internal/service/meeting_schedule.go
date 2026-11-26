@@ -59,12 +59,18 @@ func (it ScheduleItem) Title() string {
 // 让三方的 scheduled 把它冲掉等于把用户刚取消的会又挂回日程。
 // 本地已知终态（ended/failed）也优先于三方 —— 三方列表端点的状态更新比单查端点慢，
 // Precheck/Reconcile 通过单查端点回写的终态更实时，不应被列表端点的旧值覆盖。
+// 本地预约为 scheduled 且上游还没有人入会时，保持「待开始」（公网会议族创建房间即报 running，
+// 不能把刚预约的未来会议直接显示成「进行中」）。
 func (it ScheduleItem) Status() string {
 	if it.Local != nil && it.Local.Status == consts.MeetingStatusCancelled {
 		return consts.MeetingStatusCancelled
 	}
 	if it.Local != nil && IsTerminalStatus(it.Local.Status) {
 		return it.Local.Status
+	}
+	if it.Local != nil && it.Local.Status == consts.MeetingStatusScheduled &&
+		it.Upstream.ActiveParticipantCount == 0 && it.Upstream.ParticipantCount == 0 {
+		return consts.MeetingStatusScheduled
 	}
 	if it.Upstream.Status != "" {
 		return it.Upstream.Status
@@ -76,11 +82,13 @@ func (it ScheduleItem) Status() string {
 }
 
 func (it ScheduleItem) StartAt() int64 {
-	if it.Upstream.StartAt > 0 {
-		return it.Upstream.StartAt
-	}
+	// 本系统创建的预约/会议优先使用预约单记录的开始时间；
+	// 公网会议族上游无预约时刻字段，会把房间创建时刻（当前时间）当 startAt 返回，不能覆盖用户预约的时间。
 	if it.Local != nil && it.Local.StartTime != nil {
 		return it.Local.StartTime.Timestamp()
+	}
+	if it.Upstream.StartAt > 0 {
+		return it.Upstream.StartAt
 	}
 	return 0
 }

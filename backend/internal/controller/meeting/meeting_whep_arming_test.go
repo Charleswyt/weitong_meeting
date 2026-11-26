@@ -145,26 +145,39 @@ func TestPrepareRoleBoundaryPerSide(t *testing.T) {
 }
 
 // controllerFuncBody 取 `func (c *Controller) <name>(` 到该函数结束的那一段。
+// 扫描同包下所有非测试 .go 文件（兼容按职责拆分后的多文件结构）；
 // 取不到就直接 fail —— 静默取空会让上面的判据变成"什么都没扫到所以全绿"。
 func controllerFuncBody(t *testing.T, name string) string {
 	t.Helper()
-	src, err := os.ReadFile("meeting.go")
+	entries, err := os.ReadDir(".")
 	if err != nil {
-		t.Fatalf("读 meeting.go 失败，判据无法成立：%v", err)
+		t.Fatalf("读取控制器目录失败，判据无法成立：%v", err)
 	}
 	sig := fmt.Sprintf("func (c *Controller) %s(", name)
-	start := strings.Index(string(src), sig)
-	if start < 0 {
-		t.Fatalf("扫不到 %s —— 函数被改名了，这条边界判据已经失效", sig)
+	for _, entry := range entries {
+		fn := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(fn, ".go") || strings.HasSuffix(fn, "_test.go") {
+			continue
+		}
+		src, rerr := os.ReadFile(fn)
+		if rerr != nil {
+			t.Fatalf("读 %s 失败，判据无法成立：%v", fn, rerr)
+		}
+		start := strings.Index(string(src), sig)
+		if start < 0 {
+			continue
+		}
+		rest := string(src)[start:]
+		end := strings.Index(rest, "\n}")
+		if end <= 0 {
+			t.Fatalf("%s 的函数体扫不出来", sig)
+		}
+		body := rest[:end]
+		if len(body) < 200 {
+			t.Fatalf("%s 函数体只扫到 %d 字节，扫描器判据已塌", sig, len(body))
+		}
+		return body
 	}
-	rest := string(src)[start:]
-	end := strings.Index(rest, "\n}")
-	if end <= 0 {
-		t.Fatalf("%s 的函数体扫不出来", sig)
-	}
-	body := rest[:end]
-	if len(body) < 200 {
-		t.Fatalf("%s 函数体只扫到 %d 字节，扫描器判据已塌", sig, len(body))
-	}
-	return body
+	t.Fatalf("扫不到 %s —— 函数被改名了，这条边界判据已经失效", sig)
+	return ""
 }

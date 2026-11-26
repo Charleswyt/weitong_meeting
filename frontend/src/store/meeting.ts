@@ -30,7 +30,7 @@ export const useMeetingStore = defineStore('meeting', () => {
 
   // 会中 UI 偏好：跨页面导航持久化（排列、面板）。
   // 组件 ref 会在 unmount 时丢失，store 不会。
-  const uiLayout = ref<'top' | 'grid' | 'right'>('top')
+  const uiLayout = ref<'top' | 'grid' | 'right'>('right')
   const uiDock = ref<'none' | 'members' | 'chat' | 'stats'>('none')
 
   // meetingId 是后端给的会话键，对外部会议（只在三方建的会）是负数，只认"有没有"不认正负。
@@ -53,14 +53,14 @@ export const useMeetingStore = defineStore('meeting', () => {
     sessionStorage.setItem('meetingTitle', title.value)
   }
 
-  async function join(no: string, displayName?: string, recordingConsent = true): Promise<JoinResult> {
-    const res = await apiJoin({ meetingNo: no, displayName, recordingConsent })
+  async function join(no: string, displayName?: string, recordingConsent = true, password?: string): Promise<JoinResult> {
+    const res = await apiJoin({ meetingNo: no, displayName, password, recordingConsent })
     const data = res.data!
     // 主持人不在场且该会允许等待：后端只把本端排队，没有真正入会。
     // 不写会话态、不换票，把 waiting 原样交给调用方展示等待态并重试。
     if (data.waiting) return data
     // 新会议 = 新会话，UI 偏好从默认值起算，不带上一场的布局/编码过来
-    uiLayout.value = 'top'
+    uiLayout.value = 'right'
     uiDock.value = 'none'
     meetingId.value = data.meetingId
     meetingNo.value = data.meetingNo
@@ -91,8 +91,8 @@ export const useMeetingStore = defineStore('meeting', () => {
 
   // enter 是"加入并进入会议页"的唯一入口：三方令牌留在服务端，前端只带会议 id 跳转。
   // 返回完整结果而非 id —— waiting 时没有可跳转的会议。
-  async function enter(no: string, displayName?: string, recordingConsent = true): Promise<JoinResult> {
-    return join(no, displayName, recordingConsent)
+  async function enter(no: string, displayName?: string, recordingConsent = true, password?: string): Promise<JoinResult> {
+    return join(no, displayName, recordingConsent, password)
   }
 
   function applyState(s: MeetingStateVo) {
@@ -119,7 +119,7 @@ export const useMeetingStore = defineStore('meeting', () => {
     // 离会即清空实测速率，侧栏卡片回到「—」，不留着上一场的数字冒充本场。
     mediaStats.value = null
     // 离会时重置 UI 偏好，下次入会用默认值
-    uiLayout.value = 'top'
+    uiLayout.value = 'right'
     uiDock.value = 'none'
     exitMeetingPage()
   }

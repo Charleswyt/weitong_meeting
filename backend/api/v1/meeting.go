@@ -50,6 +50,7 @@ type MeetingScheduleReq struct {
 	MuteOnJoin      *bool   `json:"muteOnJoin"`
 	CameraOff       *bool   `json:"cameraOff"`
 	AllowWaiting    *bool   `json:"allowWaiting"`
+	Password        string  `v:"length:0,32" json:"password"`
 	ParticipantIds  []int64 `json:"participantIds"`
 }
 
@@ -66,6 +67,7 @@ type MeetingUpdateReq struct {
 	MuteOnJoin      *bool   `json:"muteOnJoin"`
 	CameraOff       *bool   `json:"cameraOff"`
 	AllowWaiting    *bool   `json:"allowWaiting"`
+	Password        *string `v:"length:0,32" json:"password"`
 	ParticipantIds  []int64 `json:"participantIds"`
 }
 
@@ -96,6 +98,7 @@ type MeetingJoinReq struct {
 	g.Meta           `path:"/meetings/join" method:"post" tags:"会议"`
 	MeetingNo        string `v:"required" json:"meetingNo"`
 	DisplayName      string `json:"displayName"`
+	Password         string `json:"password"`
 	RecordingConsent bool   `json:"recordingConsent"`
 }
 
@@ -332,8 +335,20 @@ type MeetingPrecheckReq struct {
 }
 
 type MeetingPrecheckRes struct {
-	Joinable bool   `json:"joinable"`
-	Message  string `json:"message,omitempty"`
+	Joinable         bool   `json:"joinable"`
+	Message          string `json:"message,omitempty"`
+	RequiresPassword bool   `json:"requiresPassword,omitempty"`
+}
+
+type MeetingMuteAllReq struct {
+	g.Meta `path:"/meetings/{id}/mute-all" method:"post" tags:"会控"`
+	Id     int64 `json:"id"`
+}
+
+type MeetingKickReq struct {
+	g.Meta        `path:"/meetings/{id}/kick" method:"post" tags:"会控"`
+	Id            int64  `json:"id"`
+	ParticipantId string `v:"required" json:"participantId"`
 }
 
 type WsTicketRes struct {
@@ -352,12 +367,15 @@ type MeetingVo struct {
 	StartedAt           string `json:"startedAt"`
 	DurationMinutes     int    `json:"durationMinutes"`
 	Status              string `json:"status"`
+	// EndReason：normal 正常结束 / abnormal_exit 异常退出（开会人离会超 5 分钟自动结束）。
+	EndReason           string `json:"endReason,omitempty"`
 	Managed             bool   `json:"managed"`
 	LocalStatus         string `json:"localStatus"`
 	CloudRecord         bool   `json:"cloudRecord"`
 	MuteOnJoin          bool   `json:"muteOnJoin"`
 	CameraOffOnJoin     bool   `json:"cameraOffOnJoin"`
 	AllowWaiting        bool   `json:"allowWaiting"`
+	HasPassword         bool   `json:"hasPassword"`
 	HostName            string `json:"hostName"`
 	// IsHost 这场会的主持人是不是当前登录用户。前端据此决定"修改/取消"按钮给不给（第 6 项），
 	// 后端同样独立校验一遍 —— 前端隐藏按钮不是权限控制。

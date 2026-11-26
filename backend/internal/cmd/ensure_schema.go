@@ -42,6 +42,46 @@ func ensureMeetingLaunchKindColumn(ctx context.Context) {
 	g.Log().Infof(ctx, "已为存量库补列 meeting_appointment.LAUNCH_KIND")
 }
 
+// ensureMeetingEndReasonColumn 会议结束原因（normal 正常结束 / abnormal_exit 异常退出超时自动结束）。
+func ensureMeetingEndReasonColumn(ctx context.Context) {
+	db := g.DB()
+	rows, err := db.GetAll(ctx, `PRAGMA table_info(meeting_appointment)`)
+	if err != nil {
+		g.Log().Warningf(ctx, "读取 meeting_appointment 表结构失败，跳过 END_REASON 补列: %v", err)
+		return
+	}
+	for _, r := range rows {
+		if strings.EqualFold(r["name"].String(), "END_REASON") {
+			return
+		}
+	}
+	if _, err := db.Exec(ctx, `ALTER TABLE meeting_appointment ADD COLUMN END_REASON VARCHAR(32) DEFAULT ''`); err != nil {
+		g.Log().Warningf(ctx, "补 meeting_appointment.END_REASON 失败: %v", err)
+		return
+	}
+	g.Log().Infof(ctx, "已为存量库补列 meeting_appointment.END_REASON")
+}
+
+// ensureMeetingPasswordColumn 会议入会密码（为空表示无密码）。
+func ensureMeetingPasswordColumn(ctx context.Context) {
+	db := g.DB()
+	rows, err := db.GetAll(ctx, `PRAGMA table_info(meeting_appointment)`)
+	if err != nil {
+		g.Log().Warningf(ctx, "读取 meeting_appointment 表结构失败，跳过 MEETING_PASSWORD 补列: %v", err)
+		return
+	}
+	for _, r := range rows {
+		if strings.EqualFold(r["name"].String(), "MEETING_PASSWORD") {
+			return
+		}
+	}
+	if _, err := db.Exec(ctx, `ALTER TABLE meeting_appointment ADD COLUMN MEETING_PASSWORD VARCHAR(32) DEFAULT ''`); err != nil {
+		g.Log().Warningf(ctx, "补 meeting_appointment.MEETING_PASSWORD 失败: %v", err)
+		return
+	}
+	g.Log().Infof(ctx, "已为存量库补列 meeting_appointment.MEETING_PASSWORD")
+}
+
 // ensureAccountTypeLabels：存量库改「普通参会」→「普通用户」，并补面试用临时用户类型。
 func ensureAccountTypeLabels(ctx context.Context) {
 	db := g.DB()

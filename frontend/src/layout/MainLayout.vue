@@ -138,7 +138,6 @@
             </div>
             <div class="sidebar-user-info">
               <span class="sidebar-user-name">{{ userStore.userInfo?.displayName || '用户' }}</span>
-              <span v-if="roleLabel" class="sidebar-user-role">{{ roleLabel }}</span>
             </div>
           </div>
           <template #dropdown>
@@ -154,6 +153,18 @@
     </aside>
 
     <main class="main-content">
+      <button
+        v-if="meetingStore.inMeeting && route.name !== 'InMeeting'"
+        type="button"
+        class="return-meeting-banner"
+        @click="router.push(`/meeting/${meetingStore.meetingId}`)"
+      >
+        <span class="return-meeting-dot" />
+        <span class="return-meeting-text">
+          正在会议中{{ meetingStore.title ? `：${meetingStore.title}` : '' }}
+        </span>
+        <span class="return-meeting-cta">返回会议 <i class="ri-arrow-right-s-line" /></span>
+      </button>
       <div v-if="!userStore.linkSynced" class="link-sync-banner">
         <i class="ri-error-warning-line" /> 会议服务连接异常：录制与会中状态暂不可用。
         <span v-if="userStore.linkReason" class="link-sync-reason">{{ userStore.linkReason }}</span>
@@ -392,10 +403,6 @@ onMounted(() => {
   // 进页静默检测：已授权会刷新设备名；未询问不弹框。
   void runDeviceCheck(false)
 })
-
-const roleLabel = computed(
-  () => userStore.userInfo?.positionName || userStore.userInfo?.accountTypeName || '',
-)
 
 const menus = computed(() => {
   // 「录制会议」在离开列表页之后指向**上次看的那条回放**（续看）。存的是整条地址（含查询串），
@@ -815,26 +822,18 @@ async function onUserCommand(cmd: string) {
 
 .sidebar-user-info {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   min-width: 0;
 }
 
 .sidebar-user-name {
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 500;
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  line-height: 1.25;
-}
-
-.sidebar-user-role {
-  font-size: 11px;
-  color: var(--text-muted);
-  line-height: 1.25;
-  /* 相对原先贴名：再加大 2px */
-  margin-top: 2px;
+  line-height: 1.3;
 }
 
 .main-content {
@@ -1128,5 +1127,47 @@ async function onUserCommand(cmd: string) {
 }
 .app-shell.in-meeting .compose-float {
   bottom: calc(12px + var(--safe-bottom));
+}
+
+.return-meeting-banner {
+  flex-shrink: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: 0;
+  background: linear-gradient(90deg, #16a34a, #15803d);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+}
+.return-meeting-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #bbf7d0;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 3px rgba(187, 247, 208, 0.3);
+}
+.return-meeting-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.return-meeting-cta {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.2);
+  font-size: 12px;
+  font-weight: 600;
 }
 </style>

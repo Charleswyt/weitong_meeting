@@ -94,6 +94,20 @@
 
             <div class="setting-row">
               <div class="setting-info">
+                <span class="setting-label"><i class="ri-lock-password-line row-icon" />入会密码</span>
+                <span class="setting-desc">可选，留空表示无需密码；主持人免密进入</span>
+              </div>
+              <input
+                v-model="meetingPassword"
+                type="text"
+                maxlength="32"
+                class="pwd-input"
+                :placeholder="isEdit && props.meeting?.hasPassword ? '已设密码（留空保持不变）' : '选填，如 6 位数字'"
+              />
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-info">
                 <span class="setting-label"><i class="ri-cloud-line row-icon" />云端录制</span>
                 <span class="setting-desc">主持人在会中开启，成员同意后录制。回放由主持人分发。</span>
               </div>
@@ -133,6 +147,7 @@ const tzOffset = ref('+08:00')
 const muteOnJoin = ref(true)
 const cameraOff = ref(false)
 const allowWaiting = ref(true)
+const meetingPassword = ref('')
 const durationPreset = ref('60')
 
 const form = reactive({
@@ -210,7 +225,7 @@ async function submit() {
   try {
     // 墙钟时间 + 所选偏移直发，不做浏览器时区往返，避免跨时区预定被换算错。
     const startISO = `${form.date}T${form.time}:00${tzOffset.value === 'Z' ? 'Z' : tzOffset.value}`
-    const payload = {
+    const payload: Record<string, any> = {
       title: form.title.trim(),
       startTime: startISO,
       durationMinutes: form.durationMinutes,
@@ -219,13 +234,20 @@ async function submit() {
       cameraOff: cameraOff.value,
       allowWaiting: allowWaiting.value,
     }
+    const pwd = meetingPassword.value.trim()
+    if (!isEdit.value) {
+      if (pwd) payload.password = pwd
+    } else if (pwd) {
+      payload.password = pwd
+    }
     if (isEdit.value && props.meeting) {
-      await updateMeeting(props.meeting.id, payload)
+      await updateMeeting(props.meeting.id, payload as any)
       ElMessage.success('会议已修改')
     } else {
-      await scheduleMeeting(payload)
+      await scheduleMeeting(payload as any)
       ElMessage.success('预约成功')
     }
+    meetingPassword.value = ''
     emit('created')
     close()
   } catch {
@@ -360,6 +382,20 @@ async function submit() {
 
 .toggle-switch.on::after {
   transform: translateX(18px);
+}
+.pwd-input {
+  width: 170px;
+  height: 32px;
+  padding: 0 10px;
+  font-size: 12.5px;
+  border-radius: 7px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  outline: none;
+}
+.pwd-input:focus {
+  border-color: var(--primary);
 }
 
 .toggle-switch.disabled {

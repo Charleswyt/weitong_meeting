@@ -48,6 +48,17 @@
       </div>
     </header>
 
+    <div v-if="recoveryState !== 'idle'" class="im-recovery-bar" :class="'is-' + recoveryState">
+      <i :class="recoveryState === 'offline' ? 'ri-wifi-off-line' : recoveryState === 'failed' ? 'ri-error-warning-line' : 'ri-loader-4-line im-spin'" />
+      <span>{{ recoveryMessage }}</span>
+      <button
+        v-if="recoveryState === 'failed'"
+        type="button"
+        class="im-recovery-retry"
+        @click="triggerRecovery('手动重连', true)"
+      >立即重连</button>
+    </div>
+
     <div class="im-main">
       <!-- 舞台：自己的预览 + 远端流 -->
       <main
@@ -244,10 +255,17 @@
         </template>
       </main>
 
+      <div
+        v-if="isPhone && (panelVisible || dock === 'chat' || dock === 'stats')"
+        class="im-sheet-mask"
+        @click="closeMembers"
+      />
+
       <MemberPanel
         v-if="panelVisible"
         :rows="panelRows"
         :active-key="mainRow ? mainRow.key : ''"
+        :is-self-host="isHost"
         :register-canvas="setCanvasRef"
         :self-stream="selfStream"
         :net-text="netText"
@@ -256,6 +274,8 @@
         @close="closeMembers"
         @invite="showInvite = true"
         @focus="focusRow"
+        @mute-all="controls.handleMuteAll"
+        @kick="controls.handleKick"
       />
 
       <ChatPanel
@@ -395,15 +415,27 @@
     <MeetingAssistant ref="assistant" @leave="leave" v-model="showAssistant" :initial-tab="assistantTab" :meeting-id="meetingId" :number="String(meetingStore.meetingNo || '')" :stream="selfStream" :mic="micOn" in-meeting />
     <MeetingSettingsPopover v-model="showSettings" :apply-live="applyVideoDelivery" @changed="onPrefsChanged">
       <template #speech>
-        <template v-if="assistant && assistant.state">
-          <el-form-item label="字幕目标语言"><el-select v-model="assistant.target">
-            <el-option v-for="(name,key) in assistant.state.languages" :key="key" :label="name" :value="key" />
-          </el-select></el-form-item>
-          <el-button link v-if="!assistant.state.voiceBound" :disabled="assistant.enrolling" @click="assistant.enroll()">{{ assistant.enrolling ? '请连续讲话 4 秒…' : '绑定我的声纹' }}</el-button>
-          <el-button link v-else @click="assistant.removeVoice()">删除我的声纹</el-button>
-          <h3>本场术语库</h3>
-          <GlossarySettings :meeting-id="meetingId" :number="String(meetingStore.meetingNo || '')" :editable="assistant.state.host" />
-        </template>
+        <div v-if="assistant && assistant.state" class="im-speech-panel">
+          <el-form-item label="字幕目标语言">
+            <el-select v-model="assistant.target">
+              <el-option v-for="(name,key) in assistant.state.languages" :key="key" :label="name" :value="key" />
+            </el-select>
+          </el-form-item>
+          <div class="im-voice-row">
+            <div class="im-voice-meta">
+              <strong>声纹识别</strong>
+              <span>{{ assistant.state.voiceBound ? '已绑定，用于精准匹配你的发言' : '绑定后可更准确区分你的发言记录' }}</span>
+            </div>
+            <el-button v-if="!assistant.state.voiceBound" size="small" type="primary" plain :loading="assistant.enrolling" @click="assistant.enroll()">
+              {{ assistant.enrolling ? '请连续讲话 4 秒…' : '绑定我的声纹' }}
+            </el-button>
+            <el-button v-else size="small" type="danger" plain @click="assistant.removeVoice()">删除声纹</el-button>
+          </div>
+          <div class="im-glossary-block">
+            <h4 class="im-glossary-title"><i class="ri-book-2-line" /> 本场术语库</h4>
+            <GlossarySettings :meeting-id="meetingId" :number="String(meetingStore.meetingNo || '')" :editable="assistant.state.host" />
+          </div>
+        </div>
       </template>
     </MeetingSettingsPopover>
     <InviteMeetingDialog
@@ -445,6 +477,8 @@ import { copyText } from '@/utils/clipboard'
 import { useMeetingStore } from '@/store/meeting'
 import { useUserStore } from '@/store/user'
 import { useWebSocket } from '@/composables/useWebSocket'
+import { useMeetingRecovery } from '@/composables/useMeetingRecovery'
+import { useMeetingControls } from '@/composables/useMeetingControls'
 import { acquireMicrophoneTrack, useMediaSettings } from '@/composables/useMediaSettings'
 import { useViewport } from '@/composables/useViewport'
 import { useFaceEnhancement } from '@/composables/useFaceEnhancement'
@@ -489,6 +523,73 @@ const router = useRouter()
 const meetingStore = useMeetingStore()
 const userStore = useUserStore()
 const ws = useWebSocket()
+
+// 基础会控（全员静音 / 踢出参会人）与被控端指令响应
+const controls = useMeetingControls({
+  meetingId: () => meetingId,
+  onForcedMute: async () => {
+    if (!micOn.value) return
+    micOn.value = false
+    selfStream.value?.getAudioTracks().forEach((t) => (t.enabled = false))
+    await pushMediaState()
+    await whipAudio.unpublish().catch(() => {})
+  },
+  onKickedOut: async () => {
+    await leave()
+  },
+})
+
+ws.onMuteAll(() => { void controls.applyMuteAllEvent() })
+ws.onKicked((reason) => { void controls.applyKickedEvent(reason) })
+
+// 断网 / 休眠唤醒后的推拉流自动重连与状态提示
+const { recoveryState, recoveryMessage, triggerRecovery } = useMeetingRecovery({
+  isActive: () => admitted.value && !!meetingId && meetingStore.inMeeting,
+  reconnectWs: async () => {
+    await ws.reconnectNow()
+    const res = await getMeetingState(meetingId, true).catch(() => null)
+    if (res?.data) {
+      meetingStore.applyState(res.data)
+      ws.participants.value = res.data.participants
+      ws.invited.value = res.data.invited || []
+      ws.streams.value = res.data.streams
+    }
+  },
+  recoverPublish: async () => {
+    if (!canPublish.value) return
+    await pushMediaState()
+    if (cameraOn.value || micOn.value) {
+      const hasLiveVideo = !cameraOn.value || !!selfStream.value?.getVideoTracks().some((t) => t.readyState === 'live')
+      const hasLiveAudio = !micOn.value || !!selfStream.value?.getAudioTracks().some((t) => t.readyState === 'live')
+      if (!hasLiveVideo || !hasLiveAudio) {
+        await attachSelfMedia()
+      } else {
+        await publishSelfLanes()
+      }
+    }
+  },
+  recoverSubscribe: async () => {
+    retryBlockedUntil.clear()
+    warmingSince.clear()
+    for (const [id, p] of [...videoPlayers.entries()]) {
+      if ('failed' in p && typeof p.failed === 'function' && p.failed()) {
+        p.stop()
+        videoPlayers.delete(id)
+      }
+    }
+    for (const [id, p] of [...audioPlayers.entries()]) {
+      if (p.failed?.()) {
+        p.stop()
+        audioPlayers.delete(id)
+      }
+    }
+    await attachRemoteStreams()
+  },
+})
+
+ws.onReconnected(() => {
+  void triggerRecovery('信令已重连')
+})
 const media = useMediaSettings()
 const { isPhone, isTablet, isCompact } = useViewport()
 const faceRoi = useFaceEnhancement()
@@ -618,7 +719,8 @@ const subscribableStreams = computed(() =>
 // 右侧排列 = 左主画面卡 + 右一列 280 独立成员面板；顶部排列 = 缩略条在上、整幅主画面在下；
 // 宫格排列 = 成员即格子，不另设成员栏。
 const railOpen = ref(true)
-const showMemberRail = computed(() => layout.value === 'right' && railOpen.value)
+// 手机/平板（isCompact）下不默认展开常驻成员栏，避免一进会就被 62vh 抽屉挡住画面；统一由底部「成员」键按需唤起。
+const showMemberRail = computed(() => !isCompact.value && layout.value === 'right' && railOpen.value)
 const panelVisible = computed(() => showMemberRail.value || dock.value === 'members')
 function closeMembers() {
   if (layout.value === 'right') railOpen.value = false
@@ -645,10 +747,32 @@ function streamOfMember(id: string): StreamVo | null {
   )
 }
 
+function formatResolutionSpec(height?: number, fps?: number): string {
+  const h = Math.round(height || 0)
+  const f = Math.round(fps || 0)
+  if (h > 0 && f > 0) return `${h}p · ${f}fps`
+  if (h > 0) return `${h}p`
+  if (f > 0) return `${f}fps`
+  return ''
+}
+
 const joinedRows = computed<MemberRow[]>(() =>
   participants.value.map((p) => {
     const isSelf = p.id === myId.value
     const stream = isSelf ? null : streamOfMember(p.id)
+    const st = stream ? streamStats.value[stream.id] : null
+    let resolution = ''
+    if (isSelf) {
+      if (sharing.value) {
+        const sTrack = shareStream.value?.getVideoTracks()[0]?.getSettings()
+        resolution = formatResolutionSpec(sTrack?.height, screenFps.value || sTrack?.frameRate)
+      } else if (cameraOn.value) {
+        const cTrack = selfStream.value?.getVideoTracks()[0]?.getSettings()
+        resolution = formatResolutionSpec(cTrack?.height, cameraFps.value || cTrack?.frameRate)
+      }
+    } else if (stream) {
+      resolution = formatResolutionSpec(st?.h || stream.height, st?.fps || stream.fps)
+    }
     return {
       key: p.id,
       name: p.name,
@@ -672,6 +796,10 @@ const joinedRows = computed<MemberRow[]>(() =>
       error: stream ? streamError.value[stream.id] || '' : '',
       upKbps: isSelf ? uplinkKbps.value : null,
       downKbps: isSelf ? downlinkKbps.value : memberDownKbps.value[p.id] ?? null,
+      resolution,
+      sharing: isSelf ? sharing.value : stream?.kind === 'screen',
+      delayMs: isSelf ? (net.value?.ok ? net.value.rttMs : null) : (st?.delayMs ? st.delayMs : null),
+      codec: stream?.videoCodec ? String(stream.videoCodec).toUpperCase() : '',
     }
   }),
 )
@@ -1034,8 +1162,13 @@ function toggleDock(id: Exclude<DockId, 'none'>) {
     dock.value = 'none'
     return
   }
-  dock.value = dock.value === id ? 'none' : id
-  if (id === 'chat') {
+  const next = dock.value === id ? 'none' : id
+  dock.value = next
+  // 打开聊天或传输状态时自动收回参会成员面板，避免右侧同时出现多个面板
+  if (next === 'chat' || next === 'stats') {
+    railOpen.value = false
+  }
+  if (next === 'chat') {
     nextTick(() => {
       const el = document.querySelector('.cp-list')
       if (el) el.scrollTop = el.scrollHeight
@@ -1082,6 +1215,8 @@ async function loadInitial() {
     stageNotice.value = '尚未加入会议，请先从首页进入'
     return
   }
+  // 偏好加载与会议状态并行；历史聊天改为异步非阻塞，不拖慢画面出帧
+  void media.loadPreferences()
   try {
     const res = await getMeetingState(meetingId)
     stageNotice.value = ''
@@ -1089,8 +1224,9 @@ async function loadInitial() {
     ws.participants.value = res.data!.participants
     ws.invited.value = res.data!.invited || []
     ws.streams.value = res.data!.streams
-    const hist = await getChatMessages({ meetingId, afterId: 0, limit: 100 })
-    ws.messages.value = hist.data || []
+    void getChatMessages({ meetingId, afterId: 0, limit: 100 })
+      .then((hist) => { ws.messages.value = hist.data || [] })
+      .catch(() => { /* 聊天历史加载失败不阻断入会 */ })
   } catch (e: any) {
     // 只把后端给的可读 msg 摆上台面；链路级原文（Failed to fetch / Network Error）不进用户视野。
     const msg = e instanceof ApiError && e.reason === 'not_in_meeting'
@@ -1122,8 +1258,8 @@ async function loadInitial() {
   }
   if (!assistant.value || !(await assistant.value.admit())) return
   admitted.value = true
-  await ws.connect(meetingId)
-  await attachSelfMedia()
+  // WebSocket 建连与本地音视频采集/推流并行执行，缩短首帧出画时间
+  await Promise.all([ws.connect(meetingId), attachSelfMedia()])
   // 不从 meetingStore.self 回读按钮状态：buildState 的 cameraOn/micOn/sharing 基于三方
   // 实际发布（realMedia），而 attachSelfMedia 刚把正确意图推给后端，三方发布还没就绪——
   // 回读只会拿到旧值覆盖本地正确值（"按钮和实际不符"的根因）。本地才是真源。
@@ -1213,37 +1349,64 @@ async function attachSelfMedia() {
   }
   // 对齐三方 changeVirtualBackground → replaceCameraPublicationTrack：
   // 已发布时只原地换轨（不拆连接、不重新协商），避免跨侧转发因 publication 重建而断流。
+  // 关键修复：media.startPreview 重采时会把旧流里的音轨一起停掉，因此换视频轨时必须同步替换或重推音频轨，
+  // 否则只要开关虚化/降噪/切摄像头，whipAudio 就会绑着一条死音轨，导致对方完全听不见声音。
   const existingVideoTrack = stream.getVideoTracks().find((t) => t.readyState === 'live')
+  const existingAudioTrack = stream.getAudioTracks().find((t) => t.readyState === 'live')
   if (whip.published() && existingVideoTrack && cameraOn.value) {
-    try {
-      if (whip.canReplaceVideoTrack(existingVideoTrack)) await whip.replaceVideoTrack(existingVideoTrack)
-      else await publishCamera()
-    } catch (e) {
-      console.warn('[whip] 原地换轨失败，回退全量重发布', e)
-      await publishCamera().catch(() => {})
+    const syncTasks: Promise<void>[] = [
+      (async () => {
+        try {
+          if (whip.canReplaceVideoTrack(existingVideoTrack)) await whip.replaceVideoTrack(existingVideoTrack)
+          else await publishCamera()
+        } catch (e) {
+          console.warn('[whip] 原地换视频轨失败，回退全量重发布', e)
+          await publishCamera().catch(() => {})
+        }
+      })(),
+    ]
+    if (micOn.value && existingAudioTrack) {
+      syncTasks.push(
+        (async () => {
+          try {
+            if (whipAudio.published()) await whipAudio.replaceAudioTrack(existingAudioTrack)
+            else await publishMicrophone()
+          } catch (e) {
+            console.warn('[whip] 原地换音轨失败，回退重推麦克风', e)
+            await publishMicrophone().catch(() => {})
+          }
+        })(),
+      )
     }
+    await Promise.all(syncTasks)
   } else {
     await publishSelfLanes()
   }
 }
 
 // 本端两条发布分开走：对齐三方（restartCameraPublication），camera 发布只装视频轨，
-// 音轨走独立 audio 发布。
+// 音轨走独立 audio 发布。两条独立 WHIP 并行建连，把推流等待时间砍半。
 async function publishSelfLanes() {
-  try {
-    if (cameraOn.value) await publishCamera()
-  } catch (e) {
-    console.error('[whip] 媒体发布失败:', e)
-    const msg = describePublishError(e, '画面没能推出去，请重试')
-    if (msg) ElMessage.error(msg)
+  const tasks: Promise<void>[] = []
+  if (cameraOn.value) {
+    tasks.push(
+      publishCamera().then(() => undefined).catch((e) => {
+        console.error('[whip] 媒体发布失败:', e)
+        const msg = describePublishError(e, '画面没能推出去，请重试')
+        if (msg) ElMessage.error(msg)
+      }),
+    )
   }
-  try {
-    if (micOn.value) await publishMicrophone()
-  } catch (e) {
-    console.error('[whip] 麦克风发布失败:', e)
-    const msg = describePublishError(e, '声音没能推出去，请重试')
-    if (msg) ElMessage.error(msg)
+  if (micOn.value) {
+    tasks.push(
+      publishMicrophone().then(() => undefined).catch((e) => {
+        console.error('[whip] 麦克风发布失败:', e)
+        const msg = describePublishError(e, '声音没能推出去，请重试')
+        if (msg) ElMessage.error(msg)
+      }),
+    )
   }
+  await Promise.all(tasks)
 }
 
 // 三方逆向：camera 与麦克风是两条独立 WHIP（mediaKind 分别为 camera/audio）。
@@ -1297,15 +1460,45 @@ async function ensureLiveMicTrack(): Promise<MediaStreamTrack | null> {
   return track
 }
 
+let audioRecovering = false
+let lastAudioRecoverAt = 0
+
+async function recoverMicrophone(reason: string) {
+  if (audioRecovering || !micOn.value || !canPublish.value) return
+  const now = Date.now()
+  if (now - lastAudioRecoverAt < 3000) return
+  audioRecovering = true
+  lastAudioRecoverAt = now
+  try {
+    console.warn(`[whip] 麦克风链路异常（${reason}），正在自动恢复推流`)
+    await publishMicrophone()
+  } catch (e) {
+    console.error('[whip] 麦克风自动恢复失败:', e)
+  } finally {
+    audioRecovering = false
+  }
+}
+
 async function publishMicrophone(): Promise<boolean> {
   const at = await ensureLiveMicTrack()
   if (!at) return false
   at.enabled = true
+  // 系统拔插耳机或麦克风被其它程序抢占导致音轨意外 ended 时，自动补采并重推，避免 UI 显示开麦但对方无声。
+  const onEnded = () => {
+    at.removeEventListener('ended', onEnded)
+    if (micOn.value && canPublish.value) void recoverMicrophone('音轨意外中断')
+  }
+  at.addEventListener('ended', onEnded, { once: true })
   await whipAudio.publish(new MediaStream([at]), {
     mediaKind: 'audio',
-    targetBitrateKbps: media.prefs.value?.videoTargetBitrateKbps ?? 0,
+    targetBitrateKbps: 0,
     // 三方 audio 发布用真实麦克风 label（缺省"默认麦克风"）。
     mediaLabel: (at.label || '默认麦克风').slice(0, 128),
+    onState: (state) => {
+      if (state === 'failed' && micOn.value && canPublish.value) {
+        void recoverMicrophone('音频通道连接断开')
+      }
+    },
     onRate: (kbps) => (micUpKbps.value = kbps),
   })
   return true
@@ -2603,6 +2796,46 @@ onBeforeUnmount(() => {
 
 /* 主体 */
 .im-main { flex: 1; display: flex; min-height: 0; position: relative; }
+.im-recovery-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 7px 16px;
+  font-size: 12.5px;
+  font-weight: 500;
+  border-bottom: 1px solid var(--border-soft);
+}
+.im-recovery-bar.is-offline {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--danger-text);
+}
+.im-recovery-bar.is-recovering {
+  background: rgba(59, 130, 246, 0.12);
+  color: var(--primary-text);
+}
+.im-recovery-bar.is-failed {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+}
+.im-recovery-retry {
+  margin-left: 6px;
+  padding: 2px 10px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.im-spin {
+  display: inline-block;
+  animation: im-spin 1s linear infinite;
+}
+@keyframes im-spin {
+  to { transform: rotate(360deg); }
+}
 .im-stage {
   flex: 1; display: flex; flex-wrap: wrap; align-content: center; justify-content: center;
   gap: 14px; padding: 18px; min-width: 0; overflow-y: auto;
@@ -2778,6 +3011,13 @@ onBeforeUnmount(() => {
 }
 .im-tile.focused { border-color: var(--primary); }
 .im-video { width: 100%; height: 100%; object-fit: cover; background: #1e293b; }
+/* 主画面与共享屏幕保持原始宽高比完整展示，避免 cover 二次放大拉伸导致画面发糊或裁切边缘文字 */
+.im-stage-top .im-tile-main .im-video,
+.im-stage-right .im-tile .im-video,
+.im-tile-share .im-video {
+  object-fit: contain;
+  background: #0f172a;
+}
 /* 原型格底半透明名牌：rgba(15,23,42,.55) */
 .im-tile-foot {
   position: absolute; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
@@ -3115,7 +3355,21 @@ onBeforeUnmount(() => {
 
 /* ── 手机：稳参会优先 —— 少信息、大气口、底栏主控 ───────────────────────── */
 .im-root.is-phone {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  width: 100%;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
   padding-bottom: var(--safe-bottom);
+  touch-action: manipulation;
+}
+.im-sheet-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 11;
+  background: rgba(15, 23, 42, 0.45);
 }
 .im-root.is-phone .im-topbar {
   min-height: 48px;
@@ -3243,5 +3497,105 @@ onBeforeUnmount(() => {
     width: min(300px, 78vw) !important;
     box-shadow: -8px 0 24px rgba(0, 0, 0, 0.18);
   }
+}
+/* 会中设置弹层里的转录与术语库区块 */
+.im-speech-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.im-voice-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 13px;
+  border-radius: 10px;
+  background: var(--bg-input, var(--el-fill-color-light));
+  border: 1px solid var(--border-color, var(--el-border-color-lighter));
+}
+.im-voice-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.im-voice-meta strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, var(--el-text-color-primary));
+}
+.im-voice-meta span {
+  font-size: 12px;
+  color: var(--text-muted, var(--el-text-color-secondary));
+}
+.im-glossary-block {
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color, var(--el-border-color-lighter));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.im-glossary-title {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary, var(--el-text-color-primary));
+}
+.im-glossary-title i {
+  color: var(--primary, #165dff);
+}
+/* 会中设置弹层里的转录与术语库区块 */
+.im-speech-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.im-voice-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 13px;
+  border-radius: 10px;
+  background: var(--bg-input, var(--el-fill-color-light));
+  border: 1px solid var(--border-color, var(--el-border-color-lighter));
+}
+.im-voice-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.im-voice-meta strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, var(--el-text-color-primary));
+}
+.im-voice-meta span {
+  font-size: 12px;
+  color: var(--text-muted, var(--el-text-color-secondary));
+}
+.im-glossary-block {
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color, var(--el-border-color-lighter));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.im-glossary-title {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary, var(--el-text-color-primary));
+}
+.im-glossary-title i {
+  color: var(--primary, #165dff);
 }
 </style>

@@ -378,7 +378,9 @@ func (rg *Registry) Leave(meetingId, userId int64) {
 }
 
 func (rg *Registry) Session(meetingId, userId int64) (*Session, bool) {
+	rg.mu.RLock()
 	room, ok := rg.rooms[meetingId]
+	rg.mu.RUnlock()
 	if !ok {
 		return nil, false
 	}
@@ -393,6 +395,43 @@ func (rg *Registry) Room(meetingId int64) (*MeetingRoom, bool) {
 	defer rg.mu.RUnlock()
 	room, ok := rg.rooms[meetingId]
 	return room, ok
+}
+
+// Stats 返回当前内存中的活跃房间数与参会会话总数，供健康检查与指标采集使用。
+func (rg *Registry) Stats() (rooms, sessions int) {
+	rg.mu.RLock()
+	roomList := make([]*MeetingRoom, 0, len(rg.rooms))
+	for _, rm := range rg.rooms {
+		roomList = append(roomList, rm)
+	}
+	rg.mu.RUnlock()
+	rooms = len(roomList)
+	for _, rm := range roomList {
+		rm.mu.RLock()
+		sessions += len(rm.Sessions)
+		rm.mu.RUnlock()
+	}
+	return rooms, sessions
+}
+
+// FindSessionByParticipant 按三方 participantId 查找房间内的会话（供主持人踢人等会控使用）。
+func (rg *Registry) FindSessionByParticipant(meetingId int64, participantId string) (*Session, bool) {
+	if participantId == "" {
+		return nil, false
+	}
+	room, ok := rg.Room(meetingId)
+	if !ok {
+		return nil, false
+	}
+	room.mu.RLock()
+	defer room.mu.RUnlock()
+	for _, s := range room.Sessions {
+		if s.ParticipantId == participantId {
+			cp := *s
+			return &cp, true
+		}
+	}
+	return nil, false
 }
 
 // ExternalMeetingNo 取三方的**会议号**（拨号用的那串数字），不是会议ID。

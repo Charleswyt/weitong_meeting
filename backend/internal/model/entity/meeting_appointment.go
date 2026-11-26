@@ -27,6 +27,8 @@ type MeetingAppointment struct {
 	LaunchKind              string      `json:"lAUNCHKIND"            orm:"LAUNCH_KIND"              `     // quick/scheduled/share/voice；空则列表侧按预约/快速推断
 	LocalStatus             string      `json:"lOCALSTATUS"           orm:"LOCAL_STATUS"             `     // 字典 local_sync_status：pending/synced/failed，本系统与三方的同步态
 	Status                  string      `json:"sTATUS"                orm:"STATUS"                   `     // 字典 meeting_status：scheduled/starting/running/ended/failed/cancelled
+	EndReason               string      `json:"eNDREASON"             orm:"END_REASON"               `     // normal 正常结束 / abnormal_exit 异常退出超时自动结束
+	MeetingPassword         string      `json:"mEETINGPASSWORD"       orm:"MEETING_PASSWORD"         `     // 入会密码（为空表示无密码）
 	CreatedAt               *gtime.Time `json:"cREATEDAT"             orm:"CREATED_AT"               `     // 创建时间
 	UpdatedAt               *gtime.Time `json:"uPDATEDAT"             orm:"UPDATED_AT"               `     // 更新时间
 	DeletedAt               *gtime.Time `json:"dELETEDAT"             orm:"DELETED_AT"               `     // 软删除时间戳

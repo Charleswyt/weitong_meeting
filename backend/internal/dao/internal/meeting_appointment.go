@@ -38,6 +38,8 @@ type MeetingAppointmentColumns struct {
 	LaunchKind              string // quick/scheduled/share/voice
 	LocalStatus             string // 字典 local_sync_status：pending/synced/failed，本系统与三方的同步态
 	Status                  string // 字典 meeting_status：scheduled/starting/running/ended/failed/cancelled
+	EndReason               string // normal 正常结束 / abnormal_exit 异常退出超时自动结束
+	MeetingPassword         string // 入会密码（为空表示无密码）
 	CreatedAt               string // 创建时间
 	UpdatedAt               string // 更新时间
 	DeletedAt               string // 软删除时间戳
@@ -62,6 +64,8 @@ var meetingAppointmentColumns = MeetingAppointmentColumns{
 	LaunchKind:              "LAUNCH_KIND",
 	LocalStatus:             "LOCAL_STATUS",
 	Status:                  "STATUS",
+	EndReason:               "END_REASON",
+	MeetingPassword:         "MEETING_PASSWORD",
 	CreatedAt:               "CREATED_AT",
 	UpdatedAt:               "UPDATED_AT",
 	DeletedAt:               "DELETED_AT",

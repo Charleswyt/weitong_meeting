@@ -2,10 +2,17 @@ import { ref, computed } from 'vue'
 import type { UserSettingsVo } from '@/api/settings'
 import { getPreferences, updatePreferences } from '@/api/settings'
 import { createBgBlurTrack, type BgBlurSession } from '@/utils/bgBlur'
+import {
+  createVideoEnhanceTrack,
+  readVideoEnhanceEnabled,
+  saveVideoEnhanceEnabled,
+  type VideoEnhanceSession,
+} from '@/utils/videoEnhance'
 import { BG_BLUR_AVAILABLE } from '@/utils/virtualBackground'
 
 // 全局共享的偏好与设备状态：设置页写入、会议页读取，只此一处枚举设备。
 const prefs = ref<UserSettingsVo | null>(null)
+const videoEnhanceEnabled = ref<boolean>(readVideoEnhanceEnabled())
 const devices = ref<{
   cameras: MediaDeviceInfo[]
   microphones: MediaDeviceInfo[]
@@ -82,8 +89,14 @@ export function useMediaSettings() {
   // 背景虚化降级时的中文原因，由页面就近展示；成功处理时保持为空。
   const bgBlurNotice = ref('')
   let captureTrack: MediaStreamTrack | undefined
+  let enhanceSession: VideoEnhanceSession | null = null
   let blurSession: BgBlurSession | null = null
   const mirrorStyle = computed(() => (prefs.value?.mirrorVideo ? 'row-reverse' : 'row'))
+
+  function setVideoEnhance(on: boolean) {
+    videoEnhanceEnabled.value = on
+    saveVideoEnhanceEnabled(on)
+  }
 
   async function loadPreferences(force = false) {
     if (prefs.value && !force) return prefs.value
@@ -254,33 +267,44 @@ export function useMediaSettings() {
       captureIssue.value = { camera: audioOnly ? '未开启' : '', mic: '' }
       await enumerateDevices()
 
-      // 虚化在轨道级做：替换 startPreview 这一个出口，预览与发布（都从这里取流）自然走同一条链路。
-      // 判生效只看 vbMode；bgBlur 已在 loadPreferences 里迁移成兼容镜像。
+      // 轨道级画面处理：先 GPU 实时降噪与弱光增强，再按需叠背景虚化；预览与发布共用同一条干净流。
       captureTrack = stream.getVideoTracks()[0]
-      let outStream = stream
-      const wantBlur = !audioOnly && BG_BLUR_AVAILABLE && prefs.value?.vbMode === 'blur'
-      if (wantBlur) {
-        const sourceVideo = stream.getVideoTracks()[0]
-        if (sourceVideo) {
-          try {
-            const session = await createBgBlurTrack(sourceVideo, {
-              fps: prefs.value?.videoMaxFps,
-              onDegrade: (reason) => { bgBlurNotice.value = reason },
-            })
-            if (session) {
-              blurSession = session
-              // 源视频轨道由 session 独吞消费并负责停止，这里只把音频轨原样带过去。
-              outStream = new MediaStream([session.track, ...stream.getAudioTracks()])
-            } else if (!bgBlurNotice.value) {
-              // 内部已停掉自己开的管线；这里把源轨道放回可用状态即可（session=null 时源轨道仍活着）
-              bgBlurNotice.value = '背景虚化未生效，已按原始画面继续'
-            }
-          } catch {
-            // 处理链构建期的意外失败绝不能拖垮整条预览：退回原始流。
-            bgBlurNotice.value = '背景虚化初始化异常，已按原始画面继续'
+      let currentVideo = captureTrack
+      if (!audioOnly && currentVideo && videoEnhanceEnabled.value) {
+        try {
+          const enhanced = await createVideoEnhanceTrack(currentVideo, {
+            fps: prefs.value?.videoMaxFps,
+          })
+          if (enhanced) {
+            enhanceSession = enhanced
+            currentVideo = enhanced.track
           }
+        } catch {
+          /* GPU 处理失败时无感回退原始轨道 */
         }
       }
+
+      const wantBlur = !audioOnly && BG_BLUR_AVAILABLE && prefs.value?.vbMode === 'blur'
+      if (wantBlur && currentVideo) {
+        try {
+          const session = await createBgBlurTrack(currentVideo, {
+            fps: prefs.value?.videoMaxFps,
+            onDegrade: (reason) => { bgBlurNotice.value = reason },
+          })
+          if (session) {
+            blurSession = session
+            currentVideo = session.track
+          } else if (!bgBlurNotice.value) {
+            bgBlurNotice.value = '背景虚化未生效，已按原始画面继续'
+          }
+        } catch {
+          bgBlurNotice.value = '背景虚化初始化异常，已按原始画面继续'
+        }
+      }
+      const outStream =
+        currentVideo && currentVideo !== captureTrack
+          ? new MediaStream([currentVideo, ...stream.getAudioTracks()])
+          : stream
       localStream.value = outStream
       return outStream
     } catch (e: any) {
@@ -309,9 +333,11 @@ export function useMediaSettings() {
   }
 
   function stopPreview(stream?: MediaStream | null) {
-    // 先停处理会话（帧循环 + segmenter + 源轨道），再停对外可见的轨道。
+    // 先停处理会话（虚化 → 降噪增强 → 源轨道），再停对外可见的轨道。
     blurSession?.dispose()
     blurSession = null
+    enhanceSession?.dispose()
+    enhanceSession = null
     captureTrack = undefined
     const target = stream || localStream.value
     target?.getTracks().forEach((t) => t.stop())
@@ -360,9 +386,11 @@ export function useMediaSettings() {
     error,
     captureIssue,
     bgBlurNotice,
+    videoEnhanceEnabled,
+    setVideoEnhance,
     // Undefined selects the unprocessed sender’s media-source counter.
     capturedCameraTrack: () => captureTrack,
-    physicalCameraFrames: () => blurSession?.sourceFrames(),
+    physicalCameraFrames: () => blurSession?.sourceFrames() ?? enhanceSession?.sourceFrames(),
     mirrorStyle,
     loadPreferences,
     savePreferences,
@@ -444,7 +472,7 @@ async function captureAvailableLegs(p: UserSettingsVo | null): Promise<{
       }
     }
   }
-  await one('camera', { video: true }, { video: true })
+  await one('camera', { video: buildVideoConstraints(p) }, { video: true })
   await one(
     'mic',
     { audio: buildAudioConstraints(p) },
@@ -480,6 +508,10 @@ function buildVideoConstraints(p: UserSettingsVo | null): MediaTrackConstraints 
       video.height = { ideal: 480 }
     }
     video.frameRate = { ideal: p.videoMaxFps, max: p.videoMaxFps }
+  } else {
+    // 偏好未加载时默认请求 720p，避免浏览器回落到 640×480。
+    video.width = { ideal: 1280 }
+    video.height = { ideal: 720 }
   }
   return video
 }

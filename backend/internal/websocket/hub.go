@@ -40,6 +40,66 @@ func (h *Hub) Init(adapter *thirdparty.Adapter, registry *session.Registry) {
 	h.registry = registry
 }
 
+// ClientCount 返回当前所有会议房间内的活跃 WebSocket 连接数，供 /metrics 采集。
+func (h *Hub) ClientCount() int {
+	h.mu.Lock()
+	rooms := make([]*Room, 0, len(h.rooms))
+	for _, rm := range h.rooms {
+		rooms = append(rooms, rm)
+	}
+	h.mu.Unlock()
+	total := 0
+	for _, rm := range rooms {
+		rm.clientsMu.Lock()
+		total += len(rm.clients)
+		rm.clientsMu.Unlock()
+	}
+	return total
+}
+
+// BroadcastControl 向指定会议房间内的所有连接（可排除发起者）广播会控事件（如全员静音）。
+func (h *Hub) BroadcastControl(meetingId int64, excludeUserId int64, ev WsEvent) {
+	h.mu.Lock()
+	room, ok := h.rooms[meetingId]
+	h.mu.Unlock()
+	if !ok {
+		return
+	}
+	raw, err := json.Marshal(ev)
+	if err != nil {
+		return
+	}
+	room.clientsMu.Lock()
+	defer room.clientsMu.Unlock()
+	for ws, uid := range room.clients {
+		if excludeUserId != 0 && uid == excludeUserId {
+			continue
+		}
+		_ = ws.WriteMessage(1, raw)
+	}
+}
+
+// SendToUser 向指定会议房间里的某个用户定向发送 WS 事件（如被主持人移出会议）。
+func (h *Hub) SendToUser(meetingId, userId int64, ev WsEvent) {
+	h.mu.Lock()
+	room, ok := h.rooms[meetingId]
+	h.mu.Unlock()
+	if !ok {
+		return
+	}
+	raw, err := json.Marshal(ev)
+	if err != nil {
+		return
+	}
+	room.clientsMu.Lock()
+	defer room.clientsMu.Unlock()
+	for ws, uid := range room.clients {
+		if uid == userId {
+			_ = ws.WriteMessage(1, raw)
+		}
+	}
+}
+
 type Room struct {
 	meetingId int64
 	hub       *Hub

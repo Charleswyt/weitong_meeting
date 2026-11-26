@@ -33,20 +33,38 @@ export function describePublishError(e: unknown, fallback: string): string | nul
 }
 
 // 三方要求 offer 里带齐 candidate（无 trickle），所以等 ICE 收集完成再 POST；
-// 但收集可能因纯 host 候选而迟迟不 complete，给一个上限避免卡住入会。
-const ICE_GATHER_LIMIT_MS = 2000
+// 一旦收到首个有效候选后启动短 settle 窗口，避免无 STUN 场景白等 2 秒。
+const ICE_GATHER_LIMIT_MS = 1500
+const ICE_SETTLE_MS = 450
 
 function waitForIceComplete(pc: RTCPeerConnection): Promise<void> {
   if (pc.iceGatheringState === 'complete') return Promise.resolve()
   return new Promise((resolve) => {
+    let done = false
+    let settleTimer: ReturnType<typeof setTimeout> | null = null
+    const finish = () => {
+      if (done) return
+      done = true
+      pc.removeEventListener('icegatheringstatechange', onChange)
+      pc.removeEventListener('icecandidate', onCandidate)
+      if (settleTimer) clearTimeout(settleTimer)
+      clearTimeout(hardTimer)
+      resolve()
+    }
     const onChange = () => {
-      if (pc.iceGatheringState === 'complete') {
-        pc.removeEventListener('icegatheringstatechange', onChange)
-        resolve()
+      if (pc.iceGatheringState === 'complete') finish()
+    }
+    const onCandidate = (ev: RTCPeerConnectionIceEvent) => {
+      if (!ev.candidate) {
+        finish()
+        return
       }
+      if (settleTimer) clearTimeout(settleTimer)
+      settleTimer = setTimeout(finish, ICE_SETTLE_MS)
     }
     pc.addEventListener('icegatheringstatechange', onChange)
-    setTimeout(resolve, ICE_GATHER_LIMIT_MS)
+    pc.addEventListener('icecandidate', onCandidate)
+    const hardTimer = setTimeout(finish, ICE_GATHER_LIMIT_MS)
   })
 }
 
@@ -206,6 +224,9 @@ export function useWhipPublish(getMeetingId: () => number) {
     const capKbps = opts.targetBitrateKbps ?? 0
     const videoSender = conn.getSenders().find((s) => s.track?.kind === 'video')
     if (videoSender) {
+      if (videoTrack && opts.mediaKind === 'screen') {
+        try { videoTrack.contentHint = 'detail' } catch { /* best-effort */ }
+      }
       try {
         const params = videoSender.getParameters()
         const encodings = params.encodings?.length ? params.encodings : [{}]
@@ -214,10 +235,28 @@ export function useWhipPublish(getMeetingId: () => number) {
         // CanvasCaptureMediaStreamTrack 没有硬件帧率，不设 maxFramerate 编码器可能判轨道不活跃。
         encodings[0] = { ...encodings[0], maxFramerate: spec.fps, scaleResolutionDownBy: 1 }
         params.encodings = encodings
-        params.degradationPreference = opts.delivery ? 'maintain-framerate' : 'maintain-resolution'
+        // 共享屏幕与常规转发优先保分辨率，避免编码器因短时波动主动缩放画面；仅云端带宽优先策略保帧率。
+        const keepFramerate =
+          opts.mediaKind !== 'screen' &&
+          opts.delivery?.transportMode === 'cloud' &&
+          opts.delivery.encodingStrategy === 'bandwidth_first'
+        params.degradationPreference = keepFramerate ? 'maintain-framerate' : 'maintain-resolution'
         await videoSender.setParameters(params)
       } catch (e) {
         console.warn('[whip] 编码器参数没设进去，这路按浏览器默认走', e)
+      }
+    }
+    const audioSender = conn.getSenders().find((s) => s.track?.kind === 'audio')
+    if (audioSender && opts.mediaKind === 'audio') {
+      try {
+        const params = audioSender.getParameters()
+        const encodings = params.encodings?.length ? params.encodings : [{}]
+        // 语音通道显式保底 48kbps，避免浏览器在弱网估计初期把 Opus 压到极低码率导致断断续续
+        encodings[0] = { ...encodings[0], maxBitrate: 48_000 }
+        params.encodings = encodings
+        await audioSender.setParameters(params)
+      } catch (e) {
+        console.warn('[whip] 音频编码参数没设进去，按浏览器默认走', e)
       }
     }
     // 浏览器在这一步抛的是 DOMException（英文 name/message，如 InvalidStateError），
@@ -320,7 +359,11 @@ export function useWhipPublish(getMeetingId: () => number) {
       const params = sender.getParameters()
       if (!Array.isArray(params.encodings) || !params.encodings.length) params.encodings = [{}]
       params.encodings[0].maxFramerate = options?.delivery ? publicVideoSpec(track.getSettings(), options.preferredFps).fps : 25
-      params.degradationPreference = options?.delivery ? 'maintain-framerate' : 'maintain-resolution'
+      const keepFramerate =
+        options?.mediaKind !== 'screen' &&
+        options?.delivery?.transportMode === 'cloud' &&
+        options?.delivery.encodingStrategy === 'bandwidth_first'
+      params.degradationPreference = keepFramerate ? 'maintain-framerate' : 'maintain-resolution'
       await sender.setParameters(params)
     } catch { /* best-effort */ }
     // 生成关键帧让对端/RK 接收侧能立即解码新轨
@@ -329,11 +372,23 @@ export function useWhipPublish(getMeetingId: () => number) {
     } catch { /* 浏览器不支持时静默 */ }
   }
 
+  // 原地换音轨：切换摄像头/虚拟背景/画质降噪或拔插耳机重采后，不拆 WHIP 连接直接把新音轨送进 sender，
+  // 避免旧音轨被 stop 后对方彻底听不到声音。
+  async function replaceAudioTrack(track: MediaStreamTrack): Promise<void> {
+    if (!track || track.readyState !== 'live') throw new PublishError('替换音轨已失效')
+    if (!pc || pc.connectionState === 'closed' || pc.connectionState === 'failed') {
+      throw new PublishError('音频发布通道不可用')
+    }
+    const sender = pc.getSenders().find((s) => s.track?.kind === 'audio' || s.track === null)
+    if (!sender) throw new PublishError('找不到音频发送器')
+    await sender.replaceTrack(track)
+  }
+
   function canReplaceVideoTrack(track: MediaStreamTrack) {
     if (!options?.delivery) return true
     const next = publicVideoSpec(track.getSettings(), options.preferredFps)
     return publishedSpec?.fps === next.fps && publishedSpec.width === next.width && publishedSpec.height === next.height
   }
 
-  return { publish, unpublish, publicationIdWhenReady, canReplaceVideoTrack, published: () => !!publicationId, publicationIdOf: () => publicationId, replaceVideoTrack }
+  return { publish, unpublish, publicationIdWhenReady, canReplaceVideoTrack, published: () => !!publicationId, publicationIdOf: () => publicationId, replaceVideoTrack, replaceAudioTrack }
 }

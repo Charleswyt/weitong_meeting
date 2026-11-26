@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
@@ -20,6 +21,7 @@ import (
 	"cloud-conference-backend/internal/controller/user"
 	"cloud-conference-backend/internal/email"
 	"cloud-conference-backend/internal/middleware"
+	"cloud-conference-backend/internal/observability"
 	"cloud-conference-backend/internal/service"
 	"cloud-conference-backend/internal/service/thirdparty"
 	"cloud-conference-backend/internal/session"
@@ -38,7 +40,7 @@ var Main = gcmd.Command{
 		// 把它的 logger 指到包级默认这一个上，级别设置才管得住整份日志。
 		s.SetLogger(glog.DefaultLogger())
 
-		s.Use(middleware.Cors, middleware.ResponseHandler)
+		s.Use(middleware.Observability, middleware.Cors, middleware.ResponseHandler)
 
 		adapter := thirdparty.New()
 		tokenMgr := thirdparty.NewTokenManager(adapter)
@@ -58,9 +60,13 @@ var Main = gcmd.Command{
 
 		// 僵尸会议核对：三方会在预约时长耗尽后自行结束会议，而终态回写原先只在有人留在会中
 		// 拉状态时才发生 —— 没人挂着的那批会就永远显示"进行中"。启动补一次，之后每分钟一次。
+		// 同时巡检开会人已退出超过 5 分钟的进行中会议，自动结束并标记为异常退出（abnormal_exit）。
 		reconcileStale := func(ctx context.Context) {
 			if n := meetingSvc.ReconcileStaleRunning(ctx); n > 0 {
 				glog.Infof(ctx, "核对并回写 %d 场已结束会议", n)
+			}
+			if n := meetingSvc.AutoEndIfHostAbsent(ctx, registry, 5*time.Minute); n > 0 {
+				glog.Infof(ctx, "开会人退出超 5 分钟，自动结束 %d 场会议", n)
 			}
 		}
 		go reconcileStale(ctx)
@@ -76,6 +82,8 @@ var Main = gcmd.Command{
 		ensureUserMobileColumn(ctx)
 		ensureUserEmailColumn(ctx)
 		ensureMeetingLaunchKindColumn(ctx)
+		ensureMeetingEndReasonColumn(ctx)
+		ensureMeetingPasswordColumn(ctx)
 		ensureAccountTypeLabels(ctx)
 		smsProvider := sms.New(service.LoadSmsConfig(ctx))
 		smsAuthSvc := service.NewSmsAuthService(authSvc, smsProvider)
@@ -97,6 +105,10 @@ var Main = gcmd.Command{
 		// 不再有本地静态目录 —— 磁盘上那一份既不在备份里，也不在任何鉴权之后。
 
 		websocket.DefaultHub.Init(adapter, registry)
+		observability.Default.BindRuntime(registry.Stats, websocket.DefaultHub.ClientCount)
+		s.BindHandler("GET:/healthz", observability.HealthHandler)
+		s.BindHandler("GET:/readyz", observability.ReadyHandler)
+		s.BindHandler("GET:/metrics", observability.MetricsHandler)
 		s.BindHandler("/ws/v1/meeting", websocket.DefaultHub.Serve)
 
 		// 三方直连媒体播放器：由平台托管，这里做同源代理。
@@ -150,6 +162,8 @@ var Main = gcmd.Command{
 				g.POST("/:id/start", meetingCtrl.Start)
 				g.POST("/:id/stop", meetingCtrl.Stop)
 				g.POST("/:id/end", meetingCtrl.End)
+				g.POST("/:id/mute-all", meetingCtrl.MuteAll)
+				g.POST("/:id/kick", meetingCtrl.Kick)
 				g.POST("/:id/focus", meetingCtrl.Focus)
 				g.POST("/:id/recording/:action", meetingCtrl.Recording)
 				g.GET("/:id/media/:streamId/:kind", meetingCtrl.Media)

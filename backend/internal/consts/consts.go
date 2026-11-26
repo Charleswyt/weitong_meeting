@@ -42,6 +42,12 @@ const (
 	MeetingStatusCancelled = "cancelled"
 )
 
+// 会议结束原因（meeting_appointment.end_reason）：区分主持人正常结束与开会人异常退出/离会超时自动结束。
+const (
+	MeetingEndReasonNormal       = "normal"
+	MeetingEndReasonAbnormalExit = "abnormal_exit"
+)
+
 // 视频腿的通道机器值（对外契约 StreamVo.videoChannel，不是库里的字典列）。
 // 前端按它选播放器，不去猜错误文案：direct 走 GET 拉流，lanWhep 走 WHEP 订阅接口。
 const (

@@ -34,6 +34,9 @@
         <el-form-item label="麦克风音量">
           <el-slider v-model="micVolume" :min="0" :max="100" @change="apply" />
         </el-form-item>
+        <el-form-item label="画质降噪与弱光增强">
+          <el-switch v-model="videoEnhance" @change="applyEnhance" />
+        </el-form-item>
         <el-form-item label="背景虚化">
           <el-switch v-model="bgBlur" @change="apply" />
         </el-form-item>
@@ -66,7 +69,7 @@ import { useFaceEnhancement } from '@/composables/useFaceEnhancement'
 defineProps<{ modelValue: boolean; applyLive?: (kind: VideoKind, value: VideoDelivery) => Promise<boolean> }>()
 const emit = defineEmits<{ (e: 'update:modelValue', v: boolean): void; (e: 'changed'): void }>()
 
-const { prefs, devices, error, bgBlurNotice, loadPreferences, savePreferences, enumerateDevices } = useMediaSettings()
+const { prefs, devices, error, bgBlurNotice, videoEnhanceEnabled, setVideoEnhance, loadPreferences, savePreferences, enumerateDevices } = useMediaSettings()
 const { supported: faceSupported, enabled: faceEnabled, notice: faceNotice, loadSupport: loadFaceSupport, setEnabled: setFaceEnabled } = useFaceEnhancement()
 
 const tab = ref('devices')
@@ -75,6 +78,7 @@ const micDevice = ref('')
 const speakerDevice = ref('')
 const micVolume = ref(80)
 const bgBlur = ref(false)
+const videoEnhance = ref(videoEnhanceEnabled.value)
 const statusText = ref('')
 const statusClass = ref('')
 let statusTimer: number | null = null
@@ -100,6 +104,7 @@ async function syncFromPrefs() {
   speakerDevice.value = p?.speakerDeviceId || ''
   micVolume.value = p?.micVolume ?? 80
   bgBlur.value = p?.vbMode === 'blur'
+  videoEnhance.value = videoEnhanceEnabled.value
   await loadFaceSupport()
   faceEnabled.value = p?.faceEnhancement === 1 && faceSupported.value
   await enumerateDevices()
@@ -148,6 +153,12 @@ async function applyFace() {
   } catch {
     showStatus('人脸增强切换失败', 'err')
   }
+}
+
+function applyEnhance() {
+  setVideoEnhance(videoEnhance.value)
+  emit('changed')
+  showStatus(videoEnhance.value ? '画质降噪已开启' : '画质降噪已关闭', 'info')
 }
 </script>
 
