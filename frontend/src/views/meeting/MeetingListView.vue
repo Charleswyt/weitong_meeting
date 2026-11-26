@@ -67,7 +67,6 @@
                 <span><i class="ri-calendar-line" /> {{ timeRange(m) }}</span>
                 <span>会议号 {{ m.meetingNo || '尚未同步' }}</span>
                 <span>{{ m.creatorName || m.hostName }}<template v-if="m.creatorPositionName"> · {{ m.creatorPositionName }}</template></span>
-                <span v-if="m.cloudRecord"><i class="ri-vidicon-line" /> {{ m.status === 'running' ? '录制中' : '有录制' }}</span>
               </div>
             </div>
             <!-- 原型 操作按钮组：待开始=修改/取消+入会；已结束=查看录制；契约只允许 managed 且本端是主持人的才给改/取消 -->
@@ -117,6 +116,7 @@
     </div>
 
     <ScheduleMeetingDialog v-model="showScheduleDialog" :meeting="editingMeeting" @created="load" />
+    <MeetingAssistant v-if="replayMeeting" :model-value="true" initial-tab="record" :meeting-id="Number(replayMeeting.id)" :number="String(replayMeeting.meetingNo || '')" @update:model-value="replayMeeting=null" />
     <MeetingDetailDialog v-model="showDetail" :meeting="detailMeeting" />
   </div>
 </template>
@@ -126,6 +126,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import ScheduleMeetingDialog from '@/components/dialogs/ScheduleMeetingDialog.vue'
+import MeetingAssistant from '@/components/meeting/MeetingAssistant.vue'
 import MeetingDetailDialog from '@/components/dialogs/MeetingDetailDialog.vue'
 import { getMeetingList, getMeetingStats, cancelMeeting, stopMeeting, precheckMeeting, type MeetingVo } from '@/api/meeting'
 import { useMeetingStore } from '@/store/meeting'
@@ -142,6 +143,7 @@ const keyword = ref('')
 const activeTab = ref('all')
 const showScheduleDialog = ref(false)
 const showDetail = ref(false)
+const replayMeeting = ref<MeetingVo | null>(null)
 const detailMeeting = ref<MeetingVo | null>(null)
 const editingMeeting = ref<MeetingVo | null>(null)
 const starting = ref(false)
@@ -312,13 +314,8 @@ async function handleStop(m: MeetingVo) {
   }
 }
 
-// 原型每行都有「查看录制」；有没有货取决于真实的 cloudRecord，没有就如实说，不跳空页面装样子。
 function handleRecord(m: MeetingVo) {
-  if (!m.cloudRecord) {
-    ElMessage.info('这场会议没有开启云端录制；本地录制可在「录制管理」查看')
-    return
-  }
-  router.push('/recordings')
+  replayMeeting.value=m
 }
 
 onMounted(() => {

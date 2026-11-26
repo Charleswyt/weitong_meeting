@@ -44,6 +44,8 @@ def call(url, token):
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
+CREATE TABLE IF NOT EXISTS personal_terms(uid INTEGER PRIMARY KEY,terms TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS meeting_organizers(meeting INTEGER PRIMARY KEY, uid INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS glossary(meeting INTEGER PRIMARY KEY, terms TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS voices(meeting INTEGER, uid INTEGER, name TEXT, vec BLOB NOT NULL, PRIMARY KEY(meeting,uid));
 CREATE TABLE IF NOT EXISTS captions(id INTEGER PRIMARY KEY, meeting INTEGER, uid INTEGER, nonce TEXT, raw TEXT, text TEXT, lang TEXT, speaker TEXT, speaker_id INTEGER, attribution TEXT, at REAL, UNIQUE(meeting,uid,nonce));
@@ -52,7 +54,10 @@ CREATE TABLE IF NOT EXISTS translation(segment INTEGER, lang TEXT, text TEXT, PR
 CREATE TABLE IF NOT EXISTS materials(id TEXT PRIMARY KEY, meeting INTEGER, name TEXT, size INTEGER, digest TEXT, data BLOB, at REAL);
 CREATE TABLE IF NOT EXISTS receipts(file TEXT,uid INTEGER,at REAL,PRIMARY KEY(file,uid));
 CREATE TABLE IF NOT EXISTS minutes(meeting INTEGER PRIMARY KEY,revision INTEGER,body TEXT,at REAL,editor INTEGER);
-CREATE TABLE IF NOT EXISTS consent(meeting INTEGER,uid INTEGER,member TEXT,kinds TEXT,PRIMARY KEY(meeting,uid));
+CREATE TABLE IF NOT EXISTS caption_viewers(meeting INTEGER,number TEXT,title TEXT,member TEXT,uid INTEGER,PRIMARY KEY(meeting,member));
+CREATE TABLE IF NOT EXISTS pending_minutes(meeting INTEGER PRIMARY KEY,title TEXT);
+CREATE TABLE IF NOT EXISTS capture_hosts(capture TEXT PRIMARY KEY,uid INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS capture_consent(capture TEXT,member TEXT,uid INTEGER,kinds TEXT,PRIMARY KEY(capture,member,uid));
 CREATE TABLE IF NOT EXISTS captures(id TEXT PRIMARY KEY,meeting INTEGER,number TEXT,audience TEXT,allowed TEXT,status TEXT,at REAL);
 CREATE UNIQUE INDEX IF NOT EXISTS active_capture ON captures(meeting) WHERE status='running';
 CREATE TABLE IF NOT EXISTS files(id TEXT PRIMARY KEY,meeting INTEGER,capture TEXT,owner INTEGER,kind TEXT,status TEXT,at REAL,bytes INTEGER DEFAULT 0);
@@ -106,10 +111,29 @@ class App:
             sqlite3.connect(Path(self.cfg["meetings"]).as_uri() + "?mode=ro", uri=True, timeout=3)
         ) as c:
             c.row_factory = sqlite3.Row
-            row = c.execute(
-                "select ID,TITLE,CREATOR_ID,THIRD_PARTY_MEETING_ID,THIRD_PARTY_MEETING_NUMBER from meeting_appointment where ID=? and DELETED_AT is null",
-                (mid,),
-            ).fetchone()
+            lookup = (
+                "select ID,TITLE,CREATOR_ID,STATUS,THIRD_PARTY_MEETING_ID,THIRD_PARTY_MEETING_NUMBER "
+                "from meeting_appointment where DELETED_AT is null and "
+            )
+            row = c.execute(lookup + "ID=?", (mid,)).fetchone()
+            if not row:
+                # External rooms use the upstream number and the Go registry FNV-1a session key.
+                h = 14695981039346656037
+                for b in external.encode():
+                    h = ((h ^ b) * 1099511628211) & ((1 << 64) - 1)
+                need(
+                    re.fullmatch(r"[0-9]{6,12}", external)
+                    and mid == ((1 << 52) | ((h & ((1 << 40) - 1)) + 1)),
+                    404,
+                    "找不到会议",
+                )
+                row = c.execute(
+                    lookup
+                    + "(THIRD_PARTY_MEETING_NUMBER=? or THIRD_PARTY_MEETING_ID=?) order by ID desc limit 1",
+                    (external, external),
+                ).fetchone()
+                if row:
+                    mid = row["ID"]
             if row:
                 number = str(
                     row["THIRD_PARTY_MEETING_NUMBER"] or row["THIRD_PARTY_MEETING_ID"] or ""
@@ -129,16 +153,6 @@ class App:
                     ).fetchone()
                 )
             else:
-                # External rooms use the upstream number and the Go registry FNV-1a session key.
-                h = 14695981039346656037
-                for b in external.encode():
-                    h = ((h ^ b) * 1099511628211) & ((1 << 64) - 1)
-                need(
-                    re.fullmatch(r"[0-9]{6,12}", external)
-                    and mid == ((1 << 52) | ((h & ((1 << 40) - 1)) + 1)),
-                    404,
-                    "找不到会议",
-                )
                 number = external
                 title = "会议 " + external
                 host = invited = False
@@ -158,6 +172,26 @@ class App:
             None,
         )
         host = host or bool(member and member["host"])
+        organizer = (
+            row["CREATOR_ID"]
+            if row
+            else next(
+                (
+                    int(m["subject"])
+                    for m in room.get("members", [])
+                    if m["source"] == "weitong" and m["host"]
+                ),
+                None,
+            )
+        )
+        with self.db() as c:
+            if organizer:
+                c.execute("insert or ignore into meeting_organizers values(?,?)", (mid, organizer))
+            elif not row:
+                known = c.execute(
+                    "select uid from meeting_organizers where meeting=?", (mid,)
+                ).fetchone()
+                host = host or bool(known and known[0] == uid)
         need(host or invited or historical or member, 403, "没有此会议的访问权限")
         return dict(
             id=mid,
@@ -167,16 +201,39 @@ class App:
             title=title,
             host=host,
             member=member,
+            roster={m["id"] for m in room.get("members", [])},
+            ended=bool(row and row["STATUS"] == "ended"),
             history=bool(host or historical or member),
         )
 
     def terms(self, c, mid):
         row = c.execute("select terms from glossary where meeting=?", (mid,)).fetchone()
-        return {**DEFAULT_TERMS, **(json.loads(row[0]) if row else {})}
+        personal = c.execute(
+            "select t.terms from personal_terms t join meeting_organizers o on t.uid=o.uid where o.meeting=?",
+            (mid,),
+        ).fetchone()
+        return {
+            **DEFAULT_TERMS,
+            **(json.loads(personal[0]) if personal else {}),
+            **(json.loads(row[0]) if row else {}),
+        }
+
+    def personal_terms(self, uid, body=None):
+        with self.db() as c:
+            if body is not None:
+                terms = words(body.get("terms"))
+                c.execute(
+                    "insert or replace into personal_terms values(?,?)",
+                    (uid, json.dumps(terms, ensure_ascii=False)),
+                )
+            row = c.execute("select terms from personal_terms where uid=?", (uid,)).fetchone()
+        return {"terms": {**DEFAULT_TERMS, **(json.loads(row[0]) if row else {})}}
 
     @staticmethod
     def can_export(row, a):
-        return a["host"] or (
+        return (
+            a["uid"] == row["capture_host"] if row["capture_host"] is not None else a["host"]
+        ) or (
             a["history"]
             and (
                 row["audience"] == "attendees"
@@ -188,10 +245,24 @@ class App:
         mid = a["id"]
         uid = a["uid"]
         with self.db() as c:
+            member_id = (a["member"] or {}).get("id", "")
             consent = c.execute(
-                "select kinds from consent where meeting=? and uid=? and member=?",
-                (mid, uid, (a["member"] or {}).get("id", "")),
+                "select cc.kinds from capture_consent cc join captures r on r.id=cc.capture "
+                "where r.meeting=? and r.status='running' and cc.uid=? and cc.member=?",
+                (mid, uid, member_id),
             ).fetchone()
+            viewers = {
+                r[0]
+                for r in c.execute("select member from caption_viewers where meeting=?", (mid,))
+            }
+            managed = [
+                dict(id=r["id"], at=r["at"], status=r["status"], users=json.loads(r["allowed"]))
+                for r in c.execute(
+                    "select r.* from captures r join capture_hosts h on h.capture=r.id "
+                    "where r.meeting=? and h.uid=? order by r.at desc",
+                    (mid, uid),
+                )
+            ]
             materials = [
                 dict(r)
                 for r in c.execute(
@@ -206,7 +277,7 @@ class App:
                 captions = [dict(r) for r in c.execute(query, (mid, after))]
             minutes = (
                 c.execute("select revision,body,at from minutes where meeting=?", (mid,)).fetchone()
-                if has
+                if has and a["ended"]
                 else None
             )
             running = c.execute(
@@ -215,7 +286,7 @@ class App:
             files = []
             if has:
                 for r in c.execute(
-                    "select f.id,f.kind,f.owner,f.status,f.bytes,f.at,c.audience,c.allowed from files f join captures c on c.id=f.capture where f.meeting=? and f.status in ('ready','writing') order by f.at desc",
+                    "select f.id,f.kind,f.owner,f.status,f.bytes,f.at,c.audience,c.allowed,h.uid capture_host from files f join captures c on c.id=f.capture left join capture_hosts h on h.capture=c.id where f.meeting=? and f.status in ('ready','writing') order by f.at desc",
                     (mid,),
                 ):
                     if self.can_export(r, a):
@@ -235,6 +306,12 @@ class App:
                 host=a["host"],
                 live=bool(a["member"]),
                 history=has,
+                transcription={
+                    "enabled": member_id in viewers,
+                    "active": bool(viewers & a["roster"]),
+                },
+                managedCaptures=managed,
+                minutesStatus="ready" if minutes else ("ended" if a["ended"] else "processing"),
                 terms=self.terms(c, mid),
                 materials=materials,
                 captions=captions,
@@ -259,6 +336,22 @@ class App:
                 (a["id"], json.dumps(terms, ensure_ascii=False)),
             )
         return {"count": len(terms)}
+
+    def transcription(self, a, enabled):
+        need(a["member"] and not a["ended"], 403, "请先入会")
+        need(type(enabled) is bool, 400, "enabled 必须是布尔值")
+        with self.db() as c:
+            if enabled:
+                c.execute(
+                    "insert or ignore into caption_viewers values(?,?,?,?,?)",
+                    (a["id"], a["number"], a["title"], a["member"]["id"], a["uid"]),
+                )
+            else:
+                c.execute(
+                    "delete from caption_viewers where meeting=? and member=? and uid=?",
+                    (a["id"], a["member"]["id"], a["uid"]),
+                )
+        return {"enabled": enabled}
 
     def bind(self, a, blob):
         mid, uid = a["id"], a["uid"]
@@ -296,7 +389,16 @@ class App:
             ).fetchone()
             if prev:
                 return {"id": prev[0]}
-        pcm = samples(blob)
+        with self.db() as c:
+            if any(
+                r[0] in a["roster"]
+                for r in c.execute("select member from caption_viewers where meeting=?", (mid,))
+            ):
+                return {"id": None}  # The cloud already reads this published microphone.
+        return self.caption_pcm(a, samples(blob), nonce, language, time.time())
+
+    def caption_pcm(self, a, pcm, nonce, language, at):
+        mid, uid = a["id"], a["uid"]
         if float(np.sqrt(np.mean(pcm**2))) < 0.0015:
             return {"id": None}
         with self.slot():
@@ -334,9 +436,10 @@ class App:
                     name,
                     speaker_id,
                     "voice" if match else "microphone",
-                    time.time(),
+                    at,
                 ),
             )
+            c.execute("insert or ignore into pending_minutes values(?,?)", (mid, a["title"]))
             return {
                 "id": c.execute(
                     "select id from captions where meeting=? and uid=? and nonce=?",
@@ -429,8 +532,42 @@ class App:
                     )
         return (rows[0]["name"], data) if fid else ("会议材料包.zip", buf.getvalue())
 
+    def finish_minutes(self):
+        with self.db() as c:
+            pending = c.execute("select meeting,title from pending_minutes").fetchall()
+        if not pending:
+            return
+        with contextlib.closing(
+            sqlite3.connect(Path(self.cfg["meetings"]).as_uri() + "?mode=ro", uri=True)
+        ) as meetings:
+            for mid, title in pending:
+                status = meetings.execute(
+                    "select STATUS from meeting_appointment where ID=? and DELETED_AT is null",
+                    (mid,),
+                ).fetchone()
+                if not status or status[0] != "ended":
+                    continue
+                with self.db() as c:
+                    c.execute("begin immediate")
+                    rows = c.execute(
+                        "select id,text,speaker,at from captions where meeting=? order by at,id",
+                        (mid,),
+                    ).fetchall()
+                    if rows:
+                        existing = c.execute(
+                            "select editor from minutes where meeting=?", (mid,)
+                        ).fetchone()
+                        if not existing or existing[0] is None:
+                            c.execute(
+                                "insert into minutes values(?,1,?,?,null) on conflict(meeting) do update set "
+                                "body=excluded.body,revision=minutes.revision+1,at=excluded.at",
+                                (mid, draft(title, rows), time.time()),
+                            )
+                    c.execute("delete from pending_minutes where meeting=?", (mid,))
+
     def minutes(self, a, body):
         need(a["host"], 403, "需要主持人权限")
+        need(a["ended"], 409, "会议结束后整理纪要")
         mid = a["id"]
         with self.db() as c:
             c.execute("begin immediate")
@@ -461,9 +598,14 @@ class App:
             "无效的录制轨道",
         )
         with self.db() as c:
+            c.execute("begin immediate")
+            job = c.execute(
+                "select id from captures where meeting=? and status='running'", (a["id"],)
+            ).fetchone()
+            need(job and job[0] == body.get("captureId"), 409, "录制场次已变更，请重新确认")
             c.execute(
-                "insert or replace into consent values(?,?,?,?)",
-                (a["id"], a["uid"], a["member"]["id"], ",".join(sorted(set(kinds)))),
+                "insert or replace into capture_consent values(?,?,?,?)",
+                (job[0], a["member"]["id"], a["uid"], ",".join(sorted(set(kinds)))),
             )
         return {"kinds": kinds}
 
@@ -471,38 +613,63 @@ class App:
         need(a["host"], 403, "需要主持人权限")
         mid = a["id"]
         with self.db() as c:
+            c.execute("begin immediate")
             if stop:
                 c.execute(
                     "update captures set status='finished' where meeting=? and status='running'",
                     (mid,),
                 )
                 return {"running": False}
-            need(a["member"], 403, "请先入会")
-            aud = body.get("audience", "attendees")
-            allow = body.get("users", [])
+            need(a["member"] and not a["ended"], 403, "请先入会")
             need(
-                aud in ("host", "attendees", "selected")
-                and isinstance(allow, list)
-                and len(allow) <= 100
-                and all(type(x) is int and x > 0 for x in allow)
-                and (aud != "selected" or allow),
+                body.get("audience", "host") == "host" and not body.get("users"),
                 400,
-                "回放范围无效",
+                "录制结束后可分发回放",
             )
             fid = secrets.token_hex(16)
             try:
                 c.execute(
-                    "insert into captures values(?,?,?,?,?,'running',?)",
-                    (fid, mid, a["number"], aud, json.dumps(allow), time.time()),
+                    "insert into captures values(?,?,?,'host','[]','running',?)",
+                    (fid, mid, a["number"], time.time()),
                 )
             except sqlite3.IntegrityError:
                 raise Problem(409, "本场已经在录制")
+            c.execute("insert into capture_hosts values(?,?)", (fid, a["uid"]))
+            c.execute(
+                "insert into capture_consent values(?,?,?,?)",
+                (fid, a["member"]["id"], a["uid"], "camera,microphone,screen"),
+            )
             return {"running": True, "id": fid}
+
+    def share(self, a, capture_id, users):
+        need(
+            isinstance(users, list)
+            and len(users) <= 100
+            and all(type(uid) is int and uid > 0 for uid in users),
+            400,
+            "请输入有效的参会账号 ID",
+        )
+        users = sorted(set(users) - {a["uid"]})
+        with self.db() as c:
+            c.execute("begin immediate")
+            row = c.execute(
+                "select c.status,h.uid from captures c join capture_hosts h on c.id=h.capture "
+                "where c.id=? and c.meeting=?",
+                (capture_id, a["id"]),
+            ).fetchone()
+            need(row, 404, "找不到该次录制")
+            need(row["uid"] == a["uid"], 403, "仅发起录制的主持人可分发回放")
+            need(row["status"] != "running", 409, "请先停止该次录制")
+            c.execute(
+                "update captures set audience=?,allowed=? where id=?",
+                ("selected" if users else "host", json.dumps(users), capture_id),
+            )
+        return {"users": users}
 
     def recording(self, a, fid):
         with self.db() as c:
             r = c.execute(
-                "select f.*,c.audience,c.allowed from files f join captures c on c.id=f.capture where f.id=? and f.meeting=? and f.status='ready'",
+                "select f.*,c.audience,c.allowed,h.uid capture_host from files f join captures c on c.id=f.capture left join capture_hosts h on h.capture=c.id where f.id=? and f.meeting=? and f.status='ready'",
                 (fid, a["id"]),
             ).fetchone()
             need(r, 404, "录制文件尚未就绪")

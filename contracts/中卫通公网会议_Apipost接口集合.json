@@ -2,8 +2,8 @@
   "info": {
     "name": "中卫通公网会议 · 前端联调",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "version": "1.5.0",
-    "description": "中卫通公网会议 · 前端联调\n\nApipost 导入本文件时选择 Postman Collection v2.1。新会议网页使用「06 中卫通网页」这一组，业务接口用会议账号令牌，登录响应可自动填写。当前网页同时在「设置 → 视频传输」和「会中设置 → 视频传输传输」提供摄像头、共享屏幕的独立配置。\n\n原始转发保留浏览器送来的编码。阿里云软件压缩输出 H.264，可选择 source_frames（原始帧率），bandwidth_first（动态帧率），或 optimized（优化策略）。后者按源短边自动选择 360p 或 540p 上限，保留宽高比，使用动态帧率、全帧 AQ 和渐进刷新。动态帧率取决于目标码率和画面复杂度。独立麦克风继续走音频轨。\n\n业务网页用 POST /meetings/{id}/publications 创建发布，PUT /meetings/{id}/publications/{pubId}/settings 会中修改，GET /meetings/{id}/state 或 WS streams 帧观察状态。目标码率单位为 kbps，云端输出和浏览器上行分别设置。完整网页 OpenAPI 与本集合在同一入口，文件名为 api.openapi.yaml。工作台打开独立中卫通网页。\n\n00–05 组保留底层媒体和平台联调。媒体房间号与网页会议记录 id 含义不同。底层 /rooms 操作使用该组签发的 participantToken。网页 /meetings 使用网页登录签发的 webToken。WHIP/WHEP 请求使用 application/sdp 和浏览器本次生成的 offer。本机直接预览本地轨道。云端收到发布流后按所选策略持续工作，全部观看端离开后仍可查询压缩比。订阅自身发布返回 403。\n\ndecodedFrameKbps 按发布端解码后逐帧可见像素字节计算。publishKbps 取该路视频 RTP 已发送字节增量。cloudInputKbps 和 cloudOutputKbps 表示云端编码视频的输入和单份输出。四项单位均为十进制 kbps。viewerCount 只计 WebRTC 观看连接，publicEgressKbps 为发给这些观看端的合计速率。无人观看时两项均为 0。每路云端视频压缩比为 cloudInputKbps / cloudOutputKbps，按阿里云接收和单份编码输出的视频有效载荷计算。发布端和所有观看端读取同一个 compressionRatio。两项速率均为正时返回两位小数的倍率。原始转发显示直传，缺样显示「—」。本端带宽只显示浏览器实际媒体上行和下行。各采样窗口可能略有错位，缺失样本使用 null。"
+    "version": "1.6.0",
+    "description": "中卫通公网会议 · 前端联调\n\nApipost 导入本文件时选择 Postman Collection v2.1。新会议网页使用「06 中卫通网页」这一组，业务接口用会议账号令牌，登录响应可自动填写。当前网页同时在「设置 → 视频传输」和「会中设置 → 视频传输」提供摄像头、共享屏幕的独立配置。\n\n原始转发保留浏览器送来的编码。阿里云软件压缩输出 H.264，可选择 source_frames（原始帧率），bandwidth_first（动态帧率），或 optimized（优化策略）。后者按源短边自动选择 360p 或 540p 上限，保留宽高比，使用动态帧率、全帧 AQ 和渐进刷新。动态帧率取决于目标码率和画面复杂度。独立麦克风继续走音频轨。\n\n业务网页用 POST /meetings/{id}/publications 创建发布，PUT /meetings/{id}/publications/{pubId}/settings 会中修改，GET /meetings/{id}/state 或 WS streams 帧观察状态。目标码率单位为 kbps，云端输出和浏览器上行分别设置。完整网页 OpenAPI 与本集合在同一入口，文件名为 api.openapi.yaml。工作台打开独立中卫通网页。\n\n00–05 组保留底层媒体和平台联调。媒体房间号与网页会议记录 id 含义不同。底层 /rooms 操作使用该组签发的 participantToken。网页 /meetings 使用网页登录签发的 webToken。WHIP/WHEP 请求使用 application/sdp 和浏览器本次生成的 offer。本机直接预览本地轨道。云端收到发布流后按所选策略持续工作，全部观看端离开后仍可查询压缩比。订阅自身发布返回 403。\n\ndecodedFrameKbps 按发布端解码后逐帧可见像素字节计算。publishKbps 取该路视频 RTP 已发送字节增量。cloudInputKbps 和 cloudOutputKbps 表示云端编码视频的输入和单份输出。四项单位均为十进制 kbps。viewerCount 只计 WebRTC 观看连接，publicEgressKbps 为发给这些观看端的合计速率。无人观看时两项均为 0。每路云端视频压缩比为 cloudInputKbps / cloudOutputKbps，按阿里云接收和单份编码输出的视频有效载荷计算。发布端和所有观看端读取同一个 compressionRatio。两项速率均为正时返回两位小数的倍率。原始转发显示直传，缺样显示「—」。本端带宽只显示浏览器实际媒体上行和下行。各采样窗口可能略有错位，缺失样本使用 null。\n1.6.0 在第 07 组提供全场麦克风转录开关、逐场录制同意、回放分发和主持人词库。"
   },
   "variable": [
     {
@@ -247,6 +247,11 @@
     },
     {
       "key": "chunkUuid",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "captureId",
       "value": "",
       "type": "string"
     }
@@ -6739,7 +6744,7 @@
                 "value": "Bearer {{meetingAccessToken}}"
               }
             ],
-            "description": "查询参数 after 为最后已读转录 ID，默认 0，每页最多 100 条。返回 host/live/history、languages、terms、captions、voiceBound、consent、capture、files、minutes 和 materials。",
+            "description": "after 为最后已读转录 ID，每页最多 100 条。transcription.enabled 属于当前入会成员，active 表示场内有人使用字幕。managedCaptures 仅返回本人主持的录制。会中 minutesStatus 为 processing，正文为空。",
             "url": {
               "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/state?after=0",
               "host": [
@@ -6769,7 +6774,7 @@
                     "value": "Bearer {{meetingAccessToken}}"
                   }
                 ],
-                "description": "查询参数 after 为最后已读转录 ID，默认 0，每页最多 100 条。返回 host/live/history、languages、terms、captions、voiceBound、consent、capture、files、minutes 和 materials。",
+                "description": "after 为最后已读转录 ID，每页最多 100 条。transcription.enabled 属于当前入会成员，active 表示场内有人使用字幕。managedCaptures 仅返回本人主持的录制。会中 minutesStatus 为 processing，正文为空。",
                 "url": {
                   "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/state?after=0",
                   "host": [
@@ -6796,7 +6801,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"meeting\": 42,\n  \"title\": \"技术例会\",\n  \"host\": true,\n  \"live\": true,\n  \"history\": true,\n  \"languages\": {\n    \"zh\": \"中文\",\n    \"en\": \"English\"\n  },\n  \"terms\": {\n    \"Ka 卫星\": [\n      \"卡卫星\"\n    ]\n  },\n  \"voiceBound\": true,\n  \"consent\": [\n    \"camera\"\n  ],\n  \"capture\": {\n    \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n    \"audience\": \"attendees\",\n    \"at\": 1795600000.0\n  },\n  \"files\": [\n    {\n      \"id\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\n      \"kind\": \"camera\",\n      \"owner\": 12,\n      \"status\": \"ready\",\n      \"bytes\": 87040,\n      \"at\": 1795600000.0,\n      \"archived\": true\n    }\n  ],\n  \"materials\": [\n    {\n      \"id\": \"cccccccccccccccccccccccc\",\n      \"name\": \"议程.pdf\",\n      \"size\": 512,\n      \"digest\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"at\": 1795600000.0,\n      \"downloads\": 2\n    }\n  ],\n  \"minutes\": {\n    \"revision\": 2,\n    \"body\": \"# 技术例会\",\n    \"at\": 1795600000.0\n  },\n  \"captions\": [\n    {\n      \"id\": 1,\n      \"uid\": 12,\n      \"raw\": \"卡卫星\",\n      \"text\": \"Ka 卫星\",\n      \"lang\": \"zh\",\n      \"speaker\": \"测试用户\",\n      \"speaker_id\": 12,\n      \"attribution\": \"voice\",\n      \"at\": 1795600000.0\n    }\n  ]\n}"
+              "body": "{\n  \"meeting\": 42,\n  \"title\": \"技术例会\",\n  \"host\": true,\n  \"live\": true,\n  \"history\": true,\n  \"languages\": {\n    \"zh\": \"中文\",\n    \"en\": \"English\"\n  },\n  \"terms\": {\n    \"Ka 卫星\": [\n      \"卡卫星\"\n    ]\n  },\n  \"voiceBound\": true,\n  \"consent\": [\n    \"camera\"\n  ],\n  \"capture\": {\n    \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n    \"audience\": \"attendees\",\n    \"at\": 1795600000.0\n  },\n  \"files\": [\n    {\n      \"id\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\n      \"kind\": \"camera\",\n      \"owner\": 12,\n      \"status\": \"ready\",\n      \"bytes\": 87040,\n      \"at\": 1795600000.0,\n      \"archived\": true\n    }\n  ],\n  \"materials\": [\n    {\n      \"id\": \"cccccccccccccccccccccccc\",\n      \"name\": \"议程.pdf\",\n      \"size\": 512,\n      \"digest\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"at\": 1795600000.0,\n      \"downloads\": 2\n    }\n  ],\n  \"minutes\": null,\n  \"captions\": [\n    {\n      \"id\": 1,\n      \"uid\": 12,\n      \"raw\": \"卡卫星\",\n      \"text\": \"Ka 卫星\",\n      \"lang\": \"zh\",\n      \"speaker\": \"测试用户\",\n      \"speaker_id\": 12,\n      \"attribution\": \"voice\",\n      \"at\": 1795600000.0\n    }\n  ],\n  \"transcription\": {\n    \"enabled\": true,\n    \"active\": true\n  },\n  \"minutesStatus\": \"processing\",\n  \"managedCaptures\": []\n}"
             }
           ]
         },
@@ -7041,7 +7046,7 @@
                 "value": "audio/wav"
               }
             ],
-            "description": "本人在会，传 0.35 至 16 秒 WAV 和每段唯一的 Idempotency-Key。返回 id，静音则返回 null。",
+            "description": "兼容旧版单麦上传。云端实时转录已开启时，同一房间的浏览器上传不再重复入库。",
             "url": {
               "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/captions",
               "host": [
@@ -7079,7 +7084,7 @@
                     "value": "audio/wav"
                   }
                 ],
-                "description": "本人在会，传 0.35 至 16 秒 WAV 和每段唯一的 Idempotency-Key。返回 id，静音则返回 null。",
+                "description": "兼容旧版单麦上传。云端实时转录已开启时，同一房间的浏览器上传不再重复入库。",
                 "url": {
                   "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/captions",
                   "host": [
@@ -7335,7 +7340,7 @@
                 "value": "application/json"
               }
             ],
-            "description": "本次入会有效。传空数组撤销，camera/microphone/screen 可独立授权。",
+            "description": "同意绑定到当前账号、成员实例与本次 captureId。停止再开、离会再入均须重新同意。",
             "url": {
               "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/consent",
               "host": [
@@ -7349,7 +7354,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"kinds\": [\n    \"microphone\",\n    \"camera\"\n  ]\n}",
+              "raw": "{\n  \"captureId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"kinds\": [\n    \"camera\",\n    \"microphone\",\n    \"screen\"\n  ]\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -7372,7 +7377,7 @@
                     "value": "application/json"
                   }
                 ],
-                "description": "本次入会有效。传空数组撤销，camera/microphone/screen 可独立授权。",
+                "description": "同意绑定到当前账号、成员实例与本次 captureId。停止再开、离会再入均须重新同意。",
                 "url": {
                   "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/consent",
                   "host": [
@@ -7386,7 +7391,7 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"kinds\": [\n    \"microphone\",\n    \"camera\"\n  ]\n}",
+                  "raw": "{\n  \"captureId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"kinds\": [\n    \"camera\",\n    \"microphone\",\n    \"screen\"\n  ]\n}",
                   "options": {
                     "raw": {
                       "language": "json"
@@ -7420,7 +7425,7 @@
                 "value": "application/json"
               }
             ],
-            "description": "主持人在会；audience 可选 attendees、host 或 selected，selected 需传账号整数 ID 数组。",
+            "description": "主持人明确同意后启动本次录制。回放默认仅发起者可见。其他入会成员须按本次 captureId 授权已发布轨道。",
             "url": {
               "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/capture",
               "host": [
@@ -7434,7 +7439,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"audience\": \"attendees\",\n  \"users\": []\n}",
+              "raw": "{}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -7457,7 +7462,7 @@
                     "value": "application/json"
                   }
                 ],
-                "description": "主持人在会；audience 可选 attendees、host 或 selected，selected 需传账号整数 ID 数组。",
+                "description": "主持人明确同意后启动本次录制。回放默认仅发起者可见。其他入会成员须按本次 captureId 授权已发布轨道。",
                 "url": {
                   "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/capture",
                   "host": [
@@ -7471,7 +7476,7 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"audience\": \"attendees\",\n  \"users\": []\n}",
+                  "raw": "{}",
                   "options": {
                     "raw": {
                       "language": "json"
@@ -7590,7 +7595,7 @@
                 "value": "application/json"
               }
             ],
-            "description": "主持人传 generate=true 生成；手动保存传 body 和当前 revision，版本不符返回 409。",
+            "description": "既有会后校订接口。会中返回 409。会议结束后后台整理本地转录，本版不接外部纪要服务。",
             "url": {
               "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/minutes",
               "host": [
@@ -7627,7 +7632,7 @@
                     "value": "application/json"
                   }
                 ],
-                "description": "主持人传 generate=true 生成；手动保存传 body 和当前 revision，版本不符返回 409。",
+                "description": "既有会后校订接口。会中返回 409。会议结束后后台整理本地转录，本版不接外部纪要服务。",
                 "url": {
                   "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/minutes",
                   "host": [
@@ -7671,7 +7676,7 @@
                 "value": "Bearer {{meetingAccessToken}}"
               }
             ],
-            "description": "返回 UTF-8 Markdown，包含来源发言。",
+            "description": "既有导出接口，会议结束且已有纪要后可用。",
             "url": {
               "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/minutes/export",
               "host": [
@@ -7686,6 +7691,326 @@
             }
           },
           "response": []
+        },
+        {
+          "name": "开关转录与翻译",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{meetingAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "观看端打开后，云端按已发布的麦克风逐人识别，多个观看端共享结果。静音观看者也可开启。最后一位观看者关闭或离会后停止读取音轨。",
+            "url": {
+              "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/transcription",
+              "host": [
+                "{{assistantUrl}}"
+              ],
+              "path": [
+                "meetings",
+                "{{assistantMeetingId}}",
+                "transcription"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "成功示例",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{meetingAccessToken}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "description": "观看端打开后，云端按已发布的麦克风逐人识别，多个观看端共享结果。静音观看者也可开启。最后一位观看者关闭或离会后停止读取音轨。",
+                "url": {
+                  "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/transcription",
+                  "host": [
+                    "{{assistantUrl}}"
+                  ],
+                  "path": [
+                    "meetings",
+                    "{{assistantMeetingId}}",
+                    "transcription"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"enabled\": true\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"enabled\": true\n}"
+            }
+          ]
+        },
+        {
+          "name": "分发或收回录制回放",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{meetingAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "录制停止后由发起录制的主持人替换允许领取的参会账号。空数组收回分发，导出逐次鉴权。",
+            "url": {
+              "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/sharing/{{captureId}}",
+              "host": [
+                "{{assistantUrl}}"
+              ],
+              "path": [
+                "meetings",
+                "{{assistantMeetingId}}",
+                "sharing",
+                "{{captureId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"users\": [\n    12\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "成功示例",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{meetingAccessToken}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "description": "录制停止后由发起录制的主持人替换允许领取的参会账号。空数组收回分发，导出逐次鉴权。",
+                "url": {
+                  "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/sharing/{{captureId}}",
+                  "host": [
+                    "{{assistantUrl}}"
+                  ],
+                  "path": [
+                    "meetings",
+                    "{{assistantMeetingId}}",
+                    "sharing",
+                    "{{captureId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"users\": [\n    12\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"users\": [\n    12\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "读取个人主持词库",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{meetingAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "适用于该账号主持的会议。本场词库按标准词覆盖个人与内置词库。",
+            "url": {
+              "raw": "{{assistantUrl}}/settings/glossary",
+              "host": [
+                "{{assistantUrl}}"
+              ],
+              "path": [
+                "settings",
+                "glossary"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "成功示例",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{meetingAccessToken}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "description": "适用于该账号主持的会议。本场词库按标准词覆盖个人与内置词库。",
+                "url": {
+                  "raw": "{{assistantUrl}}/settings/glossary",
+                  "host": [
+                    "{{assistantUrl}}"
+                  ],
+                  "path": [
+                    "settings",
+                    "glossary"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"terms\": {\n    \"Ka 卫星\": [\n      \"卡卫星\"\n    ]\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "保存个人主持词库",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{meetingAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "适用于该账号主持的会议。本场词库按标准词覆盖个人与内置词库。",
+            "url": {
+              "raw": "{{assistantUrl}}/settings/glossary",
+              "host": [
+                "{{assistantUrl}}"
+              ],
+              "path": [
+                "settings",
+                "glossary"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"terms\": {\n    \"Ka 卫星\": [\n      \"卡卫星\"\n    ]\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "成功示例",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{meetingAccessToken}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "description": "适用于该账号主持的会议。本场词库按标准词覆盖个人与内置词库。",
+                "url": {
+                  "raw": "{{assistantUrl}}/settings/glossary",
+                  "host": [
+                    "{{assistantUrl}}"
+                  ],
+                  "path": [
+                    "settings",
+                    "glossary"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"terms\": {\n    \"Ka 卫星\": [\n      \"卡卫星\"\n    ]\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"terms\": {\n    \"Ka 卫星\": [\n      \"卡卫星\"\n    ]\n  }\n}"
+            }
+          ]
         },
         {
           "name": "ROI 运维在会状态",

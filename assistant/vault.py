@@ -6,7 +6,6 @@ import signal
 import shutil
 import struct
 import subprocess
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -186,11 +185,14 @@ class CloudCapture:
         for p in app.vault.dir.glob("*.part"):
             p.unlink(missing_ok=True)
 
+    def media_uri(self, path):
+        cfg = self.app.cfg
+        return f"rtsp://{quote(cfg['mediaUser'], safe='')}:{quote(cfg['mediaPassword'], safe='')}@127.0.0.1:{int(cfg['rtspPort'])}/{path}"
+
     def action(self, key, job, track):
         fid = secrets.token_hex(16)
         app = self.app
-        cfg = app.cfg
-        uri = f"rtsp://{quote(cfg['mediaUser'], safe='')}:{quote(cfg['mediaPassword'], safe='')}@127.0.0.1:{int(cfg['rtspPort'])}/{track['path']}"
+        uri = self.media_uri(track["path"])
         cmd = [
             "/usr/bin/ffmpeg",
             "-nostdin",
@@ -286,8 +288,8 @@ class CloudCapture:
                     if not uid or not t["ready"]:
                         continue
                     permission = c.execute(
-                        "select kinds from consent where meeting=? and uid=? and member=?",
-                        (job["meeting"], uid, t["participantId"]),
+                        "select kinds from capture_consent where capture=? and uid=? and member=?",
+                        (job["id"], uid, t["participantId"]),
                     ).fetchone()
                     if permission and t["kind"] in permission[0].split(","):
                         wanted[(job["id"], t["id"], t["path"])] = (job, dict(t, owner=uid))

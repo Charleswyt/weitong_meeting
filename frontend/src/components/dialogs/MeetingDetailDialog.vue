@@ -24,7 +24,7 @@
               <span class="dk">同步态</span>
               <span class="dv"><span class="pill pill-plain">{{ localText(meeting.localStatus) }}</span></span>
             </div>
-            <div class="detail-row"><span class="dk">录制</span><span class="dv">{{ meeting.cloudRecord ? '云端录制' : '不录制' }}</span></div>
+            <div class="detail-row"><span class="dk">录制</span><span class="dv">由主持人在会中开启</span></div>
           </div>
 
           <div class="link-block" v-if="joinLink">

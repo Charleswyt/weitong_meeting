@@ -2259,8 +2259,8 @@ paths:
     - url: https://47.114.83.151/zwt-meeting
     get:
       summary: 会议状态与增量转录
-      description: 查询参数 after 为最后已读转录 ID，默认 0，每页最多 100 条。返回 host/live/history、languages、terms、captions、voiceBound、consent、capture、files、minutes
-        和 materials。
+      description: after 为最后已读转录 ID，每页最多 100 条。transcription.enabled 属于当前入会成员，active 表示场内有人使用字幕。managedCaptures 仅返回本人主持的录制。会中
+        minutesStatus 为 processing，正文为空。
       security:
       - bearerAuth: []
       parameters:
@@ -2302,6 +2302,9 @@ paths:
                 - materials
                 - minutes
                 - captions
+                - transcription
+                - minutesStatus
+                - managedCaptures
                 properties:
                   meeting:
                     type: integer
@@ -2443,6 +2446,41 @@ paths:
                           type: string
                         at:
                           type: number
+                  transcription:
+                    type: object
+                    required:
+                    - enabled
+                    - active
+                    properties:
+                      enabled: &id001
+                        type: boolean
+                      active: *id001
+                  minutesStatus:
+                    type: string
+                    enum:
+                    - processing
+                    - ready
+                    - ended
+                  managedCaptures:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - id
+                      - at
+                      - status
+                      - users
+                      properties:
+                        id: &id002
+                          type: string
+                        at:
+                          type: number
+                        status: *id002
+                        users: &id003
+                          type: array
+                          items:
+                            type: integer
+                            minimum: 1
               example:
                 meeting: 42
                 title: 技术例会
@@ -2477,10 +2515,7 @@ paths:
                   digest: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
                   at: 1795600000.0
                   downloads: 2
-                minutes:
-                  revision: 2
-                  body: '# 技术例会'
-                  at: 1795600000.0
+                minutes: null
                 captions:
                 - id: 1
                   uid: 12
@@ -2491,6 +2526,11 @@ paths:
                   speaker_id: 12
                   attribution: voice
                   at: 1795600000.0
+                transcription:
+                  enabled: true
+                  active: true
+                minutesStatus: processing
+                managedCaptures: []
         '401':
           description: 请重新登录
         '403':
@@ -2649,7 +2689,7 @@ paths:
     - url: https://47.114.83.151/zwt-meeting
     post:
       summary: 上传发言分段
-      description: 本人在会，传 0.35 至 16 秒 WAV 和每段唯一的 Idempotency-Key。返回 id，静音则返回 null。
+      description: 兼容旧版单麦上传。云端实时转录已开启时，同一房间的浏览器上传不再重复入库。
       security:
       - bearerAuth: []
       parameters:
@@ -2896,7 +2936,7 @@ paths:
     - url: https://47.114.83.151/zwt-meeting
     put:
       summary: 指定本人允许云录的轨道
-      description: 本次入会有效。传空数组撤销，camera/microphone/screen 可独立授权。
+      description: 同意绑定到当前账号、成员实例与本次 captureId。停止再开、离会再入均须重新同意。
       security:
       - bearerAuth: []
       parameters:
@@ -2943,16 +2983,30 @@ paths:
           application/json:
             schema:
               type: object
+              required:
+              - captureId
+              - kinds
+              properties:
+                captureId: *id002
+                kinds:
+                  type: array
+                  items:
+                    enum:
+                    - camera
+                    - microphone
+                    - screen
             example:
+              captureId: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
               kinds:
-              - microphone
               - camera
+              - microphone
+              - screen
   /assist/v1/meetings/{assistantMeetingId}/capture:
     servers:
     - url: https://47.114.83.151/zwt-meeting
     post:
       summary: 开始加密云录制
-      description: 主持人在会；audience 可选 attendees、host 或 selected，selected 需传账号整数 ID 数组。
+      description: 主持人明确同意后启动本次录制。回放默认仅发起者可见。其他入会成员须按本次 captureId 授权已发布轨道。
       security:
       - bearerAuth: []
       parameters:
@@ -3000,9 +3054,11 @@ paths:
           application/json:
             schema:
               type: object
-            example:
-              audience: attendees
-              users: []
+              properties:
+                audience:
+                  enum:
+                  - host
+            example: {}
     delete:
       summary: 结束加密云录制
       description: 停止读轨并完成加密分片。
@@ -3090,7 +3146,7 @@ paths:
     - url: https://47.114.83.151/zwt-meeting
     put:
       summary: 生成或保存纪要
-      description: 主持人传 generate=true 生成；手动保存传 body 和当前 revision，版本不符返回 409。
+      description: 既有会后校订接口。会中返回 409。会议结束后后台整理本地转录，本版不接外部纪要服务。
       security:
       - bearerAuth: []
       parameters:
@@ -3146,7 +3202,7 @@ paths:
     - url: https://47.114.83.151/zwt-meeting
     get:
       summary: 下载会议纪要
-      description: 返回 UTF-8 Markdown，包含来源发言。
+      description: 既有导出接口，会议结束且已有纪要后可用。
       security:
       - bearerAuth: []
       parameters:
@@ -3240,3 +3296,193 @@ paths:
                 maintenance: false
         '403':
           description: 需要 ROI 超级管理员
+  /assist/v1/meetings/{assistantMeetingId}/transcription:
+    servers:
+    - url: https://47.114.83.151/zwt-meeting
+    put:
+      summary: 开关转录与翻译
+      description: 观看端打开后，云端按已发布的麦克风逐人识别，多个观看端共享结果。静音观看者也可开启。最后一位观看者关闭或离会后停止读取音轨。
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: assistantMeetingId
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - in: query
+        name: number
+        required: false
+        description: 无本地预约单的会议传真实会议号
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - enabled
+                properties:
+                  enabled: *id001
+              example:
+                enabled: true
+        '401':
+          description: 请重新登录
+        '403':
+          description: 没有会议或录制权限
+        '409':
+          description: 状态或版本冲突
+        '429':
+          description: 处理繁忙，请稍后重试
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - enabled
+              properties:
+                enabled: *id001
+            example:
+              enabled: true
+  /assist/v1/meetings/{assistantMeetingId}/sharing/{captureId}:
+    servers:
+    - url: https://47.114.83.151/zwt-meeting
+    put:
+      summary: 分发或收回录制回放
+      description: 录制停止后由发起录制的主持人替换允许领取的参会账号。空数组收回分发，导出逐次鉴权。
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: assistantMeetingId
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - in: query
+        name: number
+        required: false
+        description: 无本地预约单的会议传真实会议号
+        schema:
+          type: string
+      - in: path
+        name: captureId
+        required: true
+        schema: *id002
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - users
+                properties:
+                  users: *id003
+              example:
+                users:
+                - 12
+        '401':
+          description: 请重新登录
+        '403':
+          description: 没有会议或录制权限
+        '409':
+          description: 状态或版本冲突
+        '429':
+          description: 处理繁忙，请稍后重试
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - users
+              properties:
+                users: *id003
+            example:
+              users:
+              - 12
+  /assist/v1/settings/glossary:
+    servers:
+    - url: https://47.114.83.151/zwt-meeting
+    get:
+      summary: 读取个人主持词库
+      description: 适用于该账号主持的会议。本场词库按标准词覆盖个人与内置词库。
+      security:
+      - bearerAuth: []
+      parameters: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - terms
+                properties:
+                  terms: &id004
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items: *id002
+              example: &id005
+                terms:
+                  Ka 卫星:
+                  - 卡卫星
+        '401':
+          description: 请重新登录
+        '403':
+          description: 没有会议或录制权限
+        '409':
+          description: 状态或版本冲突
+        '429':
+          description: 处理繁忙，请稍后重试
+    put:
+      summary: 保存个人主持词库
+      description: 适用于该账号主持的会议。本场词库按标准词覆盖个人与内置词库。
+      security:
+      - bearerAuth: []
+      parameters: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - terms
+                properties:
+                  terms: *id004
+              example: *id005
+        '401':
+          description: 请重新登录
+        '403':
+          description: 没有会议或录制权限
+        '409':
+          description: 状态或版本冲突
+        '429':
+          description: 处理繁忙，请稍后重试
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - terms
+              properties:
+                terms:
+                  oneOf:
+                  - *id002
+                  - *id004
+            example: *id005

@@ -95,9 +95,8 @@
             <div class="setting-row">
               <div class="setting-info">
                 <span class="setting-label"><i class="ri-cloud-line row-icon" />云端录制</span>
-                <span class="setting-desc">录制上传云端，参会者需同意录制</span>
+                <span class="setting-desc">主持人在会中开启，成员同意后录制。回放由主持人分发。</span>
               </div>
-              <div class="toggle-switch" :class="{ on: cloudRecord }" @click="cloudRecord = !cloudRecord"></div>
             </div>
           </div>
 
@@ -133,7 +132,6 @@ const submitting = ref(false)
 const tzOffset = ref('+08:00')
 const muteOnJoin = ref(true)
 const cameraOff = ref(false)
-const cloudRecord = ref(true)
 const allowWaiting = ref(true)
 const durationPreset = ref('60')
 
@@ -157,7 +155,6 @@ function reset() {
   tzOffset.value = '+08:00'
   muteOnJoin.value = true
   cameraOff.value = false
-  cloudRecord.value = true
   allowWaiting.value = true
 }
 
@@ -180,7 +177,6 @@ watch(
         form.title = m.title
         form.durationMinutes = m.durationMinutes
         durationPreset.value = ['15', '30', '45', '60'].includes(String(m.durationMinutes)) ? String(m.durationMinutes) : 'custom'
-        cloudRecord.value = m.cloudRecord
         muteOnJoin.value = m.muteOnJoin
         cameraOff.value = m.cameraOffOnJoin
         allowWaiting.value = m.allowWaiting
@@ -218,7 +214,7 @@ async function submit() {
       title: form.title.trim(),
       startTime: startISO,
       durationMinutes: form.durationMinutes,
-      cloudRecord: cloudRecord.value,
+      cloudRecord: props.meeting?.cloudRecord ?? false,
       muteOnJoin: muteOnJoin.value,
       cameraOff: cameraOff.value,
       allowWaiting: allowWaiting.value,

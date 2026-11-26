@@ -47,6 +47,7 @@
       <div class="msp-note">切换设备会重启采集。人脸增强作用于发给其他成员的画面。</div>
         </el-tab-pane>
         <el-tab-pane label="视频传输" name="delivery"><VideoDeliverySettings :apply-live="applyLive" /></el-tab-pane>
+        <el-tab-pane label="字幕与术语" name="speech" lazy><slot name="speech" /></el-tab-pane>
       </el-tabs>
     </div>
     <template #footer>

@@ -941,3 +941,12 @@ WS 这条是冗余、正确性以 REST 为准，理由与 `media` 同（WS 未�
 decodedFrameKbps 按发布端解码后逐帧可见像素字节计算。publishKbps 取该路视频 RTP 已发送字节增量。cloudInputKbps 和 cloudOutputKbps 表示云端编码视频的输入和单份输出。四项单位均为十进制 kbps。viewerCount 只计 WebRTC 观看连接，publicEgressKbps 为发给这些观看端的合计速率。无人观看时两项均为 0。每路云端视频压缩比为 cloudInputKbps / cloudOutputKbps，按阿里云接收和单份编码输出的视频有效载荷计算。发布端和所有观看端读取同一个 compressionRatio。两项速率均为正时返回两位小数的倍率。原始转发显示直传，缺样显示「—」。本端带宽只显示浏览器实际媒体上行和下行。各采样窗口可能略有错位，缺失样本使用 null。 云端压缩在源就绪时启动，结束发布或恢复原始转发时停止。本端以 sendonly 发布，本机预览使用摄像头或屏幕轨道。
 
 观看端对 `/meetings/{id}/streams/{streamId}/whep` 提交 recvonly SDP，HTTP 200 返回 SDP answer。DELETE 同一路径只释放该浏览器的观看连接。订阅自己的流返回 HTTP 403，reason 为 `forbidden`。
+
+
+## 中卫通会中字幕、录制授权与会后纪要
+
+- 会中工具栏调用 `PUT /assist/v1/meetings/{assistantMeetingId}/transcription`，请求体为 `{"enabled":true}` 或 `{"enabled":false}`。一个观看者就能开启全场已发布麦克风的逐人转录，默认目标语言为中文。其他观看者独立开关并选语言。使用状态接口取得增量发言和署名，再按发言 ID 和目标语言读取译文。
+- 主持人调用 `POST .../capture` 并提交空对象后，只为本人授权本次摄像头、麦克风和共享屏幕。其他成员的 `PUT .../consent` 必须带状态中当前的 `captureId` 及 `kinds`。录制服务逐条校验场次、入会实例、账号和轨道，过期场次返回 409。
+- 新录制默认仅发起录制的主持人可回放。停止后由其调用 `PUT .../sharing/{captureId}` 替换参会账号名单，空数组收回分发。每次获取文件重新鉴权。旧归档沿用创建时的权限。
+- 个人主持词库使用 `GET/PUT /assist/v1/settings/glossary`。本场主持人可从会议设置用既有 `PUT .../terms` 覆盖本场标准词，后续识别先对齐术语再翻译。
+- 会中返回 `minutesStatus=processing`、`minutes=null`。已存在的会后接口仅在会议正式结束后可用。本版本未新增外部纪要 API。

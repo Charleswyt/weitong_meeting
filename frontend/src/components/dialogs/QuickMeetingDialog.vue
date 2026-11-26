@@ -55,7 +55,6 @@
 import { computed, nextTick, ref, watch, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
-import { getPreferences } from '@/api/settings'
 import { useUserStore } from '@/store/user'
 import { assetUrl } from '@/utils/request'
 import { useMediaSettings } from '@/composables/useMediaSettings'
@@ -77,7 +76,6 @@ const micOn = ref(true)
 const speakerOk = ref(false)
 const speakerTesting = ref(false)
 const cameraOn = ref(true)
-const cloudRecord = ref(true)
 
 const { localStream, startPreview, stopPreview, error: mediaError, sessionDevices, loadPreferences } = useMediaSettings()
 const previewRef = ref<HTMLVideoElement | null>(null)
@@ -150,10 +148,7 @@ async function reset() {
   micOn.value = true
   speakerOk.value = false
   cameraOn.value = true
-  try {
-    const p = await getPreferences()
-    if (p.data) cloudRecord.value = !!p.data.cloudRecordDefault
-  } catch { /* keep default */ }
+
 }
 
 watch(
@@ -181,7 +176,7 @@ function submit() {
   previewReady.value = false
   router.push(quickJoinPath({
     title: title.value.trim(),
-    cloudRecord: cloudRecord.value,
+    cloudRecord: false,
     micOn: micOn.value,
     cameraOn: cameraOn.value,
     displayName: displayName.value,

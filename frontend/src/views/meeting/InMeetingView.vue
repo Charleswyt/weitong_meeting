@@ -1,12 +1,13 @@
 <template>
   <div class="im-root" :class="{ 'is-phone': isPhone, 'is-tablet': isTablet, 'is-compact': isCompact }">
     <!-- 顶部状态条：会议名 / 状态；窄屏只留关键告警，细节进「更多」 -->
-    <header class="im-topbar">
+    <header class="im-topbar" :inert="!admitted">
       <div class="im-top-left">
         <span class="im-title" :title="meetingStore.title || '会议'">{{ meetingStore.title || '会议' }}</span>
         <span v-if="kindBadge" class="im-badge im-badge-kind im-badge-desk">{{ kindBadge }}</span>
         <span class="im-badge" :class="statusClass">{{ statusLabel }}</span>
-        <span v-if="meetingStore.state?.recording.active" class="im-badge im-badge-rec">录制中</span>
+        <span v-if="cloudRecording" class="im-badge im-badge-rec">云录制中</span>
+        <span v-if="assistant?.state?.transcription.active" class="im-badge" title="已发布的麦克风正在生成会议字幕">转录中</span>
         <span v-if="sharing" class="im-badge im-badge-share im-badge-desk">共享中</span>
         <!-- 链路正常时不占位，只在异常时挂出可操作的告警。
              状态通道与画面是两条腿：断了的是"谁进出/谁开麦"这些消息，画面照常在动，
@@ -299,7 +300,7 @@
       <button class="share-float-stop" type="button" @click="toggleShare">停止共享</button>
     </div>
 
-    <footer class="im-controls">
+    <footer :inert="!admitted" class="im-controls">
       <div class="im-ctl-center">
         <!-- 主控：麦 / 视频 /（桌面共享）—— 窄屏只留参会必需，其余进「更多」 -->
         <button class="im-btn" :class="{ 'im-btn-off': !micOn }" @click="toggleMic">
@@ -335,16 +336,18 @@
           <i :class="isLocalRecording ? 'ri-record-circle-fill' : 'ri-record-circle-line'" /><span>{{ isLocalRecording ? '停止本地录制' : '本地录制' }}</span>
         </button>
         <button
-          v-if="!isCompact"
+          v-if="!isCompact && assistant?.state?.host"
+          :aria-label="cloudRecording ? '停止云录制' : '开启云录制'"
           class="im-btn"
           :class="{ 'im-btn-on': cloudRecording }"
           :title="boardRecordingHint"
           @click="toggleCloudRecord"
         >
-          <i class="ri-cloud-line" /><span>加密云录制</span>
+          <i class="ri-cloud-line" /><span>{{ cloudRecording ? '停止云录制' : '开启云录制' }}</span>
         </button>
 
-        <button v-if="!isCompact" class="im-btn" @click="openAssistant('captions')"><i class="ri-file-list-3-line" /><span>会议助手</span></button>
+        <button v-if="!isCompact" class="im-btn" :class="{ 'im-btn-on': captionsOn }" :aria-pressed="captionsOn" :disabled="assistant?.working" @click="assistant?.toggleSpeech()"><i class="ri-translate-2" /><span>转录与翻译</span></button>
+        <button v-if="!isCompact" class="im-btn" @click="openAssistant('materials')"><i class="ri-file-list-3-line" /><span>会议助手</span></button>
         <!-- 窄屏：成员 + 更多（邀请/聊天/共享/录制/设置） -->
         <button
           v-if="isCompact"
@@ -360,6 +363,7 @@
           </button>
           <template #dropdown>
             <el-dropdown-menu class="im-more-menu">
+              <el-dropdown-item command="captions"><i class="ri-translate-2" /> {{ captionsOn ? '关闭转录与翻译' : '转录与翻译' }}</el-dropdown-item>
               <el-dropdown-item command="assistant"><i class="ri-file-list-3-line" /> 会议助手</el-dropdown-item>
               <el-dropdown-item command="invite"><i class="ri-user-add-line" /> 邀请</el-dropdown-item>
               <el-dropdown-item command="chat"><i class="ri-chat-3-line" /> 聊天{{ messages.length ? ` (${messages.length})` : '' }}</el-dropdown-item>
@@ -369,9 +373,9 @@
                 <i :class="isLocalRecording ? 'ri-record-circle-fill' : 'ri-record-circle-line'" />
                 {{ isLocalRecording ? '停止本地录制' : '本地录制' }}
               </el-dropdown-item>
-              <el-dropdown-item command="cloud-rec">
+              <el-dropdown-item v-if="assistant?.state?.host" command="cloud-rec">
                 <i class="ri-cloud-line" />
-                加密云录制
+                {{ cloudRecording ? '停止云录制' : '开启云录制' }}
               </el-dropdown-item>
               <el-dropdown-item v-if="isPhone" command="settings" divided><i class="ri-settings-3-line" /> 设置</el-dropdown-item>
               <el-dropdown-item v-if="isHost" command="end" divided><i class="ri-shut-down-line" /> 结束会议</el-dropdown-item>
@@ -388,8 +392,20 @@
       </div>
     </footer>
 
-    <MeetingAssistant v-model="showAssistant" :initial-tab="assistantTab" :meeting-id="meetingId" :number="String(meetingStore.meetingNo || '')" :stream="selfStream" :mic="micOn" in-meeting />
-    <MeetingSettingsPopover v-model="showSettings" :apply-live="applyVideoDelivery" @changed="onPrefsChanged" />
+    <MeetingAssistant ref="assistant" @leave="leave" v-model="showAssistant" :initial-tab="assistantTab" :meeting-id="meetingId" :number="String(meetingStore.meetingNo || '')" :stream="selfStream" :mic="micOn" in-meeting />
+    <MeetingSettingsPopover v-model="showSettings" :apply-live="applyVideoDelivery" @changed="onPrefsChanged">
+      <template #speech>
+        <template v-if="assistant && assistant.state">
+          <el-form-item label="字幕目标语言"><el-select v-model="assistant.target">
+            <el-option v-for="(name,key) in assistant.state.languages" :key="key" :label="name" :value="key" />
+          </el-select></el-form-item>
+          <el-button link v-if="!assistant.state.voiceBound" :disabled="assistant.enrolling" @click="assistant.enroll()">{{ assistant.enrolling ? '请连续讲话 4 秒…' : '绑定我的声纹' }}</el-button>
+          <el-button link v-else @click="assistant.removeVoice()">删除我的声纹</el-button>
+          <h3>本场术语库</h3>
+          <GlossarySettings :meeting-id="meetingId" :number="String(meetingStore.meetingNo || '')" :editable="assistant.state.host" />
+        </template>
+      </template>
+    </MeetingSettingsPopover>
     <InviteMeetingDialog
       v-model="showInvite"
       :meeting-id="meetingId"
@@ -403,6 +419,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, ElDropdown, ElDropdownMenu, ElDropdownItem } from 'element-plus'
+import GlossarySettings from '@/components/meeting/GlossarySettings.vue'
 import MeetingAssistant from '@/components/meeting/MeetingAssistant.vue'
 import MeetingSettingsPopover from '@/components/dialogs/MeetingSettingsPopover.vue'
 import InviteMeetingDialog from '@/components/dialogs/InviteMeetingDialog.vue'
@@ -914,9 +931,12 @@ const selfIssueText = computed(() =>
 const netText = computed(() => (net.value ? net.value.label + ' · ' + net.value.rttMs + 'ms' : '检测中'))
 const netLevel = computed(() => net.value?.level || '')
 
-const cloudRecording = computed(() => !!meetingStore.state?.recording.active)
-const boardRecordingHint = '管理加密录制与回放权限'
-const assistantTab = ref('captions')
+const assistant = ref<InstanceType<typeof MeetingAssistant> | null>(null)
+const admitted = ref(false)
+const cloudRecording = computed(() => !!assistant.value?.state?.capture)
+const captionsOn = computed(() => !!assistant.value?.state?.transcription.enabled)
+const boardRecordingHint = '主持人控制加密云录制'
+const assistantTab = ref('materials')
 const showAssistant = ref(false)
 function openAssistant(tab: string) { assistantTab.value = tab; showAssistant.value = true }
 const sharingName = computed(() => participants.value.find((p) => p.sharing)?.name || '')
@@ -1023,11 +1043,12 @@ function toggleDock(id: Exclude<DockId, 'none'>) {
   }
 }
 
-type MoreCmd = 'assistant' | 'invite' | 'chat' | 'share' | 'stats' | 'local-rec' | 'cloud-rec' | 'settings' | 'end'
+type MoreCmd = 'captions' | 'assistant' | 'invite' | 'chat' | 'share' | 'stats' | 'local-rec' | 'cloud-rec' | 'settings' | 'end'
 
 function onMoreCommand(cmd: string | number | object) {
   const c = String(cmd) as MoreCmd
-  if (c === 'assistant') openAssistant('captions')
+  if (c === 'captions') void assistant.value?.toggleSpeech()
+  else if (c === 'assistant') openAssistant('materials')
   else if (c === 'invite') showInvite.value = true
   else if (c === 'chat') toggleDock('chat')
   else if (c === 'share') void toggleShare()
@@ -1099,6 +1120,8 @@ async function loadInitial() {
     void router.replace('/meeting-empty')
     return
   }
+  if (!assistant.value || !(await assistant.value.admit())) return
+  admitted.value = true
   await ws.connect(meetingId)
   await attachSelfMedia()
   // 不从 meetingStore.self 回读按钮状态：buildState 的 cameraOn/micOn/sharing 基于三方
@@ -1127,6 +1150,7 @@ function startTicker() {
 }
 
 async function attachSelfMedia() {
+  if (!admitted.value) return
   await media.loadPreferences()
   const kind = resolveLaunchKind()
   // 语音/共享默认不采摄像头（cameraOff 由入会意图写入）；用户点「开启视频」会先清掉再进来。
@@ -1433,6 +1457,7 @@ async function toggleCamera() {
 }
 
 async function toggleShare() {
+  if (!admitted.value) return
   if (sharing.value) {
     await whipScreen.unpublish().catch(() => undefined)
     shareStream.value?.getTracks().forEach((t) => t.stop())
@@ -1500,7 +1525,7 @@ async function toggleShare() {
   }
 }
 
-function toggleCloudRecord() { openAssistant('record') }
+function toggleCloudRecord() { void assistant.value?.toggleRecording() }
 
 // —— 本地录制（第 15/17 项）——————————————————————————————————————————
 // 以前是一条混合流：把舞台画到一张画布上录，谁后来入会、谁关了摄像头都不在文件里，

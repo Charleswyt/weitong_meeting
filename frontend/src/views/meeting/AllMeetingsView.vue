@@ -77,6 +77,7 @@
     </div>
 
     <ScheduleMeetingDialog v-model="showScheduleDialog" :meeting="editingMeeting" @created="load" />
+    <MeetingAssistant v-if="replayMeeting" :model-value="true" initial-tab="record" :meeting-id="Number(replayMeeting.id)" :number="String(replayMeeting.meetingNo || '')" @update:model-value="replayMeeting=null" />
     <MeetingDetailDialog v-model="showDetail" :meeting="detailMeeting" />
   </div>
 </template>
@@ -86,6 +87,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import ScheduleMeetingDialog from '@/components/dialogs/ScheduleMeetingDialog.vue'
+import MeetingAssistant from '@/components/meeting/MeetingAssistant.vue'
 import MeetingDetailDialog from '@/components/dialogs/MeetingDetailDialog.vue'
 import { getMeetingList, cancelMeeting, stopMeeting, precheckMeeting, type MeetingVo } from '@/api/meeting'
 import { useMeetingStore } from '@/store/meeting'
@@ -103,6 +105,7 @@ const upcomingList = ref<MeetingVo[]>([])
 const historyList = ref<MeetingVo[]>([])
 const showScheduleDialog = ref(false)
 const showDetail = ref(false)
+const replayMeeting = ref<MeetingVo | null>(null)
 const detailMeeting = ref<MeetingVo | null>(null)
 const editingMeeting = ref<MeetingVo | null>(null)
 
@@ -272,19 +275,8 @@ function goDetail(m: MeetingVo) {
 }
 
 // 画布上每场历史会议都有「查看录制」，但录制是否有货取决于这场会到底建没建成：
-// 没有云端录制时如实告知并留在本页，不跳去一个空的录制页装作有内容。
 function handleRecord(m: MeetingVo) {
-  // 三方从没建起这场会（预约/快速会议时同步失败，或同步没回填上三方 id）：它既进不去也没录到。
-  // 这不是"还在同步"，是终局 —— 说"稍后再试"就是替系统许一个不会兑现的诺。
-  if (m.localStatus === 'failed' || !m.thirdPartyMeetingId) {
-    ElMessage.info('这场会议没能在会议平台上创建，没有云端录制；本地录制可在「录制管理」查看')
-    return
-  }
-  if (!m.cloudRecord) {
-    ElMessage.info('这场会议没有开启云端录制；本地录制可在「录制管理」查看')
-    return
-  }
-  router.push({ name: 'RecordingPlayback', params: { meetingId: m.thirdPartyMeetingId } })
+  replayMeeting.value=m
 }
 
 onMounted(() => {

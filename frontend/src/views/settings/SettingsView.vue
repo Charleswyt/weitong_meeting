@@ -201,6 +201,8 @@
         <VideoDeliverySettings />
       </section>
 
+      <section class="settings-section"><h3 class="section-title">转录翻译术语库</h3><GlossarySettings /></section>
+
       <section class="settings-section">
         <h3 class="section-title">音频</h3>
 
@@ -366,17 +368,8 @@
 
         <div class="setting-row">
           <div class="setting-left">
-            <span class="setting-label">云端录制</span>
-            <span class="setting-desc">录制自动上传至云端，会议成员可查看</span>
-          </div>
-          <div class="setting-right">
-            <div
-              class="toggle-switch"
-              :class="{ on: form.cloudRecordDefault === 1 }"
-              @click="
-                form.cloudRecordDefault = form.cloudRecordDefault === 1 ? 0 : 1
-              "
-            ></div>
+            <span class="setting-label">加密云录制</span>
+            <span class="setting-desc">由主持人在会中开启。成员同意后录制，回放由主持人分发。</span>
           </div>
         </div>
       </section>
@@ -451,6 +444,7 @@
 </template>
 
 <script setup lang="ts">
+import GlossarySettings from "@/components/meeting/GlossarySettings.vue";
 import VideoDeliverySettings from "@/components/VideoDeliverySettings.vue";
 import { sitePath } from '@/utils/sitePath'
 import {

@@ -1,6 +1,4 @@
 import argparse
-import contextlib
-import io
 import json
 import os
 import re
@@ -10,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 from service import App, Problem, need
 from vault import CloudCapture, watermarked
+from live_speech import LiveSpeech
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -54,8 +53,18 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlsplit(self.path)
         if self.command == "GET" and parsed.path == "/health":
             return self.send_data(200, {"ok": True})
+        if parsed.path == "/zwt-meeting/assist/v1/settings/glossary" and self.command in (
+            "GET",
+            "PUT",
+        ):
+            bearer = self.headers.get("Authorization", "")
+            need(bearer.startswith("Bearer "), 401, "请登录中卫通会议")
+            user = app.identity(bearer[7:])
+            return self.send_data(
+                200, app.personal_terms(user["id"], self.obj() if self.command == "PUT" else None)
+            )
         m = re.fullmatch(
-            r"/zwt-meeting/assist/v1/meetings/(\d{1,16})/(state|terms|voice|captions|translations|materials|package|minutes|consent|capture|files)(?:/([a-z0-9-]{1,48}))?",
+            r"/zwt-meeting/assist/v1/meetings/(\d{1,16})/(state|terms|transcription|sharing|voice|captions|translations|materials|package|minutes|consent|capture|files)(?:/([a-z0-9-]{1,48}))?",
             parsed.path,
         )
         need(m, 404, "无此接口")
@@ -74,6 +83,10 @@ class Handler(BaseHTTPRequestHandler):
         verb = self.command
         if verb == "GET" and action == "state" and not arg:
             result = app.state(a, max(0, int(query("after", "0"))))
+        elif verb == "PUT" and (action, arg) == ("transcription", None):
+            result = app.transcription(a, self.obj().get("enabled"))
+        elif verb == "PUT" and action == "sharing" and arg:
+            result = app.share(a, arg, self.obj().get("users"))
         elif verb == "PUT" and (action, arg) == ("terms", None):
             result = app.save_terms(a, self.obj())
         elif (action, arg) == ("voice", None) and verb in ("PUT", "DELETE"):
@@ -108,6 +121,7 @@ class Handler(BaseHTTPRequestHandler):
             result = app.minutes(a, self.obj())
         elif verb == "GET" and (action, arg) == ("minutes", "export"):
             need(a["history"], 403, "限实际参会人")
+            need(a["ended"], 409, "会议结束后整理纪要")
             with app.db() as c:
                 r = c.execute("select body from minutes where meeting=?", (mid,)).fetchone()
             need(r, 404, "尚无已发布纪要")
@@ -201,12 +215,15 @@ def main():
     worker = CloudCapture(app)
     thread = threading.Thread(target=worker.run, daemon=True)
     thread.start()
+    captions = LiveSpeech(app, worker)
+    threading.Thread(target=captions.run, daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", int(cfg.get("port", 19917))), Handler)
     server.app = app
     try:
         server.serve_forever()
     finally:
         worker.stop.set()
+        captions.stop.set()
         server.server_close()
 
 

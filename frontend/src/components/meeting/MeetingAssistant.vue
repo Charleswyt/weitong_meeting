@@ -12,39 +12,12 @@
     </p>
     <template v-if="state">
       <el-tabs v-model="tab">
-        <el-tab-pane label="转录与翻译" name="captions">
-          <div v-if="state.live && inMeeting" class="actions">
-            <el-button :type="capturing ? 'default' : 'primary'" @click="toggleSpeech">{{
-              capturing ? '停止转录我的发言' : '转录我的发言'
-            }}</el-button>
-            <el-button v-if="!state.voiceBound" :disabled="enrolling" @click="enroll">{{
-              enrolling ? '请连续讲话 4 秒…' : '绑定我的声纹'
-            }}</el-button>
-            <el-button v-else @click="removeVoice">删除我的声纹</el-button>
-          </div>
-          <p v-if="state.live" class="hint">
-            开启后，本人的麦克风发言会显示给参会人。声纹仅供本场区分发言人，可随时删除。
-          </p>
-          <label class="row"
-            >字幕翻译
-            <select v-model="target">
-              <option value="">显示原文</option>
-              <option v-for="(name, k) in state.languages" :key="k" :value="k">{{ name }}</option>
-            </select></label
-          >
-          <p v-if="!captions.length" class="hint">尚无转录。参会人可分别开启自己的麦克风转录。</p>
+        <el-tab-pane v-if="!inMeeting && state.history" label="发言记录" name="captions">
           <article v-for="s in ordered" :key="s.id" class="entry">
-            <header>
-              <strong>{{ s.speaker }}</strong> · {{ clock(s.at) }} ·
-              {{ s.attribution === 'voice' ? '声纹匹配' : '参会麦克风' }}
-            </header>
+            <header>{{ s.speaker }} · {{ clock(s.at) }}</header>
             <p>{{ s.text }}</p>
-            <p v-if="target && translations[s.id]" class="translated">{{ translations[s.id] }}</p>
-            <details v-if="s.raw !== s.text">
-              <summary>查看术语修正前的原文</summary>
-              {{ s.raw }}
-            </details>
           </article>
+          <p v-if="!captions.length" class="hint">本场暂无发言记录。</p>
         </el-tab-pane>
         <el-tab-pane label="材料包" name="materials">
           <div class="actions">
@@ -64,43 +37,19 @@
           <p v-if="!state.materials.length" class="hint">主持人尚未发布材料。</p>
         </el-tab-pane>
         <el-tab-pane label="加密录制" name="record">
-          <template v-if="state.live && inMeeting">
-            <strong>允许云端录制我的轨道</strong>
-            <div class="actions">
-              <label v-for="(name, k) in tracks" :key="k"
-                ><input
-                  type="checkbox"
-                  :checked="state.consent.includes(String(k))"
-                  @change="consent(String(k), ($event.target as HTMLInputElement).checked)"
-                />
-                {{ name }}</label
-              >
-            </div>
-          </template>
-          <template v-if="state.host && state.live && inMeeting">
-            <label class="row"
-              >录制回放权限
-              <select v-model="audience" :disabled="!!state.capture">
-                <option value="attendees">实际参会人</option>
-                <option value="host">仅主持人</option>
-                <option value="selected">指定账号 ID</option>
-              </select></label
-            >
-            <input
-              v-if="audience === 'selected' && !state.capture"
-              v-model="selected"
-              placeholder="账号 ID，以逗号分隔"
-            />
-            <el-button :type="state.capture ? 'danger' : 'primary'" @click="toggleRecording">{{
-              state.capture ? '结束加密云录制' : '开始加密云录制'
-            }}</el-button>
-          </template>
-          <p class="hint">
-            {{
-              state.capture ? '云端正在录制已授权且正在发布的轨道。' : '当前没有进行中的云录制。'
-            }}
-            每份导出视频嵌入会议、领取人、录制及下载流水水印。
+          <p v-if="state.capture" class="hint">
+            加密云录制进行中。仅录制已同意成员正在发布的摄像头、麦克风与共享屏幕。
           </p>
+          <p v-else-if="!state.files.length" class="hint">暂无可查看的录制。</p>
+          <div
+            v-for="r in state.managedCaptures.filter((r) => r.status !== 'running')"
+            :key="r.id"
+            class="entry"
+          >
+            <strong>{{ clock(r.at) }} · 回放分发</strong>
+            <span>{{ r.users.length ? '已授权账号：' + r.users.join('、') : '仅主持人可查看' }}</span>
+            <el-button link @click="shareRecording(r.id, r.users)">设置回放权限</el-button>
+          </div>
           <article v-for="f in state.files" :key="f.id" class="entry">
             <strong>{{ tracks[f.kind] || f.kind }} · 账号 {{ f.owner }}</strong
             ><span
@@ -115,12 +64,19 @@
             ><el-button
               v-if="f.status === 'ready'"
               link
+              :loading="loadingReplay === f.id"
+              @click="playRecording(f.id)"
+              >播放回放</el-button
+            ><el-button
+              v-if="f.status === 'ready'"
+              link
               @click="download('files/' + f.id, '会议录制-' + f.id + '.mp4')"
               >导出水印 MP4</el-button
             ><el-button v-if="f.status === 'ready'" link @click="sealedDownload(f.id)"
               >下载加密水印副本</el-button
             >
           </article>
+          <video v-if="replayUrl" :src="replayUrl" controls autoplay playsinline style="width: 100%" />
           <details class="portable">
             <summary>本地加密文件</summary>
             <div class="actions">
@@ -139,45 +95,52 @@
           </details>
         </el-tab-pane>
         <el-tab-pane label="会议纪要" name="minutes">
-          <div class="actions">
-            <el-button v-if="state.host" type="primary" @click="generate">从发言生成纪要</el-button
-            ><el-button v-if="state.minutes" @click="download('minutes/export', '会议纪要.md')"
-              >下载 Markdown</el-button
-            >
-          </div>
-          <template v-if="state.minutes">
-            <textarea v-if="state.host" v-model="edited" rows="16" aria-label="纪要正文"></textarea>
-            <pre v-else>{{ state.minutes.body }}</pre>
-            <el-button v-if="state.host" :disabled="edited === state.minutes.body" @click="saveMinutes"
-              >保存修订</el-button
-            ></template
-          >
-          <p v-else class="hint">生成后可查看讨论摘要、决定、行动项和待确认问题，每条附发言人和原文时间。</p>
-        </el-tab-pane>
-        <el-tab-pane label="术语库" name="terms">
-          <label v-if="state.host" class="file-pick"
-            >导入会议词库<input type="file" accept=".csv,.json" @change="importTerms"
-          /></label>
-          <p class="hint">
-            CSV 每行填写标准词和别名，或使用标准词对应别名数组的 JSON。导入的词库用于后续发言。
+          <p v-if="inMeeting || state.minutesStatus === 'processing'" role="status">
+            处理中，会议结束后整理。
           </p>
-          <article v-for="(aliases, term) in state.terms" :key="term" class="entry">
-            <strong>{{ term }}</strong
-            ><span>{{ aliases.join('、') }}</span>
-          </article>
+          <pre v-else-if="state.minutes">{{ state.minutes.body }}</pre>
+          <p v-else class="hint">暂无已整理的会议纪要。</p>
         </el-tab-pane>
       </el-tabs>
     </template>
   </el-drawer>
+  <aside v-if="inMeeting && state?.transcription.enabled" class="live-captions" aria-live="polite">
+    <div v-for="s in ordered.slice(0, 2).reverse()" :key="s.id">
+      <strong>{{ s.speaker }}</strong> {{ s.text }}
+      <span v-if="target && target !== s.lang && translations[s.id]">{{ translations[s.id] }}</span>
+    </div>
+    <span v-if="!captions.length">转录与翻译已开启，正在等待发言。</span>
+    <span v-if="error" role="alert">{{ error }}</span>
+  </aside>
+  <el-dialog
+    :model-value="!!permissionJob || !!admissionError"
+    append-to-body
+    :title="admissionError ? '确认录制状态' : '本场会议正在云录制'"
+    width="min(455px, 94vw)"
+    :close-on-click-modal="false"
+    :close-on-press-escape="false"
+    :show-close="false"
+  >
+    <p>
+      {{
+        admissionError ||
+        '同意后，你发布的摄像头、麦克风和共享屏幕将加入本次加密云录制。回放默认仅主持人可见，主持人可在录制结束后授权分发。'
+      }}
+    </p>
+    <p v-if="consentError" role="alert">{{ consentError }}</p>
+    <template #footer>
+      <el-button @click="declineRecording">离开会议</el-button>
+      <el-button v-if="admissionError" type="primary" @click="retryAdmission">重试</el-button>
+      <el-button v-else type="primary" :loading="working" @click="acceptRecording">同意录制并继续</el-button>
+    </template>
+  </el-dialog>
 </template>
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { sitePath } from '@/utils/sitePath'
+import { assistantRequest, jsonBody as payload, type AssistantState as State } from '@/api/assistant'
 import { listen, wav } from '@/utils/meetingSpeech'
 import { sealRecording, openRecording } from '@/utils/sealedRecording'
-import type { paths } from '@/types/api.gen'
-type State = paths['/assist/v1/meetings/{assistantMeetingId}/state']['get']['responses'][200]['content']['application/json']
 type Line = State['captions'][number]
 const props = defineProps<{
   modelValue: boolean
@@ -188,51 +151,51 @@ const props = defineProps<{
   inMeeting?: boolean
   initialTab?: string
 }>()
-const emit = defineEmits<{ (e: 'update:modelValue', value: boolean): void }>()
+const emit = defineEmits<{ (e: 'update:modelValue', value: boolean): void; (e: 'leave'): void }>()
 const state = ref<State | null>(null),
-  tab = ref('captions'),
+  tab = ref('materials'),
   error = ref(''),
   captions = ref<Line[]>([]),
-  target = ref('')
-const previewUrl = ref('')
+  target = ref(localStorage.getItem('weitong.caption-language') || 'zh')
+const previewUrl = ref(''),
+  replayUrl = ref(''),
+  loadingReplay = ref('')
 function clearPreview() {
+  loadingReplay.value = ''
+  if (replayUrl.value) URL.revokeObjectURL(replayUrl.value)
+  replayUrl.value = ''
   if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
   previewUrl.value = ''
 }
-const translations = ref<Record<number, string>>({}),
-  edited = ref(''),
-  audience = ref('attendees'),
-  selected = ref('')
+const translations = ref<Record<number, string>>({})
 const tracks: Record<string, string> = { camera: '摄像头', microphone: '麦克风', screen: '共享屏幕' }
-const capturing = ref(false),
-  enrolling = ref(false),
-  ordered = computed(() => [...captions.value].reverse())
+const enrolling = ref(false),
+  working = ref(false),
+  admissionError = ref(''),
+  consentError = ref('')
+const ordered = computed(() => [...captions.value].sort((a, b) => b.at - a.at || b.id - a.id))
+const permissionJob = computed(() =>
+  props.inMeeting &&
+  state.value?.live &&
+  state.value.capture &&
+  !Object.keys(tracks).every((k) => state.value?.consent.includes(k))
+    ? state.value.capture.id
+    : '',
+)
 const clock = (n: number) => new Date(n * 1000).toLocaleTimeString()
 let seen = 0,
   version = 0,
-  polling = false,
+  requestSeq = 0,
+  applied = 0,
   translating = false,
-  alive = true
-let stopListen: (() => void) | undefined,
-  stopEnroll: (() => void) | undefined,
-  epoch = 0
-async function api(path: string, opts: RequestInit = {}) {
-  const u = new URL(sitePath('/assist/v1/meetings/' + props.meetingId + '/' + path), location.origin)
-  if (props.number) u.searchParams.set('number', props.number)
-  const headers = new Headers(opts.headers)
-  headers.set('Authorization', 'Bearer ' + (localStorage.getItem('weitong.token') || ''))
-  const r = await fetch(u, { ...opts, headers, cache: 'no-store' })
-  if (!r.ok) {
-    const e = await r.json().catch(() => ({}))
-    throw new Error(e.message || '会议助手请求失败 ' + r.status)
-  }
-  return r
-}
-function payload(method: string, obj: unknown): RequestInit {
-  return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(obj) }
-}
+  alive = true,
+  leaving = false
+let stopEnroll: (() => void) | undefined
+let waiting: ((accepted: boolean) => void) | undefined
+const api = (path: string, opts: RequestInit = {}) =>
+  assistantRequest('meetings/' + props.meetingId + '/' + path, opts, props.number)
 function report(e: unknown) {
-  if (alive) error.value = e instanceof Error ? e.message : '请求失败'
+  if (alive) error.value = e instanceof Error ? e.message : '会议请求失败'
 }
 async function action(fn: () => Promise<unknown>) {
   try {
@@ -241,40 +204,101 @@ async function action(fn: () => Promise<unknown>) {
     await refresh()
   } catch (e) {
     report(e)
+    ElMessage.error(error.value)
   }
 }
 async function refresh() {
-  if (polling || !props.meetingId || (!props.modelValue && !props.inMeeting)) return
-  polling = true
-  const id = props.meetingId,
-    v = version
+  if (!alive || !props.meetingId || (!props.modelValue && !props.inMeeting)) return false
+  const v = version,
+    seq = ++requestSeq
   try {
     const next: State = await (await api('state?after=' + seen)).json()
-    if (!alive || id !== props.meetingId || v !== version) return
-    if (next.minutes?.revision !== state.value?.minutes?.revision) edited.value = next.minutes?.body || ''
-    if (next.capture && !state.value?.capture && props.inMeeting)
-      ElMessage.info('主持人已开启加密云录制，可在会议助手中选择允许录制的轨道')
+    if (!alive || v !== version || seq < applied) return false
+    applied = seq
     state.value = next
-    if (next.captions.length) {
-      captions.value.push(...next.captions)
-      seen = next.captions[next.captions.length - 1]!.id
+    const fresh = next.captions.filter((s) => s.id > seen)
+    if (fresh.length) {
+      captions.value.push(...fresh)
+      seen = fresh[fresh.length - 1]!.id
     }
     error.value = ''
+    if (next.live && waiting) admissionError.value = ''
+    if (next.live && !permissionJob.value && waiting) {
+      waiting(true)
+      waiting = undefined
+      admissionError.value = ''
+    }
     void translate()
+    if (fresh.length === 100) void refresh()
+    return true
+  } catch (e) {
+    if (v === version && seq >= applied) report(e)
+    return false
+  }
+}
+async function retryAdmission() {
+  const ok = await refresh()
+  if (!waiting) return
+  if (!ok || !state.value?.live) {
+    admissionError.value = error.value || '暂时无法确认入会状态，请重试。'
+    return
+  }
+  admissionError.value = ''
+  if (!permissionJob.value) {
+    waiting(true)
+    waiting = undefined
+  }
+}
+function admit(): Promise<boolean> {
+  return new Promise((resolve) => {
+    waiting = resolve
+    void retryAdmission()
+  })
+}
+function declineRecording() {
+  leaving = true
+  waiting?.(false)
+  waiting = undefined
+  emit('leave')
+}
+async function acceptRecording() {
+  const id = permissionJob.value
+  if (!id || working.value) return
+  working.value = true
+  consentError.value = ''
+  try {
+    await api('consent', payload('PUT', { captureId: id, kinds: Object.keys(tracks) }))
+    await refresh()
+  } catch (e) {
+    consentError.value = (e as Error).message
+    await refresh()
+  } finally {
+    working.value = false
+  }
+}
+async function toggleSpeech() {
+  if (working.value) return
+  working.value = true
+  try {
+    if (!state.value) await refresh()
+    if (!state.value?.live) throw new Error('请先入会')
+    await api('transcription', payload('PUT', { enabled: !state.value.transcription.enabled }))
+    await refresh()
   } catch (e) {
     report(e)
+    ElMessage.error(error.value)
   } finally {
-    polling = false
+    working.value = false
   }
 }
 async function translate() {
-  if (translating || !target.value || !props.modelValue || tab.value !== 'captions') return
+  if (translating || !target.value || !state.value?.transcription.enabled || !props.inMeeting) return
   translating = true
   const lang = target.value,
     v = version
   try {
-    for (const s of ordered.value.slice(0, 100).reverse()) {
-      if (!alive || lang !== target.value || v !== version || !props.modelValue) break
+    for (const s of ordered.value.slice(0, 3)) {
+      if (!alive || lang !== target.value || v !== version || !state.value?.transcription.enabled) break
       if (translations.value[s.id] || !s.lang) continue
       const t =
         s.lang === lang ? s.text : (await (await api('translations/' + s.id + '?lang=' + lang)).json()).text
@@ -287,6 +311,7 @@ async function translate() {
   }
 }
 watch(target, () => {
+  localStorage.setItem('weitong.caption-language', target.value)
   translations.value = {}
   void translate()
 })
@@ -295,24 +320,21 @@ watch(
   () => props.modelValue,
   (open) => {
     if (open) {
-      tab.value = props.initialTab || 'captions'
+      tab.value = props.initialTab || 'materials'
       void refresh()
     } else clearPreview()
   },
+  { immediate: true },
 )
 function halt() {
-  capturing.value = false
-  epoch++
-  stopListen?.()
-  stopListen = undefined
   stopEnroll?.()
   stopEnroll = undefined
   enrolling.value = false
 }
 function micTrack() {
-  const t = props.stream?.getAudioTracks().find((t) => t.readyState === 'live' && t.enabled)
-  if (!props.mic || !t) throw new Error('请先开启会议麦克风')
-  return t
+  const track = props.stream?.getAudioTracks().find((t) => t.enabled && t.readyState === 'live')
+  if (!props.mic || !track) throw new Error('请先开启会议麦克风')
+  return track
 }
 watch(
   () => [props.mic, props.stream],
@@ -325,85 +347,22 @@ watch(
   () => {
     halt()
     version++
-    captions.value = []
-    translations.value = {}
     seen = 0
     state.value = null
+    captions.value = []
+    translations.value = {}
     void refresh()
   },
 )
-let serial: Promise<void> = Promise.resolve(),
-  queued = 0
-async function toggleSpeech() {
-  if (capturing.value) {
-    halt()
-    return
-  }
-  try {
-    const t = micTrack(),
-      gen = ++epoch
-    let batch: Float32Array[] = [],
-      quiet = 0,
-      spoken = 0
-    const stop = await listen(t, (f) => {
-      if (gen !== epoch) return
-      let sum = 0
-      for (const x of f) sum += x * x
-      const active = Math.sqrt(sum / f.length) > 0.006
-      if (!batch.length && !active) return
-      batch.push(f)
-      if (active) {
-        quiet = 0
-        spoken++
-      } else quiet++
-      if (batch.length >= 65 || quiet >= 6) {
-        const frames = batch
-        batch = []
-        quiet = 0
-        const n = spoken
-        spoken = 0
-        if (n < 3) return
-        if (queued >= 5) {
-          report(new Error('转录积压，本段未发送'))
-          return
-        }
-        const body = wav(frames),
-          nonce = crypto.randomUUID()
-        queued++
-        serial = serial
-          .then(async () => {
-            if (gen !== epoch) return
-            for (let i = 0; i < 2; i++) {
-              try {
-                await api('captions', {
-                  method: 'POST',
-                  headers: { 'Idempotency-Key': nonce, 'Content-Type': 'audio/wav' },
-                  body,
-                })
-                break
-              } catch (e) {
-                if (i || gen !== epoch) throw e
-              }
-            }
-            await refresh()
-          })
-          .catch(report)
-          .finally(() => {
-            queued--
-          })
-      }
-    })
-    if (gen !== epoch) {
-      stop()
-      return
-    }
-    stopListen = stop
-    capturing.value = true
-  } catch (e) {
-    halt()
-    report(e)
-  }
-}
+watch(
+  () => props.initialTab,
+  (tabName) => {
+    if (tabName) tab.value = tabName
+  },
+)
+watch(permissionJob, () => {
+  consentError.value = ''
+})
 async function enroll() {
   try {
     await ElMessageBox.confirm('将从你的会议麦克风提取声纹，仅供本场发言匹配。可随时删除。', '绑定我的声纹', {
@@ -464,56 +423,62 @@ function uploadMaterials(e: Event) {
       })
   })
 }
-function importTerms(e: Event) {
-  const f = filesOf(e)[0]
-  if (f)
-    void action(async () => {
-      const raw = await f.text()
-      await api(
-        'terms',
-        payload('PUT', { terms: f.name.toLowerCase().endsWith('.json') ? JSON.parse(raw) : raw }),
-      )
-    })
-}
-function consent(k: string, on: boolean) {
-  const kinds = new Set(state.value?.consent)
-  if (on) kinds.add(k)
-  else kinds.delete(k)
-  void action(() => api('consent', payload('PUT', { kinds: [...kinds] })))
-}
-function toggleRecording() {
-  void action(() =>
-    state.value?.capture
-      ? api('capture', { method: 'DELETE' })
-      : api(
-          'capture',
-          payload('POST', {
-            audience: audience.value,
-            users: selected.value
-              .split(/[,，\s]+/)
-              .filter(Boolean)
-              .map(Number),
-          }),
-        ),
-  )
-}
-async function generate() {
-  if (state.value?.minutes) {
-    try {
-      await ElMessageBox.confirm('重新生成将替换当前纪要正文。', '重新生成纪要')
-    } catch {
-      return
+async function toggleRecording() {
+  if (working.value) return
+  working.value = true
+  try {
+    if (!state.value) await refresh()
+    if (!state.value?.host) throw new Error('仅主持人可控制云录制')
+    const id = state.value.capture?.id
+    if (!id) {
+      try {
+        await ElMessageBox.confirm(
+          '开始后将录制你发布的摄像头、麦克风和共享屏幕，并向其他参会人征求同意。',
+          '开启加密云录制',
+          { confirmButtonText: '同意并开启', cancelButtonText: '取消' },
+        )
+      } catch {
+        return
+      }
     }
+    await api('capture', id ? { method: 'DELETE' } : payload('POST', {}))
+    await refresh()
+  } catch (e) {
+    report(e)
+    ElMessage.error(error.value)
+  } finally {
+    working.value = false
+  }
+}
+async function shareRecording(id: string, users: number[]) {
+  let value: string
+  try {
+    ;({ value } = await ElMessageBox.prompt(
+      '填写可领取回放的参会账号 ID，用逗号分隔。清空后仅主持人可见。',
+      '分发回放',
+      {
+        inputValue: users.join(','),
+        inputPattern: /^\s*(?:[1-9]\d*(?:[\s,，]+[1-9]\d*)*)?\s*$/,
+        inputErrorMessage: '请输入账号 ID',
+      },
+    ))
+  } catch {
+    return
   }
   await action(() =>
-    api('minutes', payload('PUT', { generate: true, revision: state.value?.minutes?.revision || 0 })),
+    api(
+      'sharing/' + id,
+      payload('PUT', {
+        users: value
+          .trim()
+          .split(/[\s,，]+/)
+          .filter(Boolean)
+          .map(Number),
+      }),
+    ),
   )
 }
-function saveMinutes() {
-  void action(() =>
-    api('minutes', payload('PUT', { body: edited.value, revision: state.value?.minutes?.revision || 0 })),
-  )
-}
+defineExpose({ state, target, working, enrolling, enroll, removeVoice, toggleSpeech, toggleRecording, admit })
 function saveBlob(blob: Blob, name: string) {
   const u = URL.createObjectURL(blob),
     a = document.createElement('a')
@@ -521,6 +486,18 @@ function saveBlob(blob: Blob, name: string) {
   a.download = name
   a.click()
   setTimeout(() => URL.revokeObjectURL(u), 30000)
+}
+async function playRecording(id: string) {
+  clearPreview()
+  loadingReplay.value = id
+  try {
+    const blob = await (await api('files/' + id)).blob()
+    if (alive && props.modelValue && loadingReplay.value === id) replayUrl.value = URL.createObjectURL(blob)
+  } catch (e) {
+    report(e)
+  } finally {
+    if (loadingReplay.value === id) loadingReplay.value = ''
+  }
 }
 async function download(path: string, name: string) {
   await action(async () => saveBlob(await (await api(path)).blob(), name))
@@ -560,8 +537,12 @@ async function localFile(e: Event, open: boolean) {
     } else saveBlob(await sealRecording(f, pass), f.name + '.wtrec')
   })
 }
-const timer = setInterval(() => void refresh(), 4000)
+const timer = setInterval(() => {
+  if (!leaving) void refresh()
+}, 1800)
 onBeforeUnmount(() => {
+  waiting?.(false)
+  waiting = undefined
   alive = false
   version++
   halt()
@@ -570,6 +551,29 @@ onBeforeUnmount(() => {
 })
 </script>
 <style scoped>
+.live-captions {
+  position: fixed;
+  z-index: 15;
+  left: 50%;
+  bottom: calc(84px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  max-width: min(42rem, 90vw);
+  width: max-content;
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: rgba(18, 25, 35, 0.9);
+  color: white;
+  line-height: 1.5;
+  pointer-events: none;
+}
+.live-captions strong {
+  margin-right: 6px;
+}
+.live-captions div span {
+  display: block;
+  color: #b6e4ff;
+}
+
 .portable {
   margin-top: 20px;
 }
