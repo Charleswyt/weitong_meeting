@@ -6,6 +6,8 @@ import type { components } from '@/types/api.gen'
 // 接线时暴露的分叉：旧手写版把 videoResolution/vbMode/recordingQuality 记成 string、
 // faceEnhancement/cloudRecordDefault 记成 number、recordingFps 记成 number ——
 // 契约按后端定义收窄为枚举（"480p"|"720p"|"1080p"、0|1、0|10|15|25 等），消费点已按枚举对齐。
+export const DEFAULT_VIDEO_UPLINK_KBPS = 500
+
 export type UserSettingsVo = components['schemas']['PreferenceVo']
 export type SettingsCapabilitiesVo = components['schemas']['SettingsCapabilitiesVo']
 

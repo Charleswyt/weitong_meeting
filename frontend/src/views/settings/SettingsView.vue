@@ -114,7 +114,7 @@
                 <div class="setting-left">
                   <span class="setting-label">浏览器视频上行上限</span>
                   <span class="setting-desc"
-                    >自适应不设上限；选档位则限制上行码率，重新开启摄像头后生效</span
+                    >摄像头和共享屏幕每路默认按 500 kbps 上限编码。重新开启视频后生效。</span
                   >
                 </div>
                 <div class="setting-right">
@@ -132,7 +132,7 @@
                     <option :value="200">200 Kbps</option>
                     <option :value="300">300 Kbps</option>
                     <option :value="400">400 Kbps</option>
-                    <option :value="500">500 Kbps</option>
+                    <option :value="500">500 Kbps（默认）</option>
                     <option :value="600">600 Kbps</option>
                     <option :value="700">700 Kbps</option>
                     <option :value="800">800 Kbps</option>
@@ -628,7 +628,7 @@ import {
 } from "@/utils/mediaTest";
 import { clearAvatar, updateDisplayName, uploadAvatar } from "@/api/user";
 import { toAvatarBlob } from "@/utils/avatarImage";
-import type { UserSettingsVo } from "@/api/settings";
+import { DEFAULT_VIDEO_UPLINK_KBPS, type UserSettingsVo } from "@/api/settings";
 import { BG_BLUR_AVAILABLE } from "@/utils/virtualBackground";
 import { createBgBlurTrack, type BgBlurSession } from "@/utils/bgBlur";
 import { createVideoEnhanceTrack, type VideoEnhanceSession } from "@/utils/videoEnhance";
@@ -906,7 +906,7 @@ const form = reactive<UserSettingsVo>({
   speakerDeviceId: "",
   videoResolution: "1080p",
   videoMaxFps: 30,
-  videoTargetBitrateKbps: 0,
+  videoTargetBitrateKbps: DEFAULT_VIDEO_UPLINK_KBPS,
   vbMode: "off",
   vbCustomImageUrl: "",
   faceEnhancement: 0,

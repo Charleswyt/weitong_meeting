@@ -1416,7 +1416,7 @@ async function publishCamera(): Promise<boolean> {
   if (!vt) return false
   await whip.publish(new MediaStream([vt]), {
     mediaKind: 'camera',
-    targetBitrateKbps: media.prefs.value?.videoTargetBitrateKbps ?? 0,
+    targetBitrateKbps: media.prefs.value?.videoTargetBitrateKbps,
     delivery: deliveryFor('camera'),
     preferredFps: media.prefs.value?.videoMaxFps,
     physicalFrames: media.physicalCameraFrames,
@@ -1695,7 +1695,7 @@ async function toggleShare() {
     try {
       await whipScreen.publish(s, {
         mediaKind: 'screen',
-        targetBitrateKbps: media.prefs.value?.videoTargetBitrateKbps ?? 0,
+        targetBitrateKbps: media.prefs.value?.videoTargetBitrateKbps,
         delivery: deliveryFor('screen'),
         preferredFps: media.prefs.value?.videoMaxFps,
         onVideoSample: sample => { screenSample.value = sample },

@@ -6933,6 +6933,73 @@
             }
           },
           "response": []
+        },
+        {
+          "name": "读取浏览器音视频偏好",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/settings/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "settings",
+                ""
+              ]
+            },
+            "description": "未保存偏好的账号默认返回 videoTargetBitrateKbps=500。",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{webToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ]
+          }
+        },
+        {
+          "name": "保存浏览器音视频偏好",
+          "request": {
+            "method": "PUT",
+            "url": {
+              "raw": "{{baseUrl}}/settings/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "settings",
+                ""
+              ]
+            },
+            "description": "发送完整偏好对象。请先读取当前值，再修改所需字段。videoTargetBitrateKbps 单位为 kbps，每路视频独立编码，0 表示自适应。",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{webToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cameraDeviceId\": \"\",\n  \"microphoneDeviceId\": \"\",\n  \"speakerDeviceId\": \"\",\n  \"videoResolution\": \"1080p\",\n  \"videoMaxFps\": 30,\n  \"videoTargetBitrateKbps\": 500,\n  \"vbMode\": \"off\",\n  \"vbCustomImageUrl\": \"\",\n  \"faceEnhancement\": 0,\n  \"cloudRecordDefault\": 1,\n  \"recordingQuality\": \"high\",\n  \"recordingFps\": 30,\n  \"mirrorVideo\": true,\n  \"bgBlur\": false,\n  \"micVolume\": 80,\n  \"autoGain\": true,\n  \"noiseSuppression\": true,\n  \"recordingSaveDir\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
         }
       ]
     },

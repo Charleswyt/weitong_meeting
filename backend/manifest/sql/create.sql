@@ -148,7 +148,7 @@ CREATE TABLE user_settings (
     speaker_device_id          VARCHAR(128) DEFAULT '',
     video_resolution           VARCHAR(16)  DEFAULT '1080p',
     video_max_fps              INT          DEFAULT 20,
-    video_target_bitrate_kbps  INT          DEFAULT 0,
+    video_target_bitrate_kbps  INT          DEFAULT 500,
     vb_mode                    VARCHAR(16)  DEFAULT 'off',
     vb_custom_image_url        VARCHAR(256) DEFAULT '',
     face_enhancement           TINYINT      DEFAULT 0,
@@ -170,7 +170,7 @@ COMMENT ON COLUMN user_settings.microphone_device_id         IS '同上，麦克
 COMMENT ON COLUMN user_settings.speaker_device_id            IS '同上，扬声器 deviceId';
 COMMENT ON COLUMN user_settings.video_resolution             IS '字典 video_resolution：480p/720p/1080p，作为采集约束的 ideal 值';
 COMMENT ON COLUMN user_settings.video_max_fps                IS '最大帧率，作为采集约束的 ideal 值';
-COMMENT ON COLUMN user_settings.video_target_bitrate_kbps    IS '0=自适应；其余为上限 Kbps，UI 偏好';
+COMMENT ON COLUMN user_settings.video_target_bitrate_kbps    IS '浏览器每路视频默认编码上限 500 kbps，0 表示自适应';
 COMMENT ON COLUMN user_settings.vb_mode                      IS '字典 vb_mode：off/blur/custom';
 COMMENT ON COLUMN user_settings.vb_custom_image_url          IS '自定义背景图 URL，vb_mode=custom 时生效';
 COMMENT ON COLUMN user_settings.face_enhancement             IS '浏览器端美颜开关：1 开 0 关';
@@ -365,9 +365,9 @@ VALUES ('chenfang',  '',   '陈芳',      'rk3588bj4',     '', 'meeting_particip
 
 -- user_settings（3 行；摊开原 sys_user.preferences JSON；设备 id 均为 ''）
 INSERT INTO user_settings (user_id, video_resolution, video_max_fps, video_target_bitrate_kbps, vb_mode, face_enhancement, cloud_record_default, recording_quality)
-VALUES (1, '1080p', 30, 0, 'off',  0, 1, 'high');
+VALUES (1, '1080p', 30, 500, 'off',  0, 1, 'high');
 INSERT INTO user_settings (user_id, video_resolution, video_max_fps, video_target_bitrate_kbps, vb_mode, face_enhancement, cloud_record_default, recording_quality)
-VALUES (2, '1080p', 30, 0, 'off',  0, 1, 'high');
+VALUES (2, '1080p', 30, 500, 'off',  0, 1, 'high');
 INSERT INTO user_settings (user_id, video_resolution, video_max_fps, video_target_bitrate_kbps, vb_mode, face_enhancement, cloud_record_default, recording_quality)
 VALUES (3, '720p',  15, 300, 'blur', 1, 1, 'medium');
 

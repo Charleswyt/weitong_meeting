@@ -21,6 +21,9 @@ import (
 func TestVideoTargetBitrateRange(t *testing.T) {
 	ctx := context.Background()
 	base := model.DefaultPreferenceVo()
+	if base.VideoTargetBitrateKbps != 500 {
+		t.Fatalf("default browser video encoding cap = %d kbps, want 500", base.VideoTargetBitrateKbps)
+	}
 	if err := g.Validator().Data(base).Run(ctx); err != nil {
 		t.Fatalf("默认偏好本身应当合法，否则这个测试测不到码率那一维：%s", errText(err))
 	}

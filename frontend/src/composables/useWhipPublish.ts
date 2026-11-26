@@ -1,3 +1,4 @@
+import { DEFAULT_VIDEO_UPLINK_KBPS } from '@/api/settings'
 import { sitePath } from '@/utils/sitePath'
 import { createPublication, stopPublication, type PublicationCreateBody } from '@/api/meeting'
 import { h264First } from '@/utils/codecPreference'
@@ -171,6 +172,7 @@ export function useWhipPublish(getMeetingId: () => number) {
   async function startPublish(stream: MediaStream, opts: PublishOptions): Promise<RTCPeerConnection> {
     await unpublish()
     const videoTrack = stream.getVideoTracks()[0]
+    const videoCapKbps = videoTrack ? (opts.targetBitrateKbps ?? DEFAULT_VIDEO_UPLINK_KBPS) : 0
     const hasAudio = stream.getAudioTracks().length > 0
     const settings = videoTrack?.getSettings()
     // 三方只接受固定档位的视频规格（分辨率 1920x1080/1280x720、帧率 ≤25），
@@ -184,7 +186,7 @@ export function useWhipPublish(getMeetingId: () => number) {
       width: opts.delivery && settings?.width ? settings.width : spec.width,
       height: opts.delivery && settings?.height ? settings.height : spec.height,
       fps: spec.fps,
-      targetBitrateKbps: opts.delivery?.transportMode === 'cloud' ? opts.delivery.targetBitrateKbps : (opts.targetBitrateKbps ?? 0),
+      targetBitrateKbps: opts.delivery?.transportMode === 'cloud' ? opts.delivery.targetBitrateKbps : videoCapKbps,
       ...(opts.delivery && { transportMode: opts.delivery.transportMode, encodingStrategy: opts.delivery.encodingStrategy }),
       mediaLabel: opts.mediaLabel ?? '',
     })
@@ -194,7 +196,13 @@ export function useWhipPublish(getMeetingId: () => number) {
       throw new PublishError('没能拿到这路媒体的推流地址，请重试')
     }
     const conn = new RTCPeerConnection()
-    stream.getTracks().forEach(track => conn.addTransceiver(track, { direction: 'sendonly', streams: [stream] }))
+    for (const track of stream.getTracks()) {
+      const init: RTCRtpTransceiverInit = { direction: 'sendonly', streams: [stream] }
+      if (track.kind === 'video' && videoCapKbps > 0) {
+        init.sendEncodings = [{ maxBitrate: videoCapKbps * 1000 }]
+      }
+      conn.addTransceiver(track, init)
+    }
     // 来源由后端定（按本实例端别与媒体类型），前端只照它决定编码偏好，别按"是不是边端"自己猜。
     if (sourceType === 'rk_browser_roi') {
       const caps = RTCRtpSender.getCapabilities?.('video')
@@ -220,8 +228,7 @@ export function useWhipPublish(getMeetingId: () => number) {
     // 会议平台，它改不了本页浏览器的编码（编码发生在发送端）；② 会中那一格「目标码率」显示的是
     // `getStats` 里编码器自己的实时 targetBitrate，与上报值是两个量 —— 不在这里落，用户改了设置
     // 会发现那一格纹丝不动，只能以为"是网络问题"。
-    // 被拒时只进控制台：宁可这一路不限码率，也不因一次 setParameters 失败就整路发不出去。
-    const capKbps = opts.targetBitrateKbps ?? 0
+    // 首次协商前已把上限交给视频编码器，再设置帧率等偏好时沿用该上限。
     const videoSender = conn.getSenders().find((s) => s.track?.kind === 'video')
     if (videoSender) {
       if (videoTrack && opts.mediaKind === 'screen') {
@@ -230,7 +237,7 @@ export function useWhipPublish(getMeetingId: () => number) {
       try {
         const params = videoSender.getParameters()
         const encodings = params.encodings?.length ? params.encodings : [{}]
-        if (capKbps > 0) encodings[0] = { ...encodings[0], maxBitrate: capKbps * 1000 }
+        if (videoCapKbps > 0) encodings[0] = { ...encodings[0], maxBitrate: videoCapKbps * 1000 }
         // 对齐三方 setFocused：显式给编码器帧时钟与降级偏好，
         // CanvasCaptureMediaStreamTrack 没有硬件帧率，不设 maxFramerate 编码器可能判轨道不活跃。
         encodings[0] = { ...encodings[0], maxFramerate: spec.fps, scaleResolutionDownBy: 1 }

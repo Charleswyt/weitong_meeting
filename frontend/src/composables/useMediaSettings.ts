@@ -30,6 +30,18 @@ const mediaAccess = ref<{ camera: 'unknown' | 'granted' | 'denied' | 'prompt'; m
   mic: 'unknown',
 })
 let loadInFlight: Promise<UserSettingsVo | null> | null = null
+let preferencesSession: string | null = null
+
+function currentPreferencesSession() {
+  const session = localStorage.getItem('weitong.token')
+  if (session !== preferencesSession) {
+    preferencesSession = session
+    prefs.value = null
+    loadInFlight = null
+  }
+  return session
+}
+
 
 function isInsecureMediaContext(): boolean {
   if (typeof window === 'undefined') return false
@@ -99,10 +111,12 @@ export function useMediaSettings() {
   }
 
   async function loadPreferences(force = false) {
-    if (prefs.value && !force) return prefs.value
+    const session = currentPreferencesSession()
     if (loadInFlight) return loadInFlight
+    if (prefs.value && !force) return prefs.value
     loadInFlight = getPreferences()
       .then((res) => {
+        if (currentPreferencesSession() !== session) return null
         prefs.value = res.data || null
         // 旧版设置页只写 bgBlur；读到它而 vbMode 还是 off 时按 blur 迁移一次。
         // 只改内存：下次保存由 savePreferences 把镜像同步回库。
@@ -112,19 +126,21 @@ export function useMediaSettings() {
         return prefs.value
       })
       .catch(() => {
-        prefs.value = null
+        if (currentPreferencesSession() === session) prefs.value = null
         return null
       })
       .finally(() => {
-        loadInFlight = null
+        if (preferencesSession === session) loadInFlight = null
       })
     return loadInFlight
   }
 
   async function savePreferences(next: UserSettingsVo, alignSessionDevices = true) {
     // bgBlur 是旧开关的兼容镜像：判生效只看 vbMode，落库时把镜像同步过去。
+    const session = currentPreferencesSession()
     const payload = { ...next, bgBlur: next.vbMode === 'blur' }
     await updatePreferences(payload)
+    if (currentPreferencesSession() !== session) return
     prefs.value = payload
     // 显式保存过一次就把临时设备对齐到刚落库的值：否则会中设置弹层存的设备会被预检页的临时选择盖掉。
     // 只改非设备项时传 false，别把预检页的临时设备覆盖掉。
