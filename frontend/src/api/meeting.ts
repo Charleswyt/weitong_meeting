@@ -14,7 +14,7 @@ export type MeetingVo = components['schemas']['MeetingVo'] & {
 
 export function endReasonLabel(reason?: string): string {
   if (reason === 'normal') return '正常结束'
-  if (reason === 'empty_timeout') return '空房满 5 分钟 · 自动结束'
+  if (reason === 'empty_timeout') return '会议室空置超5分钟 · 自动结束'
   if (reason === 'abnormal_exit') return '异常退出 · 超时自动结束'
   return ''
 }
@@ -36,7 +36,10 @@ export type StreamVo = components['schemas']['StreamVo']
 
 // 会中态整包。〔WS 侧注意〕撤房补发的那一帧只填 meetingId 与三个空数组，
 // 其余键是零值 —— 契约标它们全 required，所以**不许按"键在不在"判有没有数据**（见 `WsMeetingData`）。
-export type MeetingStateVo = components['schemas']['MeetingStateVo']
+export type MeetingStateVo = components['schemas']['MeetingStateVo'] & {
+  title?: string
+  activeStartedAt?: string
+}
 
 // 入会初始设备态（预约里设的"入会时静音/关摄像头"，会中只读）。
 export type InitialMedia = components['schemas']['InitialMediaVo']
@@ -112,6 +115,24 @@ export function muteAllParticipants(meetingId: number) {
 
 export function kickParticipant(meetingId: number, participantId: string) {
   return post(`/api/v1/meetings/${meetingId}/kick`, { participantId })
+}
+
+export function renameMeetingTitle(meetingId: number, title: string) {
+  return post<{ applied: boolean; pending: boolean; requestId?: string; title: string }>(
+    `/api/v1/meetings/${meetingId}/title`,
+    { title },
+  )
+}
+
+export function decideRenameTitle(meetingId: number, requestId: string, approve: boolean) {
+  return post(`/api/v1/meetings/${meetingId}/title-requests/${encodeURIComponent(requestId)}`, { approve })
+}
+
+export function renameSelfInMeeting(meetingId: number, displayName: string, scope: 'session' | 'permanent') {
+  return post<{ displayName: string; scope: 'session' | 'permanent' }>(
+    `/api/v1/meetings/${meetingId}/display-name`,
+    { displayName, scope },
+  )
 }
 
 // 入会前预检（第 27 项）：前端在跳预检页之前先确认三方还能加入，

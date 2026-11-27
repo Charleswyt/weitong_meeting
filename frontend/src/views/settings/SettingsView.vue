@@ -1,5 +1,8 @@
 <template>
-  <div class="settings-page" :class="{ 'has-video-preview': activeTab === 'meeting' && previewOpen }">
+  <div
+    class="settings-page"
+    :class="{ 'has-video-preview': activeTab === 'meeting' && previewOpen }"
+  >
     <div class="page-head">
       <div class="page-head-row">
         <h2>设置</h2>
@@ -46,16 +49,37 @@
       <template v-if="activeTab === 'meeting'">
         <section class="settings-section">
           <div class="section-head">
-            <h3 class="section-title">视频</h3>
+            <h3 class="section-title"><i class="section-title-icon ri-vidicon-line" />视频</h3>
             <button
               type="button"
               class="preview-toggle-btn"
-              :class="{ active: previewOpen }"
-              :disabled="previewStarting"
+              :class="{ active: previewOpen, 'in-use': meetingStore.inMeeting }"
+              :disabled="previewStarting || meetingStore.inMeeting"
+              :title="
+                meetingStore.inMeeting ? '当前正在会议中，摄像头使用中' : ''
+              "
               @click="togglePreview"
             >
-              <i :class="previewStarting ? 'ri-loader-4-line spin' : previewOpen ? 'ri-eye-off-line' : 'ri-camera-lens-line'" />
-              <span>{{ previewStarting ? '正在打开…' : previewOpen ? '关闭画面预览' : '预览画面' }}</span>
+              <i
+                :class="
+                  meetingStore.inMeeting
+                    ? 'ri-vidicon-line'
+                    : previewStarting
+                      ? 'ri-loader-4-line spin'
+                      : previewOpen
+                        ? 'ri-eye-off-line'
+                        : 'ri-camera-lens-line'
+                "
+              />
+              <span>{{
+                meetingStore.inMeeting
+                  ? "使用中"
+                  : previewStarting
+                    ? "正在打开…"
+                    : previewOpen
+                      ? "关闭画面预览"
+                      : "预览画面"
+              }}</span>
             </button>
           </div>
 
@@ -102,7 +126,10 @@
                   <span class="setting-desc">按本机摄像头能力列出可选档位</span>
                 </div>
                 <div class="setting-right">
-                  <select v-model.number="form.videoMaxFps" class="setting-select">
+                  <select
+                    v-model.number="form.videoMaxFps"
+                    class="setting-select"
+                  >
                     <option v-for="fps in fpsOptions" :key="fps" :value="fps">
                       {{ fps }} FPS
                     </option>
@@ -177,13 +204,17 @@
               <div v-if="BG_BLUR_AVAILABLE" class="setting-row">
                 <div class="setting-left">
                   <span class="setting-label">背景虚化</span>
-                  <span class="setting-desc">自动识别人像并虚化背景，可在右侧预览实时查看效果</span>
+                  <span class="setting-desc"
+                    >自动识别人像并虚化背景，可在右侧预览实时查看效果</span
+                  >
                 </div>
                 <div class="setting-right">
                   <div
                     class="toggle-switch"
                     :class="{ on: form.vbMode === 'blur' }"
-                    @click="form.vbMode = form.vbMode === 'blur' ? 'off' : 'blur'"
+                    @click="
+                      form.vbMode = form.vbMode === 'blur' ? 'off' : 'blur'
+                    "
                   ></div>
                 </div>
               </div>
@@ -215,7 +246,9 @@
                     <i class="vp-live-dot" />
                     实时预览
                   </span>
-                  <span v-if="previewMeta" class="vp-meta">{{ previewMeta }}</span>
+                  <span v-if="previewMeta" class="vp-meta">{{
+                    previewMeta
+                  }}</span>
                 </div>
 
                 <div class="vp-stage">
@@ -252,23 +285,38 @@
                   <div v-if="previewError" class="vp-error-mask">
                     <i class="ri-camera-off-line" />
                     <p>{{ previewError }}</p>
-                    <button type="button" class="btn-ghost" @click="startVideoPreview(true)">重新尝试</button>
+                    <button
+                      type="button"
+                      class="btn-ghost"
+                      @click="startVideoPreview(true)"
+                    >
+                      重新尝试
+                    </button>
                   </div>
                 </div>
 
                 <div class="vp-tags">
                   <span class="vp-chip" :class="{ on: videoEnhanceEnabled }">
-                    <i class="ri-magic-line" /> 降噪增强 {{ videoEnhanceEnabled ? '开' : '关' }}
+                    <i class="ri-magic-line" /> 降噪增强
+                    {{ videoEnhanceEnabled ? "开" : "关" }}
                   </span>
-                  <span v-if="BG_BLUR_AVAILABLE" class="vp-chip" :class="{ on: form.vbMode === 'blur' }">
-                    <i class="ri-contrast-drop-2-line" /> 背景虚化 {{ form.vbMode === 'blur' ? '开' : '关' }}
+                  <span
+                    v-if="BG_BLUR_AVAILABLE"
+                    class="vp-chip"
+                    :class="{ on: form.vbMode === 'blur' }"
+                  >
+                    <i class="ri-contrast-drop-2-line" /> 背景虚化
+                    {{ form.vbMode === "blur" ? "开" : "关" }}
                   </span>
                   <span class="vp-chip" :class="{ on: facePreviewActive }">
-                    <i class="ri-user-smile-line" /> 人脸增强 {{ facePreviewActive ? '开' : '关' }}
+                    <i class="ri-user-smile-line" /> 人脸增强
+                    {{ facePreviewActive ? "开" : "关" }}
                   </span>
                 </div>
 
-                <p v-if="previewNotice" class="vp-notice">{{ previewNotice }}</p>
+                <p v-if="previewNotice" class="vp-notice">
+                  {{ previewNotice }}
+                </p>
                 <p v-else class="vp-tip">
                   复用当前摄像头数据流，切换左侧降噪、虚化、镜像与人脸增强时可实时对比画面差异。
                 </p>
@@ -278,29 +326,58 @@
         </section>
 
         <section class="settings-section">
-          <h3 class="section-title">视频传输</h3>
+          <h3 class="section-title"><i class="section-title-icon ri-broadcast-line" />视频传输</h3>
           <VideoDeliverySettings />
         </section>
 
         <section class="settings-section">
-          <h3 class="section-title">音频</h3>
+          <h3 class="section-title"><i class="section-title-icon ri-volume-up-line" />音频</h3>
 
           <div class="setting-row">
             <div class="setting-left">
               <span class="setting-label">麦克风</span>
               <span class="setting-desc">选择入会时使用的麦克风设备</span>
             </div>
-            <div class="setting-right">
-              <select v-model="form.microphoneDeviceId" class="setting-select">
-                <option value="">默认麦克风</option>
-                <option
-                  v-for="d in devices.microphones"
-                  :key="d.deviceId"
-                  :value="d.deviceId"
+            <div class="setting-right audio-test-right">
+              <div class="audio-test-row">
+                <select
+                  v-model="form.microphoneDeviceId"
+                  class="setting-select"
                 >
-                  {{ d.label || "麦克风 " + d.deviceId.slice(0, 8) }}
-                </option>
-              </select>
+                  <option value="">默认麦克风（自动选本机有效口）</option>
+                  <option
+                    v-for="d in devices.microphones"
+                    :key="d.deviceId"
+                    :value="d.deviceId"
+                  >
+                    {{ d.label || "麦克风 " + d.deviceId.slice(0, 8) }}
+                  </option>
+                </select>
+                <button
+                  type="button"
+                  class="audio-test-btn"
+                  :class="{ active: micTesting }"
+                  @click="toggleMicTest"
+                >
+                  <i
+                    :class="micTesting ? 'ri-stop-circle-line' : 'ri-mic-line'"
+                  />
+                  <span>{{ micTesting ? "停止测试" : "输入测试" }}</span>
+                </button>
+              </div>
+              <div
+                v-if="micTesting"
+                class="mic-meter"
+                aria-label="麦克风输入音量"
+              >
+                <div class="mic-meter-track">
+                  <div
+                    class="mic-meter-fill"
+                    :style="{ width: micLevelPct + '%' }"
+                  />
+                </div>
+                <span class="mic-meter-val">{{ micLevelPct }}%</span>
+              </div>
             </div>
           </div>
 
@@ -309,35 +386,77 @@
               <span class="setting-label">扬声器</span>
               <span class="setting-desc">选择播放会议声音的输出设备</span>
             </div>
-            <div class="setting-right">
-              <select v-model="form.speakerDeviceId" class="setting-select">
-                <option value="">默认扬声器</option>
-                <option
-                  v-for="d in devices.speakers"
-                  :key="d.deviceId"
-                  :value="d.deviceId"
+            <div class="setting-right audio-test-right">
+              <div class="audio-test-row">
+                <select v-model="form.speakerDeviceId" class="setting-select">
+                  <option value="">默认扬声器（自动选本机有效口）</option>
+                  <option
+                    v-for="d in devices.speakers"
+                    :key="d.deviceId"
+                    :value="d.deviceId"
+                  >
+                    {{ d.label || "扬声器 " + d.deviceId.slice(0, 8) }}
+                  </option>
+                </select>
+                <button
+                  type="button"
+                  class="audio-test-btn"
+                  :class="{ active: speakerTesting }"
+                  @click="toggleSpeakerTest"
                 >
-                  {{ d.label || "扬声器 " + d.deviceId.slice(0, 8) }}
-                </option>
-              </select>
+                  <i
+                    :class="
+                      speakerTesting
+                        ? 'ri-stop-circle-line'
+                        : 'ri-volume-up-line'
+                    "
+                  />
+                  <span>{{
+                    speakerTesting
+                      ? `停止测试 (${speakerTestRemain}s)`
+                      : "音量测试"
+                  }}</span>
+                </button>
+              </div>
             </div>
           </div>
 
-          <div class="setting-row">
-            <div class="setting-left">
-              <span class="setting-label">麦克风音量</span>
-              <span class="setting-desc">拖动滑块调整输入音量大小</span>
+          <div class="setting-row volume-pair-row">
+            <div class="volume-pair-cell">
+              <div class="setting-left">
+                <span class="setting-label">麦克风音量</span>
+                <span class="setting-desc">拖动滑块调整输入音量</span>
+              </div>
+              <div class="setting-right">
+                <div class="volume-control">
+                  <input
+                    type="range"
+                    v-model.number="form.micVolume"
+                    min="0"
+                    max="100"
+                    class="volume-slider"
+                  />
+                  <span class="volume-value">{{ form.micVolume }}%</span>
+                </div>
+              </div>
             </div>
-            <div class="setting-right">
-              <div class="volume-control">
-                <input
-                  type="range"
-                  v-model.number="form.micVolume"
-                  min="0"
-                  max="100"
-                  class="volume-slider"
-                />
-                <span class="volume-value">{{ form.micVolume }}%</span>
+
+            <div class="volume-pair-cell">
+              <div class="setting-left">
+                <span class="setting-label">音频音量</span>
+                <span class="setting-desc">拖动滑块调整输出音量</span>
+              </div>
+              <div class="setting-right">
+                <div class="volume-control">
+                  <input
+                    type="range"
+                    v-model.number="speakerVolume"
+                    min="0"
+                    max="100"
+                    class="volume-slider"
+                  />
+                  <span class="volume-value">{{ speakerVolume }}%</span>
+                </div>
               </div>
             </div>
           </div>
@@ -375,12 +494,12 @@
       <!-- ═══ Tab 2: 辅助功能（转录翻译术语库 / 录制） ═══ -->
       <template v-else-if="activeTab === 'assist'">
         <section class="settings-section">
-          <h3 class="section-title">转录翻译术语库</h3>
+          <h3 class="section-title"><i class="section-title-icon ri-translate-2" />转录翻译术语库</h3>
           <GlossarySettings />
         </section>
 
         <section class="settings-section">
-          <h3 class="section-title">录制</h3>
+          <h3 class="section-title"><i class="section-title-icon ri-record-circle-line" />录制</h3>
 
           <div class="setting-row">
             <div class="setting-left">
@@ -456,7 +575,9 @@
           <div class="setting-row">
             <div class="setting-left">
               <span class="setting-label">加密云录制</span>
-              <span class="setting-desc">由主持人在会中开启。成员同意后录制，回放由主持人分发。</span>
+              <span class="setting-desc"
+                >由主持人在会中开启。成员同意后录制，回放由主持人分发。</span
+              >
             </div>
           </div>
         </section>
@@ -466,7 +587,7 @@
       <template v-else>
         <!-- 账号信息：原型这两行是矢量图层，头像/登录名是我方已有能力 -->
         <section class="settings-section">
-          <h3 class="section-title">账号信息</h3>
+          <h3 class="section-title"><i class="section-title-icon ri-user-3-line" />账号信息</h3>
           <div class="setting-row">
             <div class="setting-left">
               <span class="setting-label">头像</span>
@@ -527,7 +648,7 @@
         </section>
 
         <section class="settings-section">
-          <h3 class="section-title">网络检测</h3>
+          <h3 class="section-title"><i class="section-title-icon ri-wifi-line" />网络检测</h3>
 
           <div class="setting-row">
             <div class="setting-left">
@@ -537,7 +658,11 @@
               >
             </div>
             <div class="setting-right">
-              <button class="btn-primary" :disabled="netBusy" @click="runNetTest">
+              <button
+                class="btn-primary"
+                :disabled="netBusy"
+                @click="runNetTest"
+              >
                 {{
                   netBusy
                     ? `检测中 ${netElapsedText}`
@@ -569,13 +694,15 @@
                 <span class="net-metric-value">{{ m.value }}</span>
               </div>
             </div>
-            <p class="net-note">上下行测本机到当前系统的真实收发包；「会议链路延迟」是系统到会议平台的往返</p>
+            <p class="net-note">
+              上下行测本机到当前系统的真实收发包；「会议链路延迟」是系统到会议平台的往返
+            </p>
           </template>
         </section>
 
         <!-- 关于：只放"我这是什么版本、每版改了什么"。 -->
         <section class="settings-section">
-          <h3 class="section-title">关于</h3>
+          <h3 class="section-title"><i class="section-title-icon ri-information-line" />关于</h3>
           <div class="setting-row">
             <div class="setting-left">
               <span class="setting-label">版本信息</span>
@@ -598,7 +725,7 @@
 <script setup lang="ts">
 import GlossarySettings from "@/components/meeting/GlossarySettings.vue";
 import VideoDeliverySettings from "@/components/VideoDeliverySettings.vue";
-import { sitePath } from '@/utils/sitePath'
+import { sitePath } from "@/utils/sitePath";
 import {
   computed,
   nextTick,
@@ -610,8 +737,10 @@ import {
 } from "vue";
 import { ElMessage } from "element-plus";
 import { ApiError, assetUrl } from "@/utils/request";
+import { getSpeakerVolume, setSpeakerVolume } from "@/utils/audioRouting";
 import { useMediaSettings } from "@/composables/useMediaSettings";
 import { useUserStore } from "@/store/user";
+import { useMeetingStore } from "@/store/meeting";
 import {
   DirPickerBlockedError,
   clearRecordingDir,
@@ -631,7 +760,10 @@ import { toAvatarBlob } from "@/utils/avatarImage";
 import { DEFAULT_VIDEO_UPLINK_KBPS, type UserSettingsVo } from "@/api/settings";
 import { BG_BLUR_AVAILABLE } from "@/utils/virtualBackground";
 import { createBgBlurTrack, type BgBlurSession } from "@/utils/bgBlur";
-import { createVideoEnhanceTrack, type VideoEnhanceSession } from "@/utils/videoEnhance";
+import {
+  createVideoEnhanceTrack,
+  type VideoEnhanceSession,
+} from "@/utils/videoEnhance";
 import {
   createFaceRoiObserver,
   loadFaceDetector,
@@ -641,7 +773,7 @@ import {
 import { useFaceEnhancement } from "@/composables/useFaceEnhancement";
 import VersionDialog from "@/components/dialogs/VersionDialog.vue";
 import { currentRelease } from "@/data/changelog";
-import { businessDayKey, dashDateTime } from "@/utils/time";
+import { businessDayKey } from "@/utils/time";
 
 type SettingsTab = "meeting" | "assist" | "system";
 const activeTab = ref<SettingsTab>("meeting");
@@ -662,6 +794,7 @@ const {
 } = useFaceEnhancement();
 
 const userStore = useUserStore();
+const meetingStore = useMeetingStore();
 const avatarInputRef = ref<HTMLInputElement | null>(null);
 const avatarBusy = ref(false);
 
@@ -672,15 +805,8 @@ const avatarBusy = ref(false);
 const versionDialogVisible = ref(false);
 const versionDesc = computed(() => {
   const rel = currentRelease();
-  // 发布日期与构建时间用**同一种短横线格式**：`2026-10-14` / `2026-11-13 08:31`。
-  // 混用 `2026-10-14` 与 `2026/11/13` 读起来像两套来源的数据。
   const released = businessDayKey(rel.date);
-  const built = dashDateTime(import.meta.env.VITE_BUILD_DATE);
-  // 开发态必须说出来：本地跑的是源码，不是这个版本号的正式产物。
-  // 显示成"v0.8.1"却不标开发态，排障时会把源码问题当成发布版问题。
-  return built
-    ? `${rel.version} · 发布于 ${released} · 构建于 ${built}`
-    : `${rel.version} · 发布于 ${released} · 开发态`;
+  return `${rel.version} · ${released}`;
 });
 // 后端删掉了旧文件，浏览器却还可能拿缓存里的同名资源，所以失败时不自动重试。
 const avatarBroken = ref(false);
@@ -866,7 +992,10 @@ const netMetrics = computed(() => {
     { label: "到本服务上传", value: formatMbps(r.upMbps) },
     { label: "到本服务下载", value: formatMbps(r.downMbps) },
     { label: "网络延迟", value: r.rttMs === null ? "未测出" : `${r.rttMs} ms` },
-    { label: "抖动", value: r.jitterMs === null ? "未测出" : `${r.jitterMs} ms` },
+    {
+      label: "抖动",
+      value: r.jitterMs === null ? "未测出" : `${r.jitterMs} ms`,
+    },
   ];
   if (r.upstreamRttMs !== null && r.upstreamRttMs !== undefined) {
     rows.push({ label: "会议链路延迟", value: `${r.upstreamRttMs} ms` });
@@ -925,13 +1054,20 @@ const form = reactive<UserSettingsVo>({
 async function probeCameraFpsOptions() {
   const applyCaps = (track: MediaStreamTrack | undefined) => {
     const caps = track?.getCapabilities?.() as
-      | (MediaTrackCapabilities & { frameRate?: { min?: number; max?: number } })
+      | (MediaTrackCapabilities & {
+          frameRate?: { min?: number; max?: number };
+        })
       | undefined;
     const maxRaw = caps?.frameRate?.max;
-    const max = maxRaw && Number.isFinite(maxRaw) ? Math.min(60, Math.round(maxRaw)) : 0;
+    const max =
+      maxRaw && Number.isFinite(maxRaw) ? Math.min(60, Math.round(maxRaw)) : 0;
     if (max < 5) return false;
-    const candidates = [10, 15, 20, 25, 30, 60].filter((f) => f >= 5 && f <= max);
-    fpsOptions.value = candidates.length ? candidates : [Math.max(5, Math.min(60, max))];
+    const candidates = [10, 15, 20, 25, 30, 60].filter(
+      (f) => f >= 5 && f <= max,
+    );
+    fpsOptions.value = candidates.length
+      ? candidates
+      : [Math.max(5, Math.min(60, max))];
     if (!fpsOptions.value.includes(form.videoMaxFps)) {
       const want = form.videoMaxFps;
       form.videoMaxFps = fpsOptions.value.reduce((best, cur) =>
@@ -943,14 +1079,19 @@ async function probeCameraFpsOptions() {
 
   // 优先复用预览轨或会中正在采集的物理摄像头轨，不额外调用 getUserMedia。
   const existing =
-    (previewRawTrack && previewRawTrack.readyState === "live" ? previewRawTrack : undefined) ||
+    (previewRawTrack && previewRawTrack.readyState === "live"
+      ? previewRawTrack
+      : undefined) ||
     (() => {
       const t = capturedCameraTrack();
       return t && t.readyState === "live" ? t : undefined;
     })();
   if (existing && applyCaps(existing)) return;
 
-  if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+  if (
+    typeof navigator === "undefined" ||
+    !navigator.mediaDevices?.getUserMedia
+  ) {
     return;
   }
   let stream: MediaStream | null = null;
@@ -1035,7 +1176,11 @@ function disposePreviewEffects() {
   if (previewOutStream) {
     previewOutStream.getTracks().forEach((t) => {
       if (t !== previewRawTrack) {
-        try { t.stop(); } catch { /* ignore */ }
+        try {
+          t.stop();
+        } catch {
+          /* ignore */
+        }
       }
     });
     previewOutStream = null;
@@ -1055,20 +1200,34 @@ function stopVideoPreview() {
     previewVideoRef.value.srcObject = null;
   }
   if (previewRawTrack) {
-    try { previewRawTrack.stop(); } catch { /* ignore */ }
+    try {
+      previewRawTrack.stop();
+    } catch {
+      /* ignore */
+    }
     previewRawTrack = null;
   }
 }
 
-async function ensurePreviewSourceTrack(forceRebuild = false): Promise<MediaStreamTrack | null> {
-  if (!forceRebuild && previewRawTrack && previewRawTrack.readyState === "live") {
+async function ensurePreviewSourceTrack(
+  forceRebuild = false,
+): Promise<MediaStreamTrack | null> {
+  if (
+    !forceRebuild &&
+    previewRawTrack &&
+    previewRawTrack.readyState === "live"
+  ) {
     return previewRawTrack;
   }
 
   // 先释放旧源轨，避免同一设备双开导致 NotReadableError
   disposePreviewEffects();
   if (previewRawTrack) {
-    try { previewRawTrack.stop(); } catch { /* ignore */ }
+    try {
+      previewRawTrack.stop();
+    } catch {
+      /* ignore */
+    }
     previewRawTrack = null;
   }
 
@@ -1076,14 +1235,20 @@ async function ensurePreviewSourceTrack(forceRebuild = false): Promise<MediaStre
   const activeMeetingTrack = capturedCameraTrack();
   if (activeMeetingTrack && activeMeetingTrack.readyState === "live") {
     const activeDevId = activeMeetingTrack.getSettings?.().deviceId || "";
-    const matchDevice = !form.cameraDeviceId || !activeDevId || activeDevId === form.cameraDeviceId;
+    const matchDevice =
+      !form.cameraDeviceId ||
+      !activeDevId ||
+      activeDevId === form.cameraDeviceId;
     if (matchDevice) {
       previewRawTrack = activeMeetingTrack.clone();
       return previewRawTrack;
     }
   }
 
-  if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+  if (
+    typeof navigator === "undefined" ||
+    !navigator.mediaDevices?.getUserMedia
+  ) {
     throw new Error("当前浏览器不支持摄像头采集");
   }
 
@@ -1108,7 +1273,11 @@ async function syncPreviewFaceObserver(seq: number) {
 
   previewBusyText.value = "正在加载人脸识别…";
   const detector = await loadFaceDetector();
-  if (seq !== previewSeq || !facePreviewActive.value || !previewVideoRef.value) {
+  if (
+    seq !== previewSeq ||
+    !facePreviewActive.value ||
+    !previewVideoRef.value
+  ) {
     if (seq === previewSeq) previewBusyText.value = "";
     return;
   }
@@ -1142,7 +1311,9 @@ async function applyPreviewEffects(seq: number) {
   if (videoEnhanceEnabled.value) {
     previewBusyText.value = "正在应用画质降噪…";
     try {
-      const enhanced = await createVideoEnhanceTrack(currentTrack, { fps: form.videoMaxFps });
+      const enhanced = await createVideoEnhanceTrack(currentTrack, {
+        fps: form.videoMaxFps,
+      });
       if (seq !== previewSeq) {
         enhanced?.dispose();
         return;
@@ -1174,7 +1345,8 @@ async function applyPreviewEffects(seq: number) {
         currentTrack = blurred.track;
       }
     } catch {
-      if (seq === previewSeq) previewNotice.value = "背景虚化初始化异常，已按原始画面预览";
+      if (seq === previewSeq)
+        previewNotice.value = "背景虚化初始化异常，已按原始画面预览";
     }
   }
 
@@ -1412,8 +1584,349 @@ onMounted(async () => {
   await enumerateDevices();
 });
 
+// ── 麦克风输入测试 & 扬声器音量测试 ──
+const micTesting = ref(false);
+const micLevelPct = ref(0);
+const speakerTesting = ref(false);
+let micTestStream: MediaStream | null = null;
+let micTestCtx: AudioContext | null = null;
+let micTestRaf: number | null = null;
+
+function stopMicTest() {
+  if (micTestRaf !== null) {
+    cancelAnimationFrame(micTestRaf);
+    micTestRaf = null;
+  }
+  micTestStream?.getTracks().forEach((t) => t.stop());
+  micTestStream = null;
+  void micTestCtx?.close().catch(() => undefined);
+  micTestCtx = null;
+  micTesting.value = false;
+  micLevelPct.value = 0;
+}
+
+async function toggleMicTest() {
+  if (micTesting.value) {
+    stopMicTest();
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    ElMessage.warning("当前浏览器不支持麦克风测试");
+    return;
+  }
+  try {
+    const audioConstraint: MediaTrackConstraints | boolean =
+      form.microphoneDeviceId
+        ? { deviceId: { exact: form.microphoneDeviceId } }
+        : true;
+    micTestStream = await navigator.mediaDevices.getUserMedia({
+      audio: audioConstraint,
+      video: false,
+    });
+    const ctx = new AudioContext();
+    micTestCtx = ctx;
+    const src = ctx.createMediaStreamSource(micTestStream);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 256;
+    src.connect(analyser);
+    const buf = new Uint8Array(analyser.frequencyBinCount);
+    micTesting.value = true;
+    const tick = () => {
+      if (!micTesting.value) return;
+      analyser.getByteTimeDomainData(buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) {
+        const v = (buf[i] - 128) / 128;
+        sum += v * v;
+      }
+      const rms = Math.sqrt(sum / buf.length);
+      micLevelPct.value = Math.min(100, Math.round(rms * 260));
+      micTestRaf = requestAnimationFrame(tick);
+    };
+    tick();
+  } catch {
+    stopMicTest();
+    ElMessage.error("无法打开所选麦克风，请检查权限或更换设备");
+  }
+}
+
+const speakerVolume = ref(getSpeakerVolume());
+const speakerTestRemain = ref(20);
+let speakerTestCtx: AudioContext | null = null;
+let speakerTestAudio: HTMLAudioElement | null = null;
+let speakerTestMasterGain: GainNode | null = null;
+let speakerTestTimer: number | null = null;
+let speakerTestEndTimer: number | null = null;
+
+watch(speakerVolume, (v) => {
+  const clamped = setSpeakerVolume(v);
+  if (speakerTestAudio) {
+    speakerTestAudio.volume = clamped / 100;
+  }
+  if (speakerTestMasterGain && speakerTestCtx) {
+    speakerTestMasterGain.gain.setTargetAtTime(
+      Math.max(0.0001, (clamped / 100) * 0.42),
+      speakerTestCtx.currentTime,
+      0.03,
+    );
+  }
+});
+
+function stopSpeakerTest() {
+  if (speakerTestTimer !== null) {
+    window.clearInterval(speakerTestTimer);
+    speakerTestTimer = null;
+  }
+  if (speakerTestEndTimer !== null) {
+    window.clearTimeout(speakerTestEndTimer);
+    speakerTestEndTimer = null;
+  }
+  if (speakerTestAudio) {
+    speakerTestAudio.pause();
+    speakerTestAudio.srcObject = null;
+    speakerTestAudio = null;
+  }
+  speakerTestMasterGain = null;
+  if (speakerTestCtx) {
+    void speakerTestCtx.close().catch(() => undefined);
+    speakerTestCtx = null;
+  }
+  speakerTesting.value = false;
+  speakerTestRemain.value = 20;
+}
+
+/**
+ * 20 秒温暖电钢琴卡农风测试曲（D 大调，120 BPM，10 小节 = 20s）：
+ * 零外链依赖，支持 setSinkId 精准路由到所选扬声器，并实时响应音频音量滑块。
+ */
+async function toggleSpeakerTest() {
+  if (speakerTesting.value) {
+    stopSpeakerTest();
+    return;
+  }
+  speakerTesting.value = true;
+  speakerTestRemain.value = 20;
+
+  try {
+    const ctx = new AudioContext();
+    speakerTestCtx = ctx;
+    const dest = ctx.createMediaStreamDestination();
+
+    // 柔和低通 + 轻度空间回声，让电钢琴音色更温润不刺耳
+    const masterGain = ctx.createGain();
+    masterGain.gain.setValueAtTime(
+      Math.max(0.0001, (speakerVolume.value / 100) * 0.42),
+      ctx.currentTime,
+    );
+    speakerTestMasterGain = masterGain;
+
+    const toneFilter = ctx.createBiquadFilter();
+    toneFilter.type = "lowpass";
+    toneFilter.frequency.setValueAtTime(2600, ctx.currentTime);
+    toneFilter.Q.setValueAtTime(0.7, ctx.currentTime);
+
+    const delay = ctx.createDelay(0.6);
+    delay.delayTime.setValueAtTime(0.28, ctx.currentTime);
+    const delayFeedback = ctx.createGain();
+    delayFeedback.gain.setValueAtTime(0.22, ctx.currentTime);
+    const delayWet = ctx.createGain();
+    delayWet.gain.setValueAtTime(0.18, ctx.currentTime);
+
+    toneFilter.connect(masterGain);
+    toneFilter.connect(delay);
+    delay.connect(delayFeedback);
+    delayFeedback.connect(delay);
+    delay.connect(delayWet);
+    delayWet.connect(masterGain);
+    masterGain.connect(dest);
+
+    const midiToFreq = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
+
+    const playPianoNote = (
+      midi: number,
+      startTime: number,
+      duration: number,
+      velocity = 0.5,
+    ) => {
+      const freq = midiToFreq(midi);
+      const noteGain = ctx.createGain();
+      noteGain.gain.setValueAtTime(0.0001, startTime);
+      noteGain.gain.linearRampToValueAtTime(velocity, startTime + 0.018);
+      noteGain.gain.exponentialRampToValueAtTime(
+        velocity * 0.32,
+        startTime + Math.min(duration * 0.65, 0.55),
+      );
+      noteGain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+
+      // 基音 sine + 柔和二次泛音 triangle 模拟电钢琴音色
+      const osc1 = ctx.createOscillator();
+      osc1.type = "sine";
+      osc1.frequency.setValueAtTime(freq, startTime);
+
+      const osc2 = ctx.createOscillator();
+      osc2.type = "triangle";
+      osc2.frequency.setValueAtTime(freq * 2, startTime);
+      const osc2Gain = ctx.createGain();
+      osc2Gain.gain.setValueAtTime(0.16, startTime);
+
+      osc1.connect(noteGain);
+      osc2.connect(osc2Gain);
+      osc2Gain.connect(noteGain);
+      noteGain.connect(toneFilter);
+
+      osc1.start(startTime);
+      osc2.start(startTime);
+      osc1.stop(startTime + duration + 0.05);
+      osc2.stop(startTime + duration + 0.05);
+    };
+
+    const beat = 0.5; // 120 BPM，每拍 0.5s，每小节 2.0s，10 小节 = 20.0s
+    const t0 = ctx.currentTime + 0.06;
+
+    // 卡农经典 8 小节和弦进行 + 2 小节温暖收尾（D - A - Bm - F#m - G - D - G - A - G - Dmaj7）
+    const bars: Array<{
+      bass: number;
+      arp: number[];
+      melody: Array<[number, number, number]>; // [beatOffset, midi, durationBeats]
+    }> = [
+      {
+        bass: 50,
+        arp: [62, 66, 69, 74],
+        melody: [
+          [0, 78, 2.0],
+          [2, 76, 1.0],
+          [3, 74, 1.0],
+        ],
+      },
+      {
+        bass: 45,
+        arp: [57, 61, 64, 69],
+        melody: [
+          [0, 73, 2.0],
+          [2, 74, 1.0],
+          [3, 76, 1.0],
+        ],
+      },
+      {
+        bass: 47,
+        arp: [59, 62, 66, 71],
+        melody: [
+          [0, 74, 2.0],
+          [2, 71, 1.0],
+          [3, 73, 1.0],
+        ],
+      },
+      {
+        bass: 42,
+        arp: [54, 57, 61, 66],
+        melody: [
+          [0, 69, 2.0],
+          [2, 71, 1.0],
+          [3, 73, 1.0],
+        ],
+      },
+      {
+        bass: 43,
+        arp: [55, 59, 62, 67],
+        melody: [
+          [0, 71, 1.5],
+          [1.5, 74, 0.5],
+          [2, 76, 1.0],
+          [3, 74, 1.0],
+        ],
+      },
+      {
+        bass: 50,
+        arp: [62, 66, 69, 74],
+        melody: [
+          [0, 78, 1.5],
+          [1.5, 76, 0.5],
+          [2, 74, 1.0],
+          [3, 73, 1.0],
+        ],
+      },
+      {
+        bass: 43,
+        arp: [55, 59, 62, 67],
+        melody: [
+          [0, 71, 1.0],
+          [1, 74, 1.0],
+          [2, 79, 1.0],
+          [3, 78, 1.0],
+        ],
+      },
+      {
+        bass: 45,
+        arp: [57, 61, 64, 69],
+        melody: [
+          [0, 76, 2.0],
+          [2, 73, 1.0],
+          [3, 76, 1.0],
+        ],
+      },
+      {
+        bass: 43,
+        arp: [55, 59, 62, 67],
+        melody: [
+          [0, 74, 1.5],
+          [1.5, 76, 0.5],
+          [2, 78, 2.0],
+        ],
+      },
+      { bass: 50, arp: [62, 66, 69, 73], melody: [[0, 74, 3.8]] },
+    ];
+
+    bars.forEach((bar, barIdx) => {
+      const barStart = t0 + barIdx * 4 * beat;
+      // 温暖低音长音
+      playPianoNote(bar.bass, barStart, 3.8 * beat, 0.34);
+      // 轻柔分解和弦
+      bar.arp.forEach((n, idx) => {
+        playPianoNote(n, barStart + idx * beat, 1.6 * beat, 0.24);
+      });
+      // 主旋律
+      bar.melody.forEach(([off, midi, dur]) => {
+        playPianoNote(midi, barStart + off * beat, dur * beat * 1.15, 0.42);
+      });
+    });
+
+    const audio = document.createElement("audio");
+    audio.srcObject = dest.stream;
+    audio.volume = speakerVolume.value / 100;
+    speakerTestAudio = audio;
+
+    const sinkEl = audio as HTMLAudioElement & {
+      setSinkId?: (id: string) => Promise<void>;
+    };
+    if (form.speakerDeviceId && typeof sinkEl.setSinkId === "function") {
+      try {
+        await sinkEl.setSinkId(form.speakerDeviceId);
+      } catch {
+        // 降级到系统默认输出
+      }
+    }
+
+    await audio.play().catch(() => undefined);
+
+    const startedAt = Date.now();
+    speakerTestTimer = window.setInterval(() => {
+      const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+      speakerTestRemain.value = Math.max(0, 20 - elapsed);
+    }, 250);
+
+    speakerTestEndTimer = window.setTimeout(() => {
+      stopSpeakerTest();
+    }, 20200);
+  } catch {
+    stopSpeakerTest();
+    ElMessage.error("扬声器测试播放失败，请检查输出设备");
+  }
+}
+
 // 防抖窗口内就切走页面会丢改动，卸载时立刻补存一次，并释放摄像头预览
 onBeforeUnmount(() => {
+  stopMicTest();
+  stopSpeakerTest();
   stopVideoPreview();
   if (pickerWinTimer !== null) {
     window.clearInterval(pickerWinTimer);
@@ -1483,7 +1996,10 @@ onBeforeUnmount(() => {
   font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.16s, color 0.16s, box-shadow 0.16s;
+  transition:
+    background 0.16s,
+    color 0.16s,
+    box-shadow 0.16s;
 }
 
 .settings-tab i {
@@ -1533,6 +2049,23 @@ onBeforeUnmount(() => {
   font-size: 16px;
   font-weight: 700;
   color: var(--text-primary);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-title-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--primary-soft);
+  color: var(--primary-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 400;
+  flex-shrink: 0;
 }
 
 /* ── 视频预览按钮与左右布局 ── */
@@ -1565,6 +2098,12 @@ onBeforeUnmount(() => {
 .preview-toggle-btn:disabled {
   opacity: 0.65;
   cursor: wait;
+}
+.preview-toggle-btn.in-use:disabled {
+  cursor: not-allowed;
+  background: var(--bg-input);
+  border-color: var(--border-color);
+  color: var(--text-muted);
 }
 
 .video-layout {
@@ -1666,7 +2205,11 @@ onBeforeUnmount(() => {
     0 0 0 1px rgba(15, 23, 42, 0.45),
     inset 0 0 18px rgba(56, 189, 248, 0.14);
   backdrop-filter: brightness(1.06) contrast(1.05);
-  transition: left 0.14s linear, top 0.14s linear, width 0.14s linear, height 0.14s linear;
+  transition:
+    left 0.14s linear,
+    top 0.14s linear,
+    width 0.14s linear,
+    height 0.14s linear;
 }
 
 .vp-face-tag {
@@ -2093,6 +2636,109 @@ onBeforeUnmount(() => {
     flex-wrap: wrap;
     align-items: flex-start;
     gap: 8px;
+  }
+}
+.audio-test-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.audio-test-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.audio-test-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 42px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    color 0.18s ease;
+}
+.audio-test-btn:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary-text);
+}
+.audio-test-btn.active {
+  border-color: var(--danger);
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--danger-text);
+}
+.audio-test-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.mic-meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 260px;
+}
+.mic-meter-track {
+  flex: 1;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-soft);
+  overflow: hidden;
+}
+.mic-meter-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #22c55e, #10b981);
+  border-radius: 999px;
+  transition: width 0.08s linear;
+}
+.mic-meter-val {
+  width: 36px;
+  text-align: right;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+.volume-pair-row {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+  align-items: center;
+}
+.volume-pair-cell {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+}
+.volume-pair-cell + .volume-pair-cell {
+  padding-left: 20px;
+  border-left: 1px solid var(--border-soft);
+}
+.volume-pair-cell .volume-control {
+  min-width: 150px;
+}
+@media (max-width: 767px) {
+  .volume-pair-row {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .volume-pair-cell + .volume-pair-cell {
+    padding-left: 0;
+    padding-top: 14px;
+    border-left: none;
+    border-top: 1px solid var(--border-soft);
   }
 }
 </style>

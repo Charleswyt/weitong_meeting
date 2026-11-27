@@ -25,6 +25,8 @@ export const useMeetingStore = defineStore('meeting', () => {
   const state = ref<MeetingStateVo | null>(null)
   const wsConnected = ref(false)
   const initialMedia = ref<{ micOff: boolean; cameraOff: boolean }>({ micOff: false, cameraOff: false })
+  /** 本端本次入会的本地时刻（ms），用于后端未返回 activeStartedAt 时的兜底计时 */
+  const joinedAtMs = ref<number>(Number(sessionStorage.getItem('meetingJoinedAtMs') || 0) || 0)
   /** quick / scheduled / share / voice：决定入会后默认媒体行为 */
   const launchKind = ref(sessionStorage.getItem('conference.launchKind') || '')
 
@@ -67,6 +69,8 @@ export const useMeetingStore = defineStore('meeting', () => {
     title.value = data.title
     participantId.value = data.participantId
     sessionStorage.setItem('participantId', participantId.value)
+    joinedAtMs.value = Date.now()
+    sessionStorage.setItem('meetingJoinedAtMs', String(joinedAtMs.value))
     initialMedia.value = data.initialMedia || { micOff: false, cameraOff: false }
     const kind = data.kind || sessionStorage.getItem('conference.launchKind') || ''
     if (kind) {
@@ -97,8 +101,40 @@ export const useMeetingStore = defineStore('meeting', () => {
 
   function applyState(s: MeetingStateVo) {
     state.value = s
+    if (s.title && s.title !== title.value) {
+      title.value = s.title
+      persist()
+    }
+    if (s.participants && s.participants.length > 0) {
+      if (!joinedAtMs.value) {
+        joinedAtMs.value = Date.now()
+        sessionStorage.setItem('meetingJoinedAtMs', String(joinedAtMs.value))
+      }
+    } else if (s.participants && s.participants.length === 0) {
+      joinedAtMs.value = 0
+      sessionStorage.removeItem('meetingJoinedAtMs')
+    }
     if (s.status === 'ended' || s.status === 'cancelled' || s.status === 'failed') {
       clear()
+    }
+  }
+
+  function setTitle(next: string) {
+    const trimmed = next.trim()
+    if (!trimmed) return
+    title.value = trimmed
+    if (state.value) {
+      state.value = { ...state.value, title: trimmed }
+    }
+    persist()
+  }
+
+  function renameParticipantLocal(pid: string, nextName: string) {
+    if (!state.value || !pid || !nextName) return
+    state.value = {
+      ...state.value,
+      participants: state.value.participants.map((p) => (p.id === pid ? { ...p, name: nextName } : p)),
+      streams: state.value.streams.map((st) => (st.ownerId === pid ? { ...st, ownerName: nextName } : st)),
     }
   }
 
@@ -116,6 +152,8 @@ export const useMeetingStore = defineStore('meeting', () => {
     sessionStorage.removeItem('meetingId')
     sessionStorage.removeItem('meetingNo')
     sessionStorage.removeItem('meetingTitle')
+    joinedAtMs.value = 0
+    sessionStorage.removeItem('meetingJoinedAtMs')
     // 离会即清空实测速率，侧栏卡片回到「—」，不留着上一场的数字冒充本场。
     mediaStats.value = null
     // 离会时重置 UI 偏好，下次入会用默认值
@@ -163,6 +201,7 @@ export const useMeetingStore = defineStore('meeting', () => {
     meetingNo,
     title,
     participantId,
+    joinedAtMs,
     wsTicket,
     wsTicketExpiresIn,
     state,
@@ -183,6 +222,8 @@ export const useMeetingStore = defineStore('meeting', () => {
     leave,
     clear,
     applyState,
+    setTitle,
+    renameParticipantLocal,
     validateRestored,
     refreshTicket,
   }

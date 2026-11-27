@@ -3,8 +3,13 @@
     <div class="modal-overlay" :class="{ show: modelValue }" @click.self="close">
       <div class="modal-box" v-if="meeting">
         <div class="modal-header">
-          <h3>会议详情</h3>
-          <button class="modal-close" @click="close"><i class="ri-close-line" /></button>
+          <div class="wt-dlg-head-left">
+            <i class="wt-dlg-icon ri-file-list-3-line" />
+            <h3>会议详情</h3>
+          </div>
+          <button class="modal-close" type="button" aria-label="关闭" @click="close">
+            <i class="ri-close-line" />
+          </button>
         </div>
         <div class="modal-body">
           <div class="detail-title">{{ meeting.title }}</div>
@@ -33,8 +38,10 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="link-copy" @click="assistantOpen=true">材料与会议助手</button>
-          <button class="btn-cancel" @click="close">关闭</button>
+          <button class="btn-cancel" type="button" @click="close">关闭</button>
+          <button class="btn-confirm" type="button" @click="assistantOpen=true">
+            <i class="ri-sparkling-2-line" />材料与会议助手
+          </button>
         </div>
       </div>
     </div>

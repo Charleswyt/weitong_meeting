@@ -1,3 +1,5 @@
+@import './dialogs.css';
+
 /* 路由驱动下的适配：原型用 .page/.page.active 绝对定位切页，
    Vue Router 每次只渲染一个视图，这里把视图根容器改为占满内容区的 flex 列。 */
 #app {
@@ -97,3 +99,4 @@
 .dark-theme .el-dialog__body {
   color: var(--text-secondary);
 }
+

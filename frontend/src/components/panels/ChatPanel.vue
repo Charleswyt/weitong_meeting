@@ -38,7 +38,15 @@
               <span v-if="row.host" class="cp-tag-host">主持人</span>
               <span class="cp-time">{{ row.time }}</span>
             </div>
-            <div class="cp-bubble">{{ row.text }}</div>
+            <div v-if="isImageMsg(row.text)" class="cp-bubble cp-bubble-img">
+              <img
+                :src="extractImageSrc(row.text)"
+                alt="聊天图片"
+                class="cp-img-thumb"
+                @click="previewImg = extractImageSrc(row.text)"
+              />
+            </div>
+            <div v-else class="cp-bubble">{{ row.text }}</div>
           </div>
         </template>
       </li>
@@ -51,10 +59,24 @@
         class="cp-textarea"
         rows="2"
         maxlength="1000"
-        :placeholder="placeholder"
+        :placeholder="placeholder + '（支持粘贴图片）'"
         @keydown.enter.exact.prevent="$emit('send')"
+        @paste="onPasteImage"
+      />
+      <input
+        ref="imgInputRef"
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/gif"
+        hidden
+        @change="onPickImage"
       />
       <div class="cp-tools">
+        <button
+          type="button"
+          class="cp-tool cp-tool-btn"
+          title="发送图片"
+          @click="imgInputRef?.click()"
+        ><i class="ri-image-add-line" /></button>
         <span
           v-for="t in tools"
           :key="t.icon"
@@ -65,6 +87,15 @@
         <button class="cp-send" :disabled="!draft.trim()" @click="$emit('send')">发送</button>
       </div>
     </div>
+
+    <Teleport to="body">
+      <div v-if="previewImg" class="cp-lightbox" @click="previewImg = ''">
+        <img :src="previewImg" alt="图片预览" @click.stop />
+        <button type="button" class="cp-lightbox-close" @click="previewImg = ''">
+          <i class="ri-close-line" />
+        </button>
+      </div>
+    </Teleport>
   </aside>
 </template>
 
@@ -83,13 +114,82 @@ const props = defineProps<{
   shareOf: string
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'close'): void
   (e: 'send'): void
+  (e: 'send-image', dataUrl: string): void
   (e: 'not-wired', label: string): void
 }>()
 
 const draft = defineModel<string>('draft', { default: '' })
+const imgInputRef = ref<HTMLInputElement | null>(null)
+const previewImg = ref('')
+
+const IMG_PREFIX = '[WT_IMG]'
+function isImageMsg(text: string): boolean {
+  return typeof text === 'string' && text.startsWith(IMG_PREFIX) && text.includes('data:image/')
+}
+function extractImageSrc(text: string): string {
+  return text.slice(IMG_PREFIX.length)
+}
+
+async function compressImageFile(file: File): Promise<string | null> {
+  if (!file.type.startsWith('image/')) return null
+  return new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const img = new Image()
+      img.onload = () => {
+        const maxW = 720
+        const scale = img.width > maxW ? maxW / img.width : 1
+        const w = Math.max(1, Math.round(img.width * scale))
+        const h = Math.max(1, Math.round(img.height * scale))
+        const canvas = document.createElement('canvas')
+        canvas.width = w
+        canvas.height = h
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          resolve(null)
+          return
+        }
+        ctx.drawImage(img, 0, 0, w, h)
+        // 控制图片体积以兼容实时聊天通道
+        let dataUrl = canvas.toDataURL('image/webp', 0.72)
+        if (!dataUrl.startsWith('data:image/webp')) {
+          dataUrl = canvas.toDataURL('image/jpeg', 0.72)
+        }
+        resolve(dataUrl)
+      }
+      img.onerror = () => resolve(null)
+      img.src = String(reader.result || '')
+    }
+    reader.onerror = () => resolve(null)
+    reader.readAsDataURL(file)
+  })
+}
+
+async function handleImageFile(file: File) {
+  const dataUrl = await compressImageFile(file)
+  if (!dataUrl) return
+  emit('send-image', `${IMG_PREFIX}${dataUrl}`)
+}
+
+async function onPickImage(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (file) await handleImageFile(file)
+}
+
+async function onPasteImage(e: ClipboardEvent) {
+  const items = Array.from(e.clipboardData?.items || [])
+  const imgItem = items.find((i) => i.type.startsWith('image/'))
+  if (!imgItem) return
+  const file = imgItem.getAsFile()
+  if (!file) return
+  e.preventDefault()
+  await handleImageFile(file)
+}
 
 type Tab = 'all' | 'host' | 'mine'
 const tabs: Array<{ id: Tab; label: string }> = [
@@ -192,7 +292,7 @@ watch(searchOpen, async (v) => {
 
 <style scoped>
 .cp {
-  width: 300px; flex-shrink: 0; display: flex; flex-direction: column;
+  width: 288px; flex-shrink: 0; display: flex; flex-direction: column;
   background: var(--bg-card); border-left: 1px solid var(--border-soft);
 }
 .cp-head {
@@ -253,6 +353,58 @@ watch(searchOpen, async (v) => {
 }
 .cp-row.mine .cp-bubble {
   background: var(--primary); color: #fff; border-radius: 11px 4px 11px 11px;
+}
+.cp-bubble-img {
+  padding: 4px !important;
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-soft);
+}
+.cp-img-thumb {
+  display: block;
+  max-width: 196px;
+  max-height: 180px;
+  border-radius: 8px;
+  object-fit: cover;
+  cursor: zoom-in;
+}
+.cp-tool-btn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+.cp-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 3200;
+  background: rgba(2, 6, 23, 0.82);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.cp-lightbox img {
+  max-width: 92vw;
+  max-height: 88vh;
+  border-radius: 12px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+}
+.cp-lightbox-close {
+  position: fixed;
+  top: 20px;
+  right: 24px;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(15, 23, 42, 0.72);
+  color: #fff;
+  font-size: 20px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .cp-empty { font-size: 12px; color: var(--text-muted); text-align: center; padding: 20px 0; }
 

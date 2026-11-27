@@ -72,7 +72,7 @@ func TestArmRkReceiverWaitsPollsAndGivesUp(t *testing.T) {
 			defer srv.Close()
 			t.Setenv("THIRDPARTY_CONFERENCE_BASEURL", srv.URL)
 
-			c := New(nil, nil, nil, thirdparty.New(), nil, nil)
+			c := New(nil, nil, nil, nil, thirdparty.New(), nil, nil)
 			got := c.armRkReceiver(context.Background(), "ptok", "pub_9", tc.budget)
 			n := int(atomic.LoadInt64(&hits))
 

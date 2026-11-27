@@ -6,8 +6,11 @@
       aria-modal="true"
       :style="panelVars"
     >
-      <header class="legal-head">
-        <h3>{{ doc.title }}</h3>
+      <header class="legal-head modal-header">
+        <div class="wt-dlg-head-left">
+          <i class="wt-dlg-icon ri-file-shield-2-line" />
+          <h3>{{ doc.title }}</h3>
+        </div>
         <div class="legal-toolbar">
           <button
             type="button"
@@ -37,7 +40,7 @@
           >
             {{ locale === 'zh' ? 'EN' : '中文' }}
           </button>
-          <button type="button" class="legal-close" :title="ui.close" @click="close">
+          <button type="button" class="modal-close" :title="ui.close" @click="close">
             <i class="ri-close-line" />
           </button>
         </div>
@@ -49,8 +52,8 @@
           <p v-for="(p, j) in s.paragraphs" :key="j">{{ p }}</p>
         </section>
       </div>
-      <footer class="legal-foot">
-        <button type="button" class="legal-ok" @click="close">{{ ui.ok }}</button>
+      <footer class="modal-footer">
+        <button type="button" class="btn-confirm" @click="close">{{ ui.ok }}</button>
       </footer>
     </div>
   </div>

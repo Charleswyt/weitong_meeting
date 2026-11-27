@@ -1209,7 +1209,7 @@ input, select, textarea, button { font-family: inherit; }
 .main-content {
   flex: 1;
   overflow-y: auto;
-  padding: 28px;
+  padding: 0;
 }
 /* 快捷操作 */
 .quick-actions {

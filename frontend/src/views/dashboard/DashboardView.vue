@@ -1,5 +1,164 @@
 <template>
-  <div class="home-page">
+  <!-- 手机端独立 App 形态首页（参照腾讯会议 App）：无多余网页装饰，大触控金刚键 + 极简日程列表 -->
+  <div v-if="isPhone" class="m-app-home">
+    <section class="m-app-actions" aria-label="快捷入口">
+      <button type="button" class="m-app-key" @click="showJoinDialog = true">
+        <span class="m-app-key-ic is-blue"><i class="ri-add-box-fill" /></span>
+        <span class="m-app-key-txt">加入会议</span>
+      </button>
+      <button
+        type="button"
+        class="m-app-key"
+        :disabled="starting"
+        @click="startNow"
+      >
+        <span class="m-app-key-ic is-indigo"
+          ><i class="ri-flashlight-fill"
+        /></span>
+        <span class="m-app-key-txt">{{
+          starting ? "启动中" : "快速会议"
+        }}</span>
+      </button>
+      <button type="button" class="m-app-key" @click="openSchedule">
+        <span class="m-app-key-ic is-green"
+          ><i class="ri-calendar-event-fill"
+        /></span>
+        <span class="m-app-key-txt">预定会议</span>
+      </button>
+      <button
+        type="button"
+        class="m-app-key"
+        :disabled="starting"
+        @click="startForShare"
+      >
+        <span class="m-app-key-ic is-orange"
+          ><i class="ri-share-box-fill"
+        /></span>
+        <span class="m-app-key-txt">共享屏幕</span>
+      </button>
+    </section>
+
+    <div class="m-app-subbar">
+      <button
+        type="button"
+        class="m-app-pill"
+        :disabled="starting"
+        @click="startVoice"
+      >
+        <i class="ri-mic-line" /><span>语音对讲</span>
+      </button>
+      <button type="button" class="m-app-pill" @click="goRecordings">
+        <i class="ri-record-circle-line" /><span>录制回放</span>
+      </button>
+    </div>
+
+    <section class="m-app-list-wrap" aria-label="会议日程">
+      <div class="m-app-list-head">
+        <div class="m-app-list-title">
+          <span>{{ monthLine }}{{ dayNum }}日</span>
+          <small>{{ weekday }}</small>
+        </div>
+        <button
+          type="button"
+          class="m-app-all-btn"
+          @click="router.push('/all-meetings')"
+        >
+          全部会议 <i class="ri-arrow-right-s-line" />
+        </button>
+      </div>
+
+      <div v-if="loading && !groupedMeetings.length" class="m-app-empty">
+        加载中…
+      </div>
+      <div v-else-if="!groupedMeetings.length" class="m-app-empty">
+        <i class="ri-calendar-2-line m-app-empty-ic" />
+        <p>暂无近期会议</p>
+        <button
+          type="button"
+          class="m-app-empty-cta"
+          :disabled="starting"
+          @click="startNow"
+        >
+          发起快速会议
+        </button>
+      </div>
+      <div v-else class="m-app-groups">
+        <div
+          v-for="group in groupedMeetings"
+          :key="group.label"
+          class="m-app-group"
+        >
+          <div class="m-app-group-label">{{ group.label }}</div>
+          <div
+            v-for="m in group.items"
+            :key="m.id"
+            class="m-app-card"
+            @click="
+              m.status === 'running' || m.status === 'scheduled'
+                ? handleJoin(m)
+                : undefined
+            "
+          >
+            <div class="m-app-card-main">
+              <div class="m-app-card-top">
+                <span class="m-app-card-title">{{ m.title }}</span>
+                <span class="m-app-card-status" :class="'st-' + m.status">
+                  {{
+                    m.status === "running"
+                      ? "进行中"
+                      : m.status === "scheduled"
+                        ? "待开始"
+                        : "已结束"
+                  }}
+                </span>
+              </div>
+              <div class="m-app-card-meta">
+                <span>{{ timeRangeOf(m) }}</span>
+                <span v-if="m.meetingNo">· {{ m.meetingNo }}</span>
+              </div>
+            </div>
+            <div class="m-app-card-ops" @click.stop>
+              <button
+                v-if="
+                  m.meetingNo &&
+                  (m.status === 'scheduled' || m.status === 'running')
+                "
+                type="button"
+                class="m-app-op-icon"
+                title="分享邀请"
+                @click="handleShare(m)"
+              >
+                <i class="ri-share-line" />
+              </button>
+              <button
+                v-if="m.status === 'running' || m.status === 'scheduled'"
+                type="button"
+                class="m-app-op-join"
+                @click="handleJoin(m)"
+              >
+                入会
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <ScheduleMeetingDialog
+      v-model="showScheduleDialog"
+      :meeting="editingMeeting"
+      @created="load(true)"
+    />
+    <JoinMeetingDialog v-model="showJoinDialog" />
+    <MyScheduleDialog
+      v-model="showMySchedule"
+      :meetings="upcomingMonthMeetings"
+      @join="handleJoin"
+      @schedule="openSchedule"
+    />
+  </div>
+
+  <div v-else class="home-page">
     <header class="home-hero">
       <div class="home-hero-left">
         <div class="home-hero-date">
@@ -40,6 +199,9 @@
             <i class="ri-windy-line" />{{ windLine }}
           </span>
         </div>
+
+        <!-- 边/云入会模式示意图：自动探测后端部署侧别并周期静默刷新 -->
+        <AccessNodeBadge />
       </div>
 
       <section class="home-launch" aria-label="会议入口">
@@ -86,6 +248,21 @@
             <i class="ri-share-forward-fill" />
           </span>
           <span class="launch-label">共享屏幕</span>
+        </button>
+
+        <button
+          class="launch-item"
+          type="button"
+          title="查看未来一个月的会议日程"
+          @click="showMySchedule = true"
+        >
+          <span class="launch-orb launch-orb--purple">
+            <i class="ri-calendar-event-fill" />
+            <span v-if="upcomingMonthCount > 0" class="launch-badge">{{
+              upcomingMonthCount > 99 ? "99+" : upcomingMonthCount
+            }}</span>
+          </span>
+          <span class="launch-label">我的日程</span>
         </button>
       </section>
     </header>
@@ -167,8 +344,13 @@
                   <span
                     v-if="m.status === 'ended' && endReasonLabel(m.endReason)"
                     class="home-end-reason"
-                    :class="m.endReason === 'abnormal_exit' ? 'is-abnormal' : 'is-normal'"
-                  >{{ endReasonLabel(m.endReason) }}</span>
+                    :class="
+                      m.endReason === 'abnormal_exit'
+                        ? 'is-abnormal'
+                        : 'is-normal'
+                    "
+                    >{{ endReasonLabel(m.endReason) }}</span
+                  >
                 </div>
                 <div class="home-meeting-meta">
                   <span
@@ -288,15 +470,24 @@
       @created="load(true)"
     />
     <JoinMeetingDialog v-model="showJoinDialog" />
+    <MyScheduleDialog
+      v-model="showMySchedule"
+      :meetings="upcomingMonthMeetings"
+      @join="handleJoin"
+      @schedule="openSchedule"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { useRouter } from "vue-router";
+import { useViewport } from "@/composables/useViewport";
 import { ElMessage, ElMessageBox } from "element-plus";
 import ScheduleMeetingDialog from "@/components/dialogs/ScheduleMeetingDialog.vue";
 import JoinMeetingDialog from "@/components/dialogs/JoinMeetingDialog.vue";
+import MyScheduleDialog from "@/components/dialogs/MyScheduleDialog.vue";
+import AccessNodeBadge from "@/components/dashboard/AccessNodeBadge.vue";
 import {
   getMeetingList,
   cancelMeeting,
@@ -319,17 +510,21 @@ import {
   preJoinPath,
   preJoinPathByNumber,
 } from "@/utils/joinFlow";
-import { startQuickMeeting } from "@/utils/startMeeting";
+import { startQuickMeeting, guardSingleActiveMeeting } from "@/utils/startMeeting";
 import { formatMeetingNo } from "@/utils/meetingNo";
 import { fetchGeoWeather } from "@/utils/geoWeather";
 
 const router = useRouter();
+const { isPhone } = useViewport();
 const meetingStore = useMeetingStore();
 const allMeetings = ref<MeetingVo[]>([]);
+const upcomingMonthMeetings = ref<MeetingVo[]>([]);
 const loading = ref(false);
 const showScheduleDialog = ref(false);
 const showJoinDialog = ref(false);
+const showMySchedule = ref(false);
 const editingMeeting = ref<MeetingVo | null>(null);
+const upcomingMonthCount = computed(() => upcomingMonthMeetings.value.length);
 const joinNumber = ref("");
 const starting = ref(false);
 /** thirdPartyMeetingId → 有可回放录制 */
@@ -439,9 +634,36 @@ function dayLabel(d: Date): string {
   return `${businessWeekdayLabel(d)} ${md}`;
 }
 
+function isBriefTempMeeting(m: MeetingVo): boolean {
+  if (m.status !== "ended") return false;
+  if (m.kind === "scheduled") return false;
+  const started = m.startedAt ? new Date(m.startedAt).getTime() : NaN;
+  const endedRaw =
+    (m as MeetingVo & { endedAt?: string; updatedAt?: string }).endedAt ||
+    (m as MeetingVo & { updatedAt?: string }).updatedAt;
+  const ended = endedRaw ? new Date(endedRaw).getTime() : NaN;
+  if (
+    !isNaN(started) &&
+    !isNaN(ended) &&
+    ended >= started &&
+    ended - started < 60_000
+  ) {
+    return true;
+  }
+  if (
+    !m.startedAt &&
+    (m.participantCount ?? 0) <= 1 &&
+    m.endReason === "empty_timeout"
+  ) {
+    return true;
+  }
+  return false;
+}
+
 const groupedMeetings = computed<MeetingGroup[]>(() => {
   const map = new Map<string, MeetingVo[]>();
   for (const m of allMeetings.value) {
+    if (isBriefTempMeeting(m)) continue;
     const d = new Date(m.startTime);
     if (isNaN(d.getTime())) continue;
     const key = dayLabel(d);
@@ -530,7 +752,8 @@ function recordingLabel(m: MeetingVo) {
   if (state === "ready") return "已有云录制";
   if (state === "planned") {
     if (m.status === "running") return "云录制中";
-    if (m.status === "scheduled" || m.status === "starting") return "已开启云录制";
+    if (m.status === "scheduled" || m.status === "starting")
+      return "已开启云录制";
   }
   return "";
 }
@@ -555,7 +778,7 @@ function openSchedule() {
 }
 async function handleShare(m: MeetingVo) {
   const ok = await copyMeetingInvite({
-    hostName: m.creatorName || m.hostName || '',
+    hostName: m.creatorName || m.hostName || "",
     title: m.title,
     meetingNo: m.meetingNo,
     startTime: m.startTime || m.startedAt,
@@ -604,18 +827,35 @@ async function load(silent = false) {
     ];
     const futureCutoff = new Date();
     futureCutoff.setDate(futureCutoff.getDate() + 8);
+    const monthStart = new Date();
+    monthStart.setHours(0, 0, 0, 0);
+    const monthCutoff = new Date(monthStart);
+    monthCutoff.setDate(monthCutoff.getDate() + 31);
     const pastCutoff = new Date();
     pastCutoff.setDate(pastCutoff.getDate() - 7);
     const seen = new Set<string>();
+    const monthList: MeetingVo[] = [];
     allMeetings.value = merged.filter((m) => {
       const key = String(m.id);
       if (seen.has(key)) return false;
       seen.add(key);
       const d = new Date(m.startTime);
       if (isNaN(d.getTime())) return false;
+      if (
+        m.status !== "ended" &&
+        m.status !== "cancelled" &&
+        d >= monthStart &&
+        d < monthCutoff
+      ) {
+        monthList.push(m);
+      }
       if (m.status === "ended") return d >= pastCutoff;
       return d < futureCutoff;
     });
+    upcomingMonthMeetings.value = monthList.sort(
+      (a, b) =>
+        new Date(a.startTime).getTime() - new Date(b.startTime).getTime(),
+    );
   } catch {
     /* 401 由拦截器处理 */
   } finally {
@@ -624,6 +864,9 @@ async function load(silent = false) {
 }
 
 async function handleJoin(m: MeetingVo) {
+  if (meetingStore.inMeeting && String(meetingStore.meetingId) !== String(m.id)) {
+    if (!(await guardSingleActiveMeeting(router))) return;
+  }
   if (m.meetingNo) {
     const res = await precheckMeeting(m.meetingNo);
     if (res.data && !res.data.joinable) {
@@ -662,7 +905,7 @@ async function handleCancel(m: MeetingVo) {
 async function handleStop(m: MeetingVo) {
   try {
     await ElMessageBox.confirm(
-      `确定结束会议「${m.title}」？所有参会者会被移出。`,
+      `确定结束会议？所有参会者将会被移出。`,
       "结束会议",
       {
         type: "warning",
@@ -686,9 +929,46 @@ async function handleStop(m: MeetingVo) {
   }
 }
 
+let statusPollTimer: number | null = null;
+const STATUS_POLL_MS = 15000;
+
+function hasLiveOrPendingMeetings() {
+  return allMeetings.value.some(
+    (m) => m.status === "running" || m.status === "scheduled",
+  );
+}
+
+function scheduleStatusPoll() {
+  if (statusPollTimer !== null) {
+    window.clearTimeout(statusPollTimer);
+    statusPollTimer = null;
+  }
+  if (document.visibilityState !== "visible") return;
+  if (!hasLiveOrPendingMeetings()) return;
+  statusPollTimer = window.setTimeout(async () => {
+    statusPollTimer = null;
+    if (document.visibilityState === "visible" && hasLiveOrPendingMeetings()) {
+      await load(true);
+    }
+    scheduleStatusPoll();
+  }, STATUS_POLL_MS);
+}
+
+function onHomeVisibilityChange() {
+  if (document.visibilityState === "visible") {
+    if (hasLiveOrPendingMeetings()) {
+      void load(true).finally(() => scheduleStatusPoll());
+    }
+  } else if (statusPollTimer !== null) {
+    window.clearTimeout(statusPollTimer);
+    statusPollTimer = null;
+  }
+}
+
 onMounted(() => {
   getDict(DICT.meetingStatus);
-  load();
+  void load().finally(() => scheduleStatusPoll());
+  document.addEventListener("visibilitychange", onHomeVisibilityChange);
   weatherAbort = new AbortController();
   void fetchGeoWeather(weatherAbort.signal).then((g) => {
     placeLine.value = g.place;
@@ -700,6 +980,11 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  document.removeEventListener("visibilitychange", onHomeVisibilityChange);
+  if (statusPollTimer !== null) {
+    window.clearTimeout(statusPollTimer);
+    statusPollTimer = null;
+  }
   weatherAbort?.abort();
 });
 </script>
@@ -710,7 +995,7 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   min-height: 0;
-  padding: 12px 20px 12px;
+  padding: 8px 14px 10px;
   display: flex;
   flex-direction: column;
 }
@@ -890,6 +1175,30 @@ onBeforeUnmount(() => {
 }
 .launch-orb--orange {
   background: #f0871a;
+}
+
+.launch-orb--purple {
+  position: relative;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+}
+
+.launch-badge {
+  position: absolute;
+  top: -5px;
+  right: -6px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+  border: 2px solid var(--bg-card);
+  box-shadow: 0 2px 6px rgba(239, 68, 68, 0.35);
+  font-variant-numeric: tabular-nums;
 }
 
 .launch-label {
@@ -1078,7 +1387,10 @@ onBeforeUnmount(() => {
   font-size: 12.5px;
   font-weight: 500;
   cursor: pointer;
-  transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+  transition:
+    background-color 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease;
 }
 
 .home-text-btn i {
@@ -1346,53 +1658,76 @@ onBeforeUnmount(() => {
   }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 767px) {
   .home-page {
-    padding: 10px 14px calc(12px + var(--safe-bottom, 0px));
+    padding: 8px 10px calc(10px + var(--safe-bottom, 0px));
+    gap: 10px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .home-hero {
+    padding: 12px 14px;
+    border-radius: 16px;
+    gap: 12px;
   }
 
   .home-hero-left {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 12px;
   }
 
   .home-weather {
-    border-left: 0;
-    padding-left: 0;
-    width: 100%;
-    flex-direction: row;
-    gap: 10px;
+    border-left: 1px solid var(--border-soft);
+    padding-left: 12px;
+    width: auto;
+    flex: 1;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
   }
 
   .home-day {
-    font-size: 42px;
+    font-size: 34px;
+    line-height: 1;
   }
 
-  /* 四入口改 2×2，避免四列挤成指甲盖；触控热区加大 */
+  /* 手机端原生 App 风格：3 列圆角图标宫格，带触控回弹 */
   .home-launch {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px 8px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
   }
 
   .launch-orb {
-    width: 52px;
-    height: 52px;
-    font-size: 22px;
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+    font-size: 21px;
   }
 
   .launch-item {
     min-width: 0;
-    padding: 10px 6px;
+    padding: 10px 4px 8px;
     border-radius: 14px;
+    background: var(--bg-input);
+    transition:
+      transform 0.14s cubic-bezier(0.32, 0.72, 0, 1),
+      background-color 0.14s ease;
+  }
+  .launch-item:active {
+    transform: scale(0.95);
   }
 
   .launch-label {
-    font-size: 13px;
+    font-size: 12px;
   }
 
   .home-secondary {
     flex-wrap: wrap;
-    gap: 10px;
+    gap: 8px;
+    padding: 0;
   }
 
   .sec-join {
@@ -1401,12 +1736,26 @@ onBeforeUnmount(() => {
     min-width: 0;
     order: 3;
     flex: 1 1 100%;
+    height: 42px;
+    border-radius: 999px;
+  }
+
+  .home-schedule {
+    border-radius: 16px;
+    padding: 12px;
   }
 
   .home-meeting-item {
     flex-wrap: wrap;
     gap: 8px;
     padding: 12px 10px;
+    border-radius: 12px;
+    transition:
+      transform 0.14s ease,
+      background-color 0.14s ease;
+  }
+  .home-meeting-item:active {
+    transform: scale(0.99);
   }
 
   .home-meeting-meta {
@@ -1421,8 +1770,22 @@ onBeforeUnmount(() => {
   }
 
   .hm-btn {
+    border-radius: 999px;
     min-height: 36px;
     padding: 0 12px;
+  }
+}
+
+/* 折叠屏展开态（600px ~ 960px）：紧凑 4 列入口 + 自适应间距，避免拉伸空洞 */
+@media (min-width: 600px) and (max-width: 960px) {
+  .home-page {
+    padding: 10px 14px calc(12px + var(--safe-bottom, 0px));
+  }
+
+  .home-launch {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
   }
 }
 .home-end-reason {
@@ -1441,5 +1804,264 @@ onBeforeUnmount(() => {
 .home-end-reason.is-abnormal {
   background: rgba(245, 158, 11, 0.14);
   color: var(--warning-text, #b45309);
+}
+/* ── 手机端独立 App 形态首页（参照腾讯会议 App） ── */
+.m-app-home {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg-dark);
+  overflow: hidden;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.m-app-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 16px 14px 12px;
+  background: var(--bg-card);
+  flex-shrink: 0;
+}
+.m-app-key {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  background: transparent;
+  padding: 4px 0;
+  cursor: pointer;
+  transition: transform 0.14s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.m-app-key:active {
+  transform: scale(0.92);
+}
+.m-app-key:disabled {
+  opacity: 0.55;
+}
+.m-app-key-ic {
+  width: 54px;
+  height: 54px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 25px;
+  color: #fff;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.12);
+}
+.m-app-key-ic.is-blue {
+  background: linear-gradient(135deg, #2563eb, #3b82f6);
+}
+.m-app-key-ic.is-indigo {
+  background: linear-gradient(135deg, #4f46e5, #6366f1);
+}
+.m-app-key-ic.is-green {
+  background: linear-gradient(135deg, #059669, #10b981);
+}
+.m-app-key-ic.is-orange {
+  background: linear-gradient(135deg, #ea580c, #f97316);
+}
+.m-app-key-txt {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.m-app-subbar {
+  display: flex;
+  gap: 10px;
+  padding: 0 14px 14px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border-soft);
+  flex-shrink: 0;
+}
+.m-app-pill {
+  flex: 1;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.m-app-pill:active {
+  background: var(--bg-hover);
+}
+.m-app-list-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.m-app-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px 8px;
+  flex-shrink: 0;
+}
+.m-app-list-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.m-app-list-title small {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.m-app-all-btn {
+  border: 0;
+  background: transparent;
+  color: var(--primary-text);
+  font-size: 13px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  cursor: pointer;
+}
+.m-app-groups {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 14px calc(16px + var(--safe-bottom, 0px));
+}
+.m-app-group {
+  margin-bottom: 12px;
+}
+.m-app-group-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 6px 2px;
+}
+.m-app-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 13px 14px;
+  margin-bottom: 8px;
+  border-radius: 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-soft);
+  transition: transform 0.12s ease;
+}
+.m-app-card:active {
+  transform: scale(0.985);
+}
+.m-app-card-main {
+  min-width: 0;
+  flex: 1;
+}
+.m-app-card-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.m-app-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m-app-card-status {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-weight: 500;
+}
+.m-app-card-status.st-running {
+  background: rgba(16, 185, 129, 0.14);
+  color: #059669;
+}
+.m-app-card-status.st-scheduled {
+  background: var(--primary-soft);
+  color: var(--primary-text);
+}
+.m-app-card-status.st-ended {
+  background: var(--bg-input);
+  color: var(--text-muted);
+}
+.m-app-card-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.m-app-card-ops {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.m-app-op-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  cursor: pointer;
+}
+.m-app-op-join {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 0;
+  background: var(--primary);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.m-app-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-muted);
+  padding: 36px 20px;
+}
+.m-app-empty-ic {
+  font-size: 40px;
+  opacity: 0.45;
+}
+.m-app-empty-cta {
+  margin-top: 4px;
+  height: 38px;
+  padding: 0 20px;
+  border-radius: 999px;
+  border: 0;
+  background: var(--primary);
+  color: #fff;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
 }
 </style>

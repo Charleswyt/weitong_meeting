@@ -1,9 +1,23 @@
 <template>
-  <div class="im-root" :class="{ 'is-phone': isPhone, 'is-tablet': isTablet, 'is-compact': isCompact }">
+  <div ref="imRootRef" class="im-root" :class="{ 'is-phone': isPhone, 'is-tablet': isTablet, 'is-compact': isCompact, 'is-fullscreen': isFullscreen }">
     <!-- 顶部状态条：会议名 / 状态；窄屏只留关键告警，细节进「更多」 -->
     <header class="im-topbar" :inert="!admitted">
       <div class="im-top-left">
+        <Transition name="im-fs-fade">
+          <div v-if="isFullscreen" class="im-fs-brand" aria-label="卫通会议">
+            <img :src="appIcon" alt="" width="24" height="24" />
+            <span>卫通会议</span>
+          </div>
+        </Transition>
         <span class="im-title" :title="meetingStore.title || '会议'">{{ meetingStore.title || '会议' }}</span>
+        <button
+          type="button"
+          class="im-title-edit"
+          :title="isHost ? '修改会议名称' : '申请修改会议名称'"
+          @click="openRenameTitle"
+        >
+          <i class="ri-edit-line" />
+        </button>
         <span v-if="kindBadge" class="im-badge im-badge-kind im-badge-desk">{{ kindBadge }}</span>
         <span class="im-badge" :class="statusClass">{{ statusLabel }}</span>
         <span v-if="cloudRecording" class="im-badge im-badge-rec">云录制中</span>
@@ -253,6 +267,13 @@
         </div>
         <div v-else-if="stageNotice" class="im-stage-hint">{{ stageNotice }}</div>
         </template>
+        <!-- 腾讯会议风格批注画布图层（覆盖主画面，支持画笔/荧光笔/箭头/矩形/文字/橡皮擦） -->
+        <AnnotationOverlay
+          ref="annotationRef"
+          :active="annotating"
+          @close="annotating = false"
+          @capture="captureMeetingScreen"
+        />
       </main>
 
       <div
@@ -276,6 +297,7 @@
         @focus="focusRow"
         @mute-all="controls.handleMuteAll"
         @kick="controls.handleKick"
+        @rename-self="openRenameSelf"
       />
 
       <ChatPanel
@@ -288,17 +310,67 @@
         :share-of="sharingName"
         @close="dock = 'none'"
         @send="sendChat"
+        @send-image="sendChatImage"
         @not-wired="onNotWired"
       />
 
-      <!-- 传输状态：对齐三方会中面板，全部来自播放器/ getStats 真实回调；无真源的字段留空不造假 -->
+      <!-- 传输状态：商用分层卡片（网络质量 / 实时与平均速率 / 本场累计流量） -->
       <aside v-if="dock === 'stats'" class="im-dock im-stats">
         <header class="im-dock-head"><b>传输状态</b><button class="im-x" title="关闭" @click="dock = 'none'"><i class="ri-close-line" /></button></header>
         <div class="im-stats-body">
-          <div class="im-stats-grid" aria-label="本端带宽">
-            <div><span class="k">本端媒体上行</span><span class="v" data-rate="up">{{ uplinkText }}</span></div>
-            <div><span class="k">本端媒体下行</span><span class="v" data-rate="down">{{ downlinkText }}</span></div>
+          <!-- 卡片 1：网络质量（时延 + 抖动） -->
+          <div class="im-st-card">
+            <div class="im-st-card-head">
+              <span class="im-st-card-title"><i class="ri-signal-tower-line" />网络质量</span>
+              <span class="im-st-pill" :class="'is-' + netLevel">{{ netQualityBadge }}</span>
+            </div>
+            <div class="im-st-pair">
+              <div class="im-st-metric">
+                <span class="k">往返时延 (RTT)</span>
+                <b class="v">{{ netRttText }}</b>
+              </div>
+              <div class="im-st-metric">
+                <span class="k">网络抖动</span>
+                <b class="v">{{ netJitterText }}</b>
+              </div>
+            </div>
           </div>
+
+          <!-- 卡片 2：实时速率 & 平均速率 -->
+          <div class="im-st-card">
+            <div class="im-st-card-head">
+              <span class="im-st-card-title"><i class="ri-speed-up-line" />传输速率</span>
+              <span class="im-st-sub">实时 / 均值</span>
+            </div>
+            <div class="im-st-pair">
+              <div class="im-st-metric">
+                <span class="k"><i class="ri-arrow-up-line im-ic-up" />媒体上行</span>
+                <b class="v" data-rate="up">{{ uplinkText }}</b>
+                <small class="im-st-avg">均 {{ avgUpText }}</small>
+              </div>
+              <div class="im-st-metric">
+                <span class="k"><i class="ri-arrow-down-line im-ic-down" />媒体下行</span>
+                <b class="v" data-rate="down">{{ downlinkText }}</b>
+                <small class="im-st-avg">均 {{ avgDownText }}</small>
+              </div>
+            </div>
+          </div>
+
+          <!-- 卡片 3：本场累计流量消耗 -->
+          <div class="im-st-card">
+            <div class="im-st-card-head">
+              <span class="im-st-card-title"><i class="ri-bar-chart-2-line" />本场累计流量</span>
+              <b class="im-st-total">{{ trafficTotalText }}</b>
+            </div>
+            <div class="im-st-bar" aria-hidden="true">
+              <span class="im-st-bar-up" :style="{ width: trafficUpPct + '%' }" />
+            </div>
+            <div class="im-st-traffic-row">
+              <span><i class="im-dot-up" />累计上行 {{ trafficUpText }}</span>
+              <span><i class="im-dot-down" />累计下行 {{ trafficDownText }}</span>
+            </div>
+          </div>
+
           <VideoPathStatus v-if="statsLine" v-model="selectedStatsId" :streams="publicLines" :selected="statsLine" :self-id="myId" />
           <div v-else-if="focusSourceStream?.video && !focusSourceStream.transportMode && !focusSourceStream.videoStats" class="im-stats-row">
             <span class="k">压缩比</span><span class="v">{{ legacyCompressionRatio }}</span>
@@ -307,24 +379,22 @@
       </aside>
     </div>
 
-    <!-- 腾讯会议风格：共享中悬浮条 —— 一眼看到正在共享什么，一键停止 -->
-    <div v-if="sharing" class="share-float" role="status">
-      <div class="share-float-preview">
-        <video v-if="shareStream" class="share-float-video" autoplay playsinline muted :srcObject="shareStream" />
-        <i v-else class="ri-computer-line" />
-      </div>
-      <div class="share-float-copy">
-        <b>正在共享屏幕</b>
-        <span>{{ shareTrackLabel }}</span>
-      </div>
-      <button class="share-float-stop" type="button" @click="toggleShare">停止共享</button>
-    </div>
+    <!-- 共享中独立控制条（点「共享屏幕」或「切换」直接一步呼出浏览器选择器） -->
+    <ScreenSharePanel
+      :sharing="sharing"
+      :stream="shareStream"
+      @switch="confirmStartShare"
+      @stop="toggleShare"
+    />
 
     <footer :inert="!admitted" class="im-controls">
       <div class="im-ctl-center">
-        <!-- 主控：麦 / 视频 /（桌面共享）—— 窄屏只留参会必需，其余进「更多」 -->
+        <!-- 主控：麦 / 声音 / 视频 /（桌面共享）—— 窄屏只留参会必需，其余进「更多」 -->
         <button class="im-btn" :class="{ 'im-btn-off': !micOn }" @click="toggleMic">
           <i :class="micOn ? 'ri-mic-line' : 'ri-mic-off-line'" /><span>{{ micOn ? '静音' : '开麦' }}</span>
+        </button>
+        <button class="im-btn" :class="{ 'im-btn-off': speakerMuted }" @click="toggleSpeaker">
+          <i :class="speakerMuted ? 'ri-volume-mute-line' : 'ri-volume-up-line'" /><span>{{ speakerMuted ? '开启声音' : '关闭声音' }}</span>
         </button>
         <button
           v-if="!isVoiceMode"
@@ -366,9 +436,11 @@
           <i class="ri-cloud-line" /><span>{{ cloudRecording ? '停止云录制' : '开启云录制' }}</span>
         </button>
 
+        <button v-if="!isCompact" class="im-btn" @click="captureMeetingScreen"><i class="ri-screenshot-2-line" /><span>截图</span></button>
+        <button v-if="!isCompact" class="im-btn" :class="{ 'im-btn-on': annotating }" @click="annotating = !annotating"><i class="ri-edit-2-line" /><span>{{ annotating ? '结束批注' : '批注' }}</span></button>
         <button v-if="!isCompact" class="im-btn" :class="{ 'im-btn-on': captionsOn }" :aria-pressed="captionsOn" :disabled="assistant?.working" @click="assistant?.toggleSpeech()"><i class="ri-translate-2" /><span>转录与翻译</span></button>
         <button v-if="!isCompact" class="im-btn" @click="openAssistant('materials')"><i class="ri-file-list-3-line" /><span>会议助手</span></button>
-        <!-- 窄屏：成员 + 更多（邀请/聊天/共享/录制/设置） -->
+        <!-- 窄屏：成员 + 更多（邀请/聊天/共享/截图/批注/录制/设置） -->
         <button
           v-if="isCompact"
           class="im-btn"
@@ -377,13 +449,30 @@
         >
           <i class="ri-group-line" /><span>成员</span>
         </button>
+        <button
+          v-if="isCompact"
+          class="im-btn"
+          @click="captureMeetingScreen"
+        >
+          <i class="ri-screenshot-2-line" /><span>截图</span>
+        </button>
+        <button
+          v-if="isCompact"
+          class="im-btn"
+          :class="{ 'im-btn-on': annotating }"
+          @click="annotating = !annotating"
+        >
+          <i class="ri-edit-2-line" /><span>批注</span>
+        </button>
         <el-dropdown v-if="isCompact" trigger="click" @command="onMoreCommand">
-          <button class="im-btn" :class="{ 'im-btn-on': dock === 'chat' || dock === 'stats' || sharing || isLocalRecording || cloudRecording }">
+          <button class="im-btn" :class="{ 'im-btn-on': dock === 'chat' || dock === 'stats' || sharing || isLocalRecording || cloudRecording || annotating }">
             <i class="ri-more-fill" /><span>更多</span>
           </button>
           <template #dropdown>
             <el-dropdown-menu class="im-more-menu">
-              <el-dropdown-item command="captions"><i class="ri-translate-2" /> {{ captionsOn ? '关闭转录与翻译' : '转录与翻译' }}</el-dropdown-item>
+              <el-dropdown-item command="screenshot"><i class="ri-screenshot-2-line" /> 一键截图</el-dropdown-item>
+              <el-dropdown-item command="annotate"><i class="ri-edit-2-line" /> {{ annotating ? '退出批注' : '画面批注' }}</el-dropdown-item>
+              <el-dropdown-item command="captions" divided><i class="ri-translate-2" /> {{ captionsOn ? '关闭转录与翻译' : '转录与翻译' }}</el-dropdown-item>
               <el-dropdown-item command="assistant"><i class="ri-file-list-3-line" /> 会议助手</el-dropdown-item>
               <el-dropdown-item command="invite"><i class="ri-user-add-line" /> 邀请</el-dropdown-item>
               <el-dropdown-item command="chat"><i class="ri-chat-3-line" /> 聊天{{ messages.length ? ` (${messages.length})` : '' }}</el-dropdown-item>
@@ -444,6 +533,61 @@
       :meeting-no="meetingStore.meetingNo"
       :title="meetingStore.title"
     />
+
+    <el-dialog
+      v-model="renameTitleVisible"
+      :title="isHost ? '修改会议名称' : '申请修改会议名称'"
+      width="420px"
+      :append-to-body="!isFullscreen"
+      align-center
+    >
+      <el-input
+        v-model="renameTitleInput"
+        maxlength="100"
+        show-word-limit
+        placeholder="请输入新的会议名称"
+        @keyup.enter="submitRenameTitle"
+      />
+      <p class="im-rename-hint">
+        {{ isHost ? '修改后将立即同步给所有参会成员。' : '提交后将发送给主持人审批，主持人同意后立即生效。' }}
+      </p>
+      <template #footer>
+        <el-button @click="renameTitleVisible = false">取消</el-button>
+        <el-button type="primary" :loading="renameTitleBusy" @click="submitRenameTitle">
+          {{ isHost ? '保存' : '提交申请' }}
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="renameSelfVisible"
+      title="修改我的名称"
+      width="420px"
+      :append-to-body="!isFullscreen"
+      align-center
+    >
+      <el-input
+        v-model="renameSelfInput"
+        maxlength="40"
+        show-word-limit
+        placeholder="请输入新的显示名称"
+        @keyup.enter="submitRenameSelf"
+      />
+      <el-radio-group v-model="renameSelfScope" class="im-rename-scope">
+        <el-radio value="session">
+          <span>本次修改</span>
+          <small class="im-rename-sub">仅在本场会议生效，中途退出再进来依旧保持</small>
+        </el-radio>
+        <el-radio value="permanent">
+          <span>永久修改</span>
+          <small class="im-rename-sub">同步修改外部账号显示名称，后续会议均生效</small>
+        </el-radio>
+      </el-radio-group>
+      <template #footer>
+        <el-button @click="renameSelfVisible = false">取消</el-button>
+        <el-button type="primary" :loading="renameSelfBusy" @click="submitRenameSelf">确定</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -468,6 +612,9 @@ import {
   type ParticipantVo,
   type StreamVo,
   type TelemetryItem,
+  renameMeetingTitle,
+  decideRenameTitle,
+  renameSelfInMeeting,
 } from '@/api/meeting'
 import { getChatMessages } from '@/api/chat'
 import { ApiError, get } from '@/utils/request'
@@ -479,6 +626,15 @@ import { useUserStore } from '@/store/user'
 import { useWebSocket } from '@/composables/useWebSocket'
 import { useMeetingRecovery } from '@/composables/useMeetingRecovery'
 import { useMeetingControls } from '@/composables/useMeetingControls'
+import ScreenSharePanel from '@/components/meeting/ScreenSharePanel.vue'
+import AnnotationOverlay from '@/components/meeting/AnnotationOverlay.vue'
+import appIcon from '@/assets/icon.png'
+import {
+  pickPreferredSpeakerId,
+  pickPreferredMicId,
+  applySinkIdToElement,
+  syncAllRemoteAudioElements,
+} from '@/utils/audioRouting'
 import { acquireMicrophoneTrack, useMediaSettings } from '@/composables/useMediaSettings'
 import { useViewport } from '@/composables/useViewport'
 import { useFaceEnhancement } from '@/composables/useFaceEnhancement'
@@ -541,6 +697,106 @@ const controls = useMeetingControls({
 
 ws.onMuteAll(() => { void controls.applyMuteAllEvent() })
 ws.onKicked((reason) => { void controls.applyKickedEvent(reason) })
+ws.onTitleChanged(({ title: nextTitle, byName }) => {
+  meetingStore.setTitle(nextTitle)
+  ElMessage.info(byName ? `${byName} 将会议名称修改为「${nextTitle}」` : `会议名称已修改为「${nextTitle}」`)
+})
+ws.onTitleChangeRequest(({ requestId, requesterName, newTitle }) => {
+  if (!isHost.value) return
+  ElMessageBox.confirm(
+    `${requesterName} 申请将会议名称修改为「${newTitle}」，是否同意？`,
+    '修改会议名称申请',
+    { confirmButtonText: '同意', cancelButtonText: '拒绝', type: 'info' },
+  )
+    .then(async () => {
+      await decideRenameTitle(meetingId, requestId, true)
+      ElMessage.success('已同意修改会议名称')
+    })
+    .catch(async (action) => {
+      if (action === 'cancel') {
+        try {
+          await decideRenameTitle(meetingId, requestId, false)
+          ElMessage.info('已拒绝该改名申请')
+        } catch {
+          // 忽略已失效的申请
+        }
+      }
+    })
+})
+ws.onTitleChangeResult(({ approved, title: nextTitle }) => {
+  if (approved) {
+    ElMessage.success(`主持人已同意将会议名称修改为「${nextTitle}」`)
+  } else {
+    ElMessage.warning(`主持人拒绝了修改会议名称为「${nextTitle}」的申请`)
+  }
+})
+ws.onMemberRenamed(({ participantId: pid, displayName: nextName }) => {
+  meetingStore.renameParticipantLocal(pid, nextName)
+})
+
+const renameTitleVisible = ref(false)
+const renameTitleInput = ref('')
+const renameTitleBusy = ref(false)
+
+function openRenameTitle() {
+  renameTitleInput.value = meetingStore.title || ''
+  renameTitleVisible.value = true
+}
+
+async function submitRenameTitle() {
+  const next = renameTitleInput.value.trim()
+  if (!next) {
+    ElMessage.warning('请输入会议名称')
+    return
+  }
+  renameTitleBusy.value = true
+  try {
+    const res = await renameMeetingTitle(meetingId, next)
+    renameTitleVisible.value = false
+    if (res.data?.applied) {
+      meetingStore.setTitle(next)
+      ElMessage.success('会议名称已修改')
+    } else {
+      ElMessage.success('已向主持人发送修改申请，等待同意')
+    }
+  } finally {
+    renameTitleBusy.value = false
+  }
+}
+
+const renameSelfVisible = ref(false)
+const renameSelfInput = ref('')
+const renameSelfScope = ref<'session' | 'permanent'>('session')
+const renameSelfBusy = ref(false)
+
+function openRenameSelf(currentName?: string) {
+  renameSelfInput.value = currentName || meetingStore.self?.name || userStore.userInfo?.displayName || ''
+  renameSelfScope.value = 'session'
+  renameSelfVisible.value = true
+}
+
+async function submitRenameSelf() {
+  const next = renameSelfInput.value.trim()
+  if (!next) {
+    ElMessage.warning('请输入显示名称')
+    return
+  }
+  renameSelfBusy.value = true
+  try {
+    const res = await renameSelfInMeeting(meetingId, next, renameSelfScope.value)
+    const appliedName = res.data?.displayName || next
+    if (meetingStore.participantId) {
+      meetingStore.renameParticipantLocal(meetingStore.participantId, appliedName)
+    }
+    if (renameSelfScope.value === 'permanent' && userStore.userInfo) {
+      userStore.userInfo = { ...userStore.userInfo, displayName: appliedName }
+    }
+    renameSelfVisible.value = false
+    ElMessage.success(renameSelfScope.value === 'permanent' ? '已永久修改显示名称' : '已临时修改本场会议显示名称')
+  } finally {
+    renameSelfBusy.value = false
+  }
+}
 
 // 断网 / 休眠唤醒后的推拉流自动重连与状态提示
 const { recoveryState, recoveryMessage, triggerRecovery } = useMeetingRecovery({
@@ -672,6 +928,54 @@ const selfStream = ref<MediaStream | null>(null)
 const shareStream = ref<MediaStream | null>(null)
 const cameraOn = ref(true)
 const micOn = ref(true)
+const speakerMuted = ref(false)
+const activeSpeakerSinkId = ref('')
+let deviceChangeTimer: number | null = null
+
+async function toggleSpeaker() {
+  speakerMuted.value = !speakerMuted.value
+  await syncAllRemoteAudioElements(speakerMuted.value, activeSpeakerSinkId.value)
+}
+
+async function reconcileAudioDevices(reason: 'init' | 'devicechange') {
+  if (!navigator.mediaDevices?.enumerateDevices) return
+  try {
+    const devs = await navigator.mediaDevices.enumerateDevices()
+    const pickedSpeaker = pickPreferredSpeakerId(devs, media.prefs.value?.speakerDeviceId)
+    if (pickedSpeaker.deviceId) {
+      const changed = activeSpeakerSinkId.value !== pickedSpeaker.deviceId
+      activeSpeakerSinkId.value = pickedSpeaker.deviceId
+      await syncAllRemoteAudioElements(speakerMuted.value, pickedSpeaker.deviceId)
+      if (reason === 'devicechange' && changed && pickedSpeaker.avoidedHdmi) {
+        ElMessage.info(`检测到音频设备变化，已自动保持本机输出（${pickedSpeaker.label || '本机扬声器'}）`)
+      }
+    }
+
+    if (reason === 'devicechange' && micOn.value) {
+      const currentMicTrack = selfStream.value?.getAudioTracks()[0]
+      const currentMicId = currentMicTrack?.getSettings?.().deviceId
+      const inputIds = new Set(devs.filter((d) => d.kind === 'audioinput').map((d) => d.deviceId))
+      const trackDead = !currentMicTrack || currentMicTrack.readyState !== 'live'
+      const deviceGone = !!currentMicId && !inputIds.has(currentMicId)
+      if (trackDead || deviceGone) {
+        const pickedMic = pickPreferredMicId(devs, media.prefs.value?.microphoneDeviceId)
+        if (pickedMic.deviceId) {
+          void recoverMicrophone('音频设备变化')
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[audio-routing] 设备检测失败:', e)
+  }
+}
+
+function onMediaDeviceChange() {
+  if (deviceChangeTimer !== null) window.clearTimeout(deviceChangeTimer)
+  deviceChangeTimer = window.setTimeout(() => {
+    deviceChangeTimer = null
+    void reconcileAudioDevices('devicechange')
+  }, 500)
+}
 // 设备在但采不到轨（被占用/权限被撤）时的真实标记，用来把"没画面"说清楚而不是装作在推流。
 const cameraMissing = ref(false)
 const micMissing = ref(false)
@@ -681,6 +985,7 @@ const micMissing = ref(false)
 const selfVideoLive = ref(false)
 let selfLiveCleanup: (() => void) | null = null
 const sharing = ref(false)
+const imRootRef = ref<HTMLElement | null>(null)
 const isFullscreen = ref(false)
 const net = ref<(NetProbe & { label: string; level: string }) | null>(null)
 let rateTimer: number | null = null
@@ -1068,10 +1373,6 @@ const assistantTab = ref('materials')
 const showAssistant = ref(false)
 function openAssistant(tab: string) { assistantTab.value = tab; showAssistant.value = true }
 const sharingName = computed(() => participants.value.find((p) => p.sharing)?.name || '')
-const shareTrackLabel = computed(() => {
-  const label = shareStream.value?.getVideoTracks()[0]?.label || ''
-  return label ? label.slice(0, 48) : '你的屏幕画面已推送给参会者'
-})
 
 // 上下行速率全部本地实测：上行取 RTCPeerConnection.getStats 的 outbound-rtp 字节增量，
 // 下行取三方播放器回吐的接收速率。平台不提供任何码率统计端点。
@@ -1176,11 +1477,17 @@ function toggleDock(id: Exclude<DockId, 'none'>) {
   }
 }
 
-type MoreCmd = 'captions' | 'assistant' | 'invite' | 'chat' | 'share' | 'stats' | 'local-rec' | 'cloud-rec' | 'settings' | 'end'
+type MoreCmd = 'screenshot' | 'annotate' | 'captions' | 'assistant' | 'invite' | 'chat' | 'share' | 'stats' | 'local-rec' | 'cloud-rec' | 'settings' | 'end'
+
+const annotating = ref(false)
+const annotationRef = ref<{ getCanvas: () => HTMLCanvasElement | null; clearAll: () => void } | null>(null)
+let lastScreenshotUrl = ''
 
 function onMoreCommand(cmd: string | number | object) {
   const c = String(cmd) as MoreCmd
-  if (c === 'captions') void assistant.value?.toggleSpeech()
+  if (c === 'screenshot') void captureMeetingScreen()
+  else if (c === 'annotate') annotating.value = !annotating.value
+  else if (c === 'captions') void assistant.value?.toggleSpeech()
   else if (c === 'assistant') openAssistant('materials')
   else if (c === 'invite') showInvite.value = true
   else if (c === 'chat') toggleDock('chat')
@@ -1196,14 +1503,26 @@ function onNotWired(label: string) {
   ElMessage.info(`${label}暂未接入`)
 }
 
+function handleFullscreenChange() {
+  const active = !!document.fullscreenElement
+  isFullscreen.value = active
+  if (active) {
+    railOpen.value = false
+    dock.value = 'none'
+  }
+}
+
 async function toggleFullscreen() {
   try {
     if (document.fullscreenElement) {
       await document.exitFullscreen()
       isFullscreen.value = false
     } else {
-      await document.documentElement.requestFullscreen()
+      const target = imRootRef.value || document.documentElement
+      await target.requestFullscreen()
       isFullscreen.value = true
+      railOpen.value = false
+      dock.value = 'none'
     }
   } catch {
     ElMessage.info('浏览器拒绝了全屏请求')
@@ -1649,6 +1968,12 @@ async function toggleCamera() {
   }
 }
 
+const shareDialogVisible = ref(false)
+const shareSurface = ref<'monitor' | 'window' | 'browser'>('monitor')
+const shareWithAudio = ref(true)
+const shareSmoothMode = ref(false)
+const shareStarting = ref(false)
+
 async function toggleShare() {
   if (!admitted.value) return
   if (sharing.value) {
@@ -1670,18 +1995,36 @@ async function toggleShare() {
     ElMessage.warning(`当前已有参会者共享屏幕（${blocker.ownerName}），请等待其停止共享`)
     return
   }
+  await confirmStartShare()
+}
+
+async function confirmStartShare() {
+  if (shareStarting.value) return
+  shareStarting.value = true
+  shareDialogVisible.value = false
+  if (sharing.value) {
+    await toggleShare()
+  }
   try {
+    const fps = shareSmoothMode.value ? 30 : (media.prefs.value?.videoMaxFps || 30)
     // 带 max 约束采集，避免整屏 DPI 缩放后的非标分辨率（实测 2561x1601@30）被三方拒
     // bad_publication_video_spec；对齐三方 startScreenShare 的 requestedSpec 约束。
-    const s = await navigator.mediaDevices.getDisplayMedia({
-      video: { width: { ideal: 1920, max: 1920 }, height: { ideal: 1080, max: 1080 }, frameRate: { ideal: media.prefs.value?.videoMaxFps || 30, max: media.prefs.value?.videoMaxFps || 30 } },
-      audio: true,
-    })
+    const constraints: DisplayMediaStreamOptions & { systemAudio?: string } = {
+      video: {
+        width: { ideal: 1920, max: 1920 },
+        height: { ideal: 1080, max: 1080 },
+        frameRate: { ideal: fps, max: fps },
+        displaySurface: shareSurface.value,
+      } as MediaTrackConstraints,
+      audio: shareWithAudio.value,
+      systemAudio: shareWithAudio.value ? 'include' : 'exclude',
+    }
+    const s = await navigator.mediaDevices.getDisplayMedia(constraints)
     shareStream.value = s
     sharing.value = true
-    // contentHint 是浏览器编码器真正消费的输入：画质优先→detail，其余→motion。
+    // contentHint 是浏览器编码器真正消费的输入：流畅度优先→motion，清晰度优先→detail。
     const vt = s.getVideoTracks()[0]
-    if (vt) vt.contentHint = deliveryFor('screen').encodingStrategy === 'bandwidth_first' ? 'detail' : 'motion'
+    if (vt) vt.contentHint = shareSmoothMode.value ? 'motion' : (deliveryFor('screen').encodingStrategy === 'bandwidth_first' ? 'detail' : 'motion')
     vt?.addEventListener('ended', async () => {
       await whipScreen.unpublish().catch(() => undefined)
       shareStream.value = null
@@ -1715,6 +2058,8 @@ async function toggleShare() {
     }
   } catch {
     ElMessage.info('已取消屏幕共享')
+  } finally {
+    shareStarting.value = false
   }
 }
 
@@ -1853,6 +2198,82 @@ async function sendChat() {
     console.warn('[meeting] 发送聊天消息失败', e)
     ElMessage.error('消息没有发出去，请检查网络后重试')
   }
+}
+
+async function sendChatImage(payload: string) {
+  if (!payload) return
+  try {
+    await ws.sendChat(payload)
+  } catch (e) {
+    console.warn('[meeting] 发送图片消息失败', e)
+    ElMessage.error('图片发送失败，请尝试换一张更小的图片')
+  }
+}
+
+/**
+ * 一键截取当前会议画面（优先抓取主画面/共享屏幕视频帧，并自动叠加批注画布图层），
+ * 保存为 PNG 文件并尝试同步复制到剪贴板。
+ */
+async function captureMeetingScreen() {
+  const stage = imRootRef.value?.querySelector('.im-stage') as HTMLElement | null
+  if (!stage) {
+    ElMessage.warning('当前没有可截取的画面')
+    return
+  }
+  const videos = Array.from(stage.querySelectorAll('video')).filter(
+    (v) => v.readyState >= 2 && v.videoWidth > 0 && v.videoHeight > 0,
+  )
+  // 优先挑画面面积最大的视频元素（主画面或共享屏幕）
+  const mainVideo = videos.sort(
+    (a, b) => b.getBoundingClientRect().width * b.getBoundingClientRect().height - a.getBoundingClientRect().width * a.getBoundingClientRect().height,
+  )[0]
+  const stageCanvas = Array.from(stage.querySelectorAll('canvas')).find(
+    (c) => !c.classList.contains('ann-canvas') && c.width > 0 && c.height > 0,
+  )
+
+  const annCanvas = annotationRef.value?.getCanvas() || null
+  const outW = mainVideo?.videoWidth || stageCanvas?.width || Math.max(960, Math.round(stage.clientWidth))
+  const outH = mainVideo?.videoHeight || stageCanvas?.height || Math.max(540, Math.round(stage.clientHeight))
+
+  const out = document.createElement('canvas')
+  out.width = outW
+  out.height = outH
+  const ctx = out.getContext('2d')
+  if (!ctx) return
+
+  ctx.fillStyle = '#0f172a'
+  ctx.fillRect(0, 0, outW, outH)
+  if (mainVideo) {
+    ctx.drawImage(mainVideo, 0, 0, outW, outH)
+  } else if (stageCanvas) {
+    ctx.drawImage(stageCanvas, 0, 0, outW, outH)
+  }
+  if (annCanvas && annCanvas.width > 0 && annCanvas.height > 0) {
+    ctx.drawImage(annCanvas, 0, 0, outW, outH)
+  }
+
+  out.toBlob(async (blob) => {
+    if (!blob) {
+      ElMessage.error('截图生成失败')
+      return
+    }
+    // 仅保存到内存（覆盖旧图）并写入系统剪贴板，不触发文件下载
+    if (lastScreenshotUrl) {
+      URL.revokeObjectURL(lastScreenshotUrl)
+    }
+    lastScreenshotUrl = URL.createObjectURL(blob)
+
+    try {
+      if (navigator.clipboard && typeof ClipboardItem !== 'undefined') {
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+        ElMessage.success('已截图并复制到剪贴板（可直接 Ctrl+V 粘贴）')
+        return
+      }
+    } catch {
+      /* 剪贴板不可用时仍保留在内存 */
+    }
+    ElMessage.success('已截图到内存（已覆盖上一张）')
+  }, 'image/png')
 }
 
 function deliveryFor(kind: VideoKind) {
@@ -2321,6 +2742,10 @@ async function attachAudioLeg(s: StreamVo, engine: MediaPlayer) {
   })
   if (whep) {
     audioPlayers.set(s.id, whep)
+    whep.element.muted = speakerMuted.value
+    if (activeSpeakerSinkId.value) {
+      void applySinkIdToElement(whep.element, activeSpeakerSinkId.value)
+    }
     audioLegKind.value = { ...audioLegKind.value, [s.id]: 'whep' }
     // 录制要的是这一路的**原始音频流**：WHEP 的接收流就是它，元素挂 body 只是播出用的外壳。
     const src = whep.element.srcObject
@@ -2557,9 +2982,68 @@ const legacyCompressionRatio = computed(() => {
     reportedRatio: stream.compressionRatio, reportedEstimate: stream.compressionEstimated }).ratioText
 })
 
+// 会中累计流量与平均速率统计：按每秒定频单调累加，保证累计值持续递增不跳变、不清零
+const trafficUpBytes = ref(0)
+const trafficDownBytes = ref(0)
+const avgUpKbps = ref(0)
+const avgDownKbps = ref(0)
+let statsSampleCount = 0
+let statsUpSum = 0
+let statsDownSum = 0
+let trafficTickTimer: number | null = null
+
+function formatTrafficBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 KB'
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
+const avgUpText = computed(() => measuredRateText(avgUpKbps.value))
+const avgDownText = computed(() => measuredRateText(avgDownKbps.value))
+const trafficUpText = computed(() => formatTrafficBytes(trafficUpBytes.value))
+const trafficDownText = computed(() => formatTrafficBytes(trafficDownBytes.value))
+const trafficTotalText = computed(() => formatTrafficBytes(trafficUpBytes.value + trafficDownBytes.value))
+const trafficUpPct = computed(() => {
+  const total = trafficUpBytes.value + trafficDownBytes.value
+  if (total <= 0) return 50
+  return Math.min(95, Math.max(5, Math.round((trafficUpBytes.value / total) * 100)))
+})
+const netRttText = computed(() => (net.value?.ok ? `${Math.round(net.value.rttMs)} ms` : '测算中…'))
+const netJitterText = computed(() => (net.value?.ok ? `${Math.round(net.value.jitterMs)} ms` : '测算中…'))
+const netQualityBadge = computed(() => {
+  if (!net.value?.ok) return '检测中'
+  if (netLevel.value === 'good') return '流畅'
+  if (netLevel.value === 'fair') return '良好'
+  if (netLevel.value === 'poor') return '波动'
+  return '较差'
+})
+
 watch([uplinkKbps, downlinkKbps], ([upKbps, downKbps]) => {
   meetingStore.setMediaStats({ upKbps, downKbps })
 }, { immediate: true })
+
+trafficTickTimer = window.setInterval(() => {
+  const u = Math.max(0, Number(uplinkKbps.value) || 0)
+  const d = Math.max(0, Number(downlinkKbps.value) || 0)
+  // 每秒严格单调累加本场消耗字节数（kbps -> B/s = kbps * 1000 / 8）
+  trafficUpBytes.value += (u * 1000) / 8
+  trafficDownBytes.value += (d * 1000) / 8
+  if (u > 0 || d > 0) {
+    statsSampleCount += 1
+    statsUpSum += u
+    statsDownSum += d
+    avgUpKbps.value = Math.round(statsUpSum / statsSampleCount)
+    avgDownKbps.value = Math.round(statsDownSum / statsSampleCount)
+  }
+}, 1000)
+
+onBeforeUnmount(() => {
+  if (trafficTickTimer !== null) {
+    window.clearInterval(trafficTickTimer)
+    trafficTickTimer = null
+  }
+})
 
 // 相对帧延迟 = 以本次播放收到的第一个有效帧为基准的漂移量：本地钟多走了多少、源时间只走了多少，
 // 差出来的就是延迟在长（正）还是在追（负）。
@@ -2715,6 +3199,9 @@ watch(canPublish, (ok) => {
 })
 
 onMounted(() => {
+  document.addEventListener('fullscreenchange', handleFullscreenChange)
+  navigator.mediaDevices?.addEventListener?.('devicechange', onMediaDeviceChange)
+  void reconcileAudioDevices('init')
   loadInitial()
   registerRecordingProviders({
     desiredTracks: () => desiredTracks(),
@@ -2730,6 +3217,9 @@ onMounted(() => {
   })
 })
 onBeforeUnmount(() => {
+  document.removeEventListener('fullscreenchange', handleFullscreenChange)
+  navigator.mediaDevices?.removeEventListener?.('devicechange', onMediaDeviceChange)
+  if (deviceChangeTimer !== null) window.clearTimeout(deviceChangeTimer)
   stopTicker()
   faceRoi.dispose()
   stopFrameTimes()
@@ -2743,7 +3233,166 @@ onBeforeUnmount(() => {
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  overflow: hidden;
   background: var(--bg-dark);
+}
+.im-root.is-fullscreen {
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+}
+
+.im-share-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.im-share-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+  padding: 16px 12px 14px;
+  border-radius: 12px;
+  border: 1.5px solid var(--border-soft);
+  background: var(--bg-input);
+  cursor: pointer;
+  transition: border-color 0.2s ease, background-color 0.2s ease, transform 0.2s cubic-bezier(0.32, 0.72, 0, 1), box-shadow 0.2s ease;
+}
+.im-share-card:hover {
+  border-color: var(--primary);
+  transform: translateY(-2px);
+}
+.im-share-card.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.14);
+}
+.im-share-preview {
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  color: var(--primary-text);
+}
+.im-share-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.im-share-desc {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+.im-share-opts {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-soft);
+}
+.im-share-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.im-title-edit {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.im-title-edit:hover {
+  background: var(--bg-hover);
+  color: var(--primary-text);
+}
+.im-rename-hint {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+.im-rename-scope {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 14px;
+}
+.im-rename-scope :deep(.el-radio) {
+  height: auto;
+  align-items: flex-start;
+  margin-right: 0;
+  white-space: normal;
+}
+.im-rename-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.im-fs-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding-right: 12px;
+  margin-right: 4px;
+  border-right: 1px solid var(--border-soft);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  flex-shrink: 0;
+  user-select: none;
+}
+.im-fs-brand img {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+}
+.im-fs-fade-enter-active,
+.im-fs-fade-leave-active {
+  transition: opacity 0.28s cubic-bezier(0.32, 0.72, 0, 1),
+    transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.im-fs-fade-enter-from,
+.im-fs-fade-leave-to {
+  opacity: 0;
+  transform: translateX(-8px);
+}
+.im-root.is-fullscreen .im-main > aside {
+  animation: im-ios-panel-in 0.34s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+@keyframes im-ios-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 /* 顶部状态条 */
@@ -3099,12 +3748,131 @@ onBeforeUnmount(() => {
 .im-btn-leave:hover { border-color: var(--danger); color: var(--danger-text); background: var(--danger-bg); }
 .im-btn-end { background: var(--danger); color: #fff; }
 .im-btn-end:hover { background: #dc2626; color: #fff; }
-.im-stats { width: 268px; flex-shrink: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border-color); background: var(--bg-card); overflow-y: auto; }
+.im-stats { width: 288px; flex-shrink: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border-color); background: var(--bg-card); overflow-y: auto; }
 .im-dock-head { display: flex; align-items: center; justify-content: space-between; padding: 14px; font-size: 14px; }
 .im-x { border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 14px; }
 .im-stats-body { padding: 0 14px 14px; font-size: 13px; }
 .im-stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
 .im-stats-grid > div { display: flex; flex-direction: column; gap: 2px; padding: 8px; border-radius: var(--radius); background: rgba(127, 127, 127, 0.08); }
+.im-st-card {
+  padding: 11px 12px;
+  border-radius: 12px;
+  background: var(--bg-soft, rgba(127, 127, 127, 0.08));
+  border: 1px solid var(--border-soft, rgba(148, 163, 184, 0.16));
+  margin-bottom: 10px;
+}
+.im-st-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.im-st-card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+.im-st-card-title i {
+  font-size: 14px;
+  color: var(--primary-text, #165dff);
+}
+.im-st-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.im-st-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.16);
+  color: var(--text-secondary);
+}
+.im-st-pill.is-good { background: rgba(34, 197, 94, 0.14); color: #16a34a; }
+.im-st-pill.is-fair { background: rgba(22, 93, 255, 0.14); color: #165dff; }
+.im-st-pill.is-poor { background: rgba(245, 158, 11, 0.16); color: #d97706; }
+.im-st-pill.is-bad { background: rgba(239, 68, 68, 0.16); color: #dc2626; }
+.im-st-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.im-st-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-soft);
+}
+.im-st-metric .k {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.im-st-metric .v {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.im-st-avg {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.im-ic-up { color: #3b82f6; }
+.im-ic-down { color: #10b981; }
+.im-st-total {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--primary-text, #165dff);
+  font-variant-numeric: tabular-nums;
+}
+.im-st-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.35);
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+.im-st-bar-up {
+  display: block;
+  height: 100%;
+  background: #3b82f6;
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+.im-st-traffic-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.im-st-traffic-row span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.im-dot-up,
+.im-dot-down {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.im-dot-up { background: #3b82f6; }
+.im-dot-down { background: #10b981; }
 .im-stats-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed var(--border-color); }
 .im-stats .k { color: var(--text-secondary); }
 .im-stats .v { font-variant-numeric: tabular-nums; }

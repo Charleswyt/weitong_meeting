@@ -1,7 +1,17 @@
 <template>
   <Teleport to="body">
-    <div class="quick-meeting-modal" :class="{ active: modelValue }" @click.self="close">
-      <div class="quick-meeting-dialog">
+    <div class="modal-overlay" :class="{ show: modelValue }" @click.self="close">
+      <div class="modal-box qm-modal-box">
+        <div class="modal-header">
+          <div class="wt-dlg-head-left">
+            <i class="wt-dlg-icon ri-flashlight-line" />
+            <h3>快速会议</h3>
+          </div>
+          <button class="modal-close" type="button" aria-label="关闭" @click="close">
+            <i class="ri-close-line" />
+          </button>
+        </div>
+
         <div class="quick-meeting-preview">
           <!-- 预览必须是真实取到的摄像头画面：开关只有作用在它身上，用户才看得见反馈。 -->
           <video
@@ -17,16 +27,12 @@
             <template v-else>{{ avatarChar }}</template>
           </div>
           <div class="qm-name">{{ displayName }}</div>
-          <button class="qm-cam-toggle" :class="{ off: !cameraOn }" @click="toggleCamera">
+          <button class="qm-cam-toggle" type="button" :class="{ off: !cameraOn }" @click="toggleCamera">
             <i :class="cameraOn ? 'ri-vidicon-line' : 'ri-video-off-line'" />
             {{ cameraOn ? '关闭摄像头' : '开启摄像头' }}
           </button>
         </div>
-        <div class="quick-meeting-body">
-          <div class="qm-meeting-info">
-            <div class="qm-title">快速会议</div>
-            <div class="qm-sub">立即发起一场卫通会议</div>
-          </div>
+        <div class="modal-body qm-body-compact">
           <div class="qm-topic-row">
             <label class="qm-label">会议主题</label>
             <input type="text" class="qm-topic-input" v-model="title" placeholder="请输入会议主题（可选）" />
@@ -34,17 +40,20 @@
           <div class="qm-device-row">
             <!-- 两个按钮都要给出可感知的结果：麦克风改的是真实采集轨并换图标文案，
                  扬声器点是真放一段测试音（原来它只翻一个没人读的变量，等于没反应）。 -->
-            <button class="qm-device-btn" :class="{ active: micOn }" @click="toggleMic">
+            <button class="qm-device-btn" type="button" :class="{ active: micOn }" @click="toggleMic">
               <i :class="micOn ? 'ri-mic-line' : 'ri-mic-off-line'" /> {{ micOn ? '麦克风已开' : '麦克风已静音' }}
             </button>
-            <button class="qm-device-btn" :class="{ active: speakerOk }" @click="testSpeaker">
+            <button class="qm-device-btn" type="button" :class="{ active: speakerOk }" @click="testSpeaker">
               <i class="ri-volume-up-line" /> {{ speakerTesting ? '试听中…' : '扬声器试听' }}
             </button>
           </div>
-          <button class="qm-start-btn" :disabled="submitting" @click="submit">
+        </div>
+        <div class="modal-footer">
+          <button class="btn-cancel" type="button" @click="close">取消</button>
+          <button class="btn-confirm" type="button" :disabled="submitting" @click="submit">
+            <i v-if="!submitting" class="ri-video-add-line" />
             {{ submitting ? '连接中…' : '立即开始' }}
           </button>
-          <button class="qm-cancel-btn" @click="close">取消</button>
         </div>
       </div>
     </div>
@@ -187,6 +196,14 @@ function submit() {
 </script>
 
 <style scoped>
+.qm-modal-box {
+  width: min(440px, 94vw);
+}
+.qm-body-compact {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 .qm-avatar { overflow: hidden; }
 .qm-avatar img { width: 100%; height: 100%; object-fit: cover; }
 

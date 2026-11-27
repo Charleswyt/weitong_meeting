@@ -3,11 +3,13 @@
     <div class="modal-overlay" :class="{ show: modelValue }" @click.self="close">
       <div class="schedule-modal">
         <div class="schedule-header">
-          <div class="schedule-head-left">
-            <i class="schedule-head-icon ri-calendar-schedule-line" />
+          <div class="wt-dlg-head-left">
+            <i class="wt-dlg-icon ri-calendar-schedule-line" />
             <h3>{{ isEdit ? '修改会议' : '预约会议' }}</h3>
           </div>
-          <button class="modal-close" @click="close"><i class="ri-close-line" /></button>
+          <button class="modal-close" type="button" aria-label="关闭" @click="close">
+            <i class="ri-close-line" />
+          </button>
         </div>
         <div class="schedule-body">
           <div class="form-group-modal">
@@ -16,7 +18,7 @@
           </div>
 
           <div class="form-group-modal">
-            <label>开始时间</label>
+            <label>开始时间 <span class="required">*</span></label>
             <div class="form-row-2">
               <el-date-picker
                 v-model="form.date"
@@ -24,47 +26,54 @@
                 placeholder="选择日期"
                 format="YYYY-MM-DD"
                 value-format="YYYY-MM-DD"
-                style="width: 100%"
+                :disabled-date="disabledDate"
+                :clearable="false"
+                class="sched-picker"
               />
               <el-time-picker
                 v-model="form.time"
                 placeholder="选择时间"
                 format="HH:mm"
                 value-format="HH:mm"
-                style="width: 100%"
+                :disabled-hours="disabledHours"
+                :disabled-minutes="disabledMinutes"
+                :clearable="false"
+                class="sched-picker"
               />
             </div>
           </div>
 
-          <div class="form-group-modal">
-            <label>会议时长</label>
-            <select v-model="durationPreset" class="form-select">
-              <option value="15">15 分钟</option>
-              <option value="30">30 分钟</option>
-              <option value="45">45 分钟</option>
-              <option value="60">1 小时</option>
-              <option value="120">2 小时</option>
-              <option value="custom">自定义</option>
-            </select>
-            <input
-              v-if="durationPreset === 'custom'"
-              class="custom-duration"
-              type="number"
-              v-model.number="form.durationMinutes"
-              min="1"
-              max="120"
-              placeholder="分钟"
-            />
-          </div>
+          <div class="form-row-2 form-row-meta">
+            <div class="form-group-modal">
+              <label>会议时长</label>
+              <select v-model="durationPreset" class="form-select">
+                <option value="15">15 分钟</option>
+                <option value="30">30 分钟</option>
+                <option value="45">45 分钟</option>
+                <option value="60">1 小时</option>
+                <option value="120">2 小时</option>
+                <option value="custom">自定义</option>
+              </select>
+              <input
+                v-if="durationPreset === 'custom'"
+                class="custom-duration"
+                type="number"
+                v-model.number="form.durationMinutes"
+                min="1"
+                max="120"
+                placeholder="分钟"
+              />
+            </div>
 
-          <div class="form-group-modal">
-            <label>时区</label>
-            <select v-model="tzOffset" class="form-select">
-              <option value="+08:00">(GMT+08:00) 北京时间</option>
-              <option value="+09:00">(GMT+09:00) 东京时间</option>
-              <option value="Z">(GMT+00:00) 协调世界时 / 伦敦</option>
-              <option value="-05:00">(GMT-05:00) 纽约时间</option>
-            </select>
+            <div class="form-group-modal">
+              <label>时区</label>
+              <select v-model="tzOffset" class="form-select">
+                <option value="+08:00">(GMT+08:00) 北京时间</option>
+                <option value="+09:00">(GMT+09:00) 东京时间</option>
+                <option value="Z">(GMT+00:00) 协调世界时 / 伦敦</option>
+                <option value="-05:00">(GMT-05:00) 纽约时间</option>
+              </select>
+            </div>
           </div>
 
           <div class="settings-section">
@@ -177,6 +186,63 @@ function pad(n: number) {
   return String(n).padStart(2, '0')
 }
 
+function todayStr(now = new Date()) {
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+}
+
+/** 向上取整到下一个 5 分钟刻度，确保默认时间不早于当前时间 */
+function nextAvailableSlot(now = new Date()): { date: string; time: string } {
+  const stepMs = 5 * 60 * 1000
+  const target = new Date(Math.ceil((now.getTime() + 60_000) / stepMs) * stepMs)
+  return {
+    date: todayStr(target),
+    time: `${pad(target.getHours())}:${pad(target.getMinutes())}`,
+  }
+}
+
+function disabledDate(d: Date): boolean {
+  const todayStart = new Date()
+  todayStart.setHours(0, 0, 0, 0)
+  return d.getTime() < todayStart.getTime()
+}
+
+function makeRange(start: number, endExclusive: number): number[] {
+  const out: number[] = []
+  for (let i = start; i < endExclusive; i++) out.push(i)
+  return out
+}
+
+function disabledHours(): number[] {
+  const now = new Date()
+  if (form.date !== todayStr(now)) return []
+  return makeRange(0, now.getHours())
+}
+
+function disabledMinutes(selectedHour: number): number[] {
+  const now = new Date()
+  if (form.date !== todayStr(now)) return []
+  if (selectedHour < now.getHours()) return makeRange(0, 60)
+  if (selectedHour === now.getHours()) return makeRange(0, now.getMinutes())
+  return []
+}
+
+// 切回今天时，若原选时间早于此刻，自动修正到最近的有效时刻
+watch(
+  () => form.date,
+  (val) => {
+    const now = new Date()
+    if (!val || val !== todayStr(now) || !form.time) return
+    const [hh, mm] = form.time.split(':').map(Number)
+    if (Number.isFinite(hh) && Number.isFinite(mm)) {
+      if (hh < now.getHours() || (hh === now.getHours() && mm < now.getMinutes())) {
+        const slot = nextAvailableSlot(now)
+        form.date = slot.date
+        form.time = slot.time
+      }
+    }
+  },
+)
+
 watch(
   () => props.modelValue,
   (open) => {
@@ -191,12 +257,17 @@ watch(
         }
         form.title = m.title
         form.durationMinutes = m.durationMinutes
-        durationPreset.value = ['15', '30', '45', '60'].includes(String(m.durationMinutes)) ? String(m.durationMinutes) : 'custom'
+        durationPreset.value = ['15', '30', '45', '60', '120'].includes(String(m.durationMinutes)) ? String(m.durationMinutes) : 'custom'
         muteOnJoin.value = m.muteOnJoin
         cameraOff.value = m.cameraOffOnJoin
         allowWaiting.value = m.allowWaiting
-      } else if (props.presetTitle) {
-        form.title = props.presetTitle
+      } else {
+        const slot = nextAvailableSlot()
+        form.date = slot.date
+        form.time = slot.time
+        if (props.presetTitle) {
+          form.title = props.presetTitle
+        }
       }
     }
   },
@@ -221,10 +292,15 @@ async function submit() {
     ElMessage.warning('请选择日期和时间')
     return
   }
+  // 墙钟时间 + 所选偏移直发，不做浏览器时区往返，避免跨时区预定被换算错。
+  const startISO = `${form.date}T${form.time}:00${tzOffset.value === 'Z' ? 'Z' : tzOffset.value}`
+  const startMs = new Date(startISO).getTime()
+  if (Number.isFinite(startMs) && startMs < Date.now() - 60_000) {
+    ElMessage.warning('预约的日期和时间不能早于当前时间')
+    return
+  }
   submitting.value = true
   try {
-    // 墙钟时间 + 所选偏移直发，不做浏览器时区往返，避免跨时区预定被换算错。
-    const startISO = `${form.date}T${form.time}:00${tzOffset.value === 'Z' ? 'Z' : tzOffset.value}`
     const payload: Record<string, any> = {
       title: form.title.trim(),
       startTime: startISO,
@@ -260,31 +336,41 @@ async function submit() {
 
 <style scoped>
 .schedule-modal {
-  width: 560px;
+  width: min(560px, 94vw);
   max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.schedule-body {
   overflow-y: auto;
-  background: var(--bg-card);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border-color);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+  flex: 1;
 }
-
-.schedule-head-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.form-row-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
 }
-
-.schedule-head-icon {
-  width: 34px;
-  height: 34px;
+.form-row-meta .form-group-modal {
+  margin-bottom: 14px;
+}
+.sched-picker {
+  width: 100% !important;
+}
+:deep(.sched-picker.el-date-editor) {
+  width: 100% !important;
+  height: 40px;
+}
+:deep(.sched-picker .el-input__wrapper) {
+  height: 40px;
   border-radius: 10px;
-  background: var(--primary-soft);
-  color: var(--primary-text);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 17px;
+  background: var(--bg-input);
+  box-shadow: 0 0 0 1px var(--border-color) inset;
+  padding: 0 12px;
+}
+:deep(.sched-picker .el-input__wrapper.is-focus) {
+  box-shadow: 0 0 0 1px var(--primary) inset, 0 0 0 3px rgba(22, 93, 255, 0.14);
 }
 
 .settings-title {

@@ -55,6 +55,15 @@
               >{{ r.nodeType === 'edge' ? '边' : '云' }}</span>
               <span v-if="r.isHost" class="mp-tag mp-tag-host">主持人</span>
               <span v-if="r.isSelf" class="mp-tag mp-tag-self">我</span>
+              <button
+                v-if="r.isSelf && r.joined"
+                type="button"
+                class="mp-edit-name-btn"
+                title="修改我的名称"
+                @click.stop="$emit('rename-self', r.name)"
+              >
+                <i class="ri-edit-line" />
+              </button>
               <span v-if="!r.joined" class="mp-tag mp-tag-wait">待入会</span>
             </div>
             <!-- 设备状态只有已入会者才有真值；等候入场的人不给画图标。 -->
@@ -116,7 +125,12 @@
 
     <footer class="mp-foot">
       <div class="mp-net" :class="'mp-net-' + (netLevel || 'idle')" :title="netTitle">
-        <span class="mp-net-k"><i class="ri-signal-wifi-line" />网络质量</span>
+        <span class="mp-net-k">
+          <span class="mp-signal" aria-hidden="true">
+            <i v-for="bar in 4" :key="bar" class="mp-signal-bar" :class="{ 'is-on': bar <= netBars }" />
+          </span>
+          网络质量
+        </span>
         <b>{{ netText }}</b>
       </div>
       <div class="mp-foot-actions">
@@ -196,9 +210,19 @@ defineEmits<{
   (e: 'focus', key: string): void
   (e: 'mute-all'): void
   (e: 'kick', participantId: string, name: string): void
+  (e: 'rename-self', currentName: string): void
 }>()
 
 const keyword = ref('')
+const netBars = computed(() => {
+  switch (props.netLevel) {
+    case 'good': return 4
+    case 'fair': return 3
+    case 'poor': return 2
+    case 'bad': return 1
+    default: return 0
+  }
+})
 
 const kw = computed(() => keyword.value.trim().toLowerCase())
 const filteredRows = computed(() =>
@@ -470,6 +494,25 @@ function rateTooltip(r: MemberRow) {
   background: rgba(239, 68, 68, 0.12);
   color: var(--danger-text);
 }
+.mp-edit-name-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.mp-edit-name-btn:hover {
+  background: var(--primary-soft);
+  color: var(--primary-text);
+}
 
 .mp-sub-row {
   display: flex;
@@ -539,13 +582,36 @@ function rateTooltip(r: MemberRow) {
   border: 1px solid var(--border-soft); font-size: 12px;
 }
 .mp-net-k {
-  display: inline-flex; align-items: center; gap: 5px;
+  display: inline-flex; align-items: center; gap: 6px;
   color: var(--text-muted);
 }
+.mp-signal {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 13px;
+  padding-bottom: 1px;
+}
+.mp-signal-bar {
+  display: block;
+  width: 3px;
+  border-radius: 1.5px;
+  background: var(--border-color);
+  transition: background-color 0.25s ease, transform 0.25s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.mp-signal-bar:nth-child(1) { height: 4px; }
+.mp-signal-bar:nth-child(2) { height: 7px; }
+.mp-signal-bar:nth-child(3) { height: 10px; }
+.mp-signal-bar:nth-child(4) { height: 13px; }
+.mp-net-good .mp-signal-bar.is-on { background: var(--success); }
+.mp-net-fair .mp-signal-bar.is-on { background: var(--warning); }
+.mp-net-poor .mp-signal-bar.is-on,
+.mp-net-bad .mp-signal-bar.is-on { background: var(--danger); }
 .mp-net b { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
 .mp-net-good b { color: var(--success-text); }
 .mp-net-fair b { color: var(--warning-text); }
-.mp-net-poor b { color: var(--danger-text); }
+.mp-net-poor b,
+.mp-net-bad b { color: var(--danger-text); }
 .mp-foot-actions {
   display: flex;
   gap: 8px;

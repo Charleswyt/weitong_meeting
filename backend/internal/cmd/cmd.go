@@ -98,7 +98,7 @@ var Main = gcmd.Command{
 		glog.Infof(ctx, "邮件通道: %s", emailProvider.Name())
 
 		authCtrl := auth.New(authSvc, smsAuthSvc, emailAuthSvc, dictSvc, sm2LoginSvc)
-		meetingCtrl := meeting.New(meetingSvc, authSvc, dictSvc, adapter, registry, websocket.DefaultHub)
+		meetingCtrl := meeting.New(meetingSvc, authSvc, userSvc, dictSvc, adapter, registry, websocket.DefaultHub)
 		recordingCtrl := recording.New(recordingSvc, authSvc)
 		chatCtrl := chat.New(chatSvc, registry)
 		settingsCtrl := settings.New(settingsSvc)
@@ -169,6 +169,9 @@ var Main = gcmd.Command{
 				g.POST("/:id/end", meetingCtrl.End)
 				g.POST("/:id/mute-all", meetingCtrl.MuteAll)
 				g.POST("/:id/kick", meetingCtrl.Kick)
+				g.POST("/:id/title", meetingCtrl.RenameTitle)
+				g.POST("/:id/title-requests/:requestId", meetingCtrl.DecideRenameTitle)
+				g.POST("/:id/display-name", meetingCtrl.RenameSelf)
 				g.POST("/:id/focus", meetingCtrl.Focus)
 				g.POST("/:id/recording/:action", meetingCtrl.Recording)
 				g.GET("/:id/media/:streamId/:kind", meetingCtrl.Media)

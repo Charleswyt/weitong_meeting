@@ -5,31 +5,34 @@
         <h2 class="rec-page-title">录制会议<span v-if="recordingCount" class="rec-count">共 {{ recordingCount }} 个录制</span></h2>
         <p class="rec-page-sub">查看和管理所有会议录制内容</p>
       </div>
-      <input v-model="keyword" class="rec-search" type="text" placeholder="搜索录制名称" @input="debounceLoad">
+      <div class="rec-search-box">
+        <i class="ri-search-line rec-search-ic" aria-hidden="true" />
+        <input v-model="keyword" class="rec-search" type="text" placeholder="搜索录制名称" @input="debounceLoad">
+      </div>
     </div>
 
-    <div class="rec-tabs" role="tablist" aria-label="录制来源">
-      <div
-        v-for="t in tabs"
-        :key="t.value"
-        class="rec-tab"
-        role="tab"
-        tabindex="0"
-        :aria-selected="activeTab === t.value"
-        :class="{ active: activeTab === t.value }"
-        @click="switchTab(t.value)"
-        @keydown.enter.prevent="switchTab(t.value)"
-        @keydown.space.prevent="switchTab(t.value)"
-      >{{ t.label }}</div>
-    </div>
-
-    <!-- 原型在"本地录制"这一栏顶部写清了谁能看到这些文件；这句话也解释了为什么它跟云端那一栏完全不同源 -->
-    <p v-if="activeTab === 'local'" class="rec-notice">
-      <i class="ri-information-line" /> 只在你这台电脑上可见
-    </p>
-
-    <div class="rec-toolbar">
-      <select v-model="timeFilter" class="rec-filter" @change="load()">
+    <div class="rec-tabs-bar">
+      <div class="rec-tabs-left">
+        <div class="rec-tabs" role="tablist" aria-label="录制来源">
+          <div
+            v-for="t in tabs"
+            :key="t.value"
+            class="rec-tab"
+            role="tab"
+            tabindex="0"
+            :aria-selected="activeTab === t.value"
+            :class="{ active: activeTab === t.value }"
+            @click="switchTab(t.value)"
+            @keydown.enter.prevent="switchTab(t.value)"
+            @keydown.space.prevent="switchTab(t.value)"
+          >{{ t.label }}</div>
+        </div>
+        <!-- 放在标签栏右侧：不占额外整行高度，仍清晰提示本地录制仅本机可见 -->
+        <p v-if="activeTab === 'local'" class="rec-notice">
+          <i class="ri-information-line" /> 只在你这台电脑上可见
+        </p>
+      </div>
+      <select v-model="timeFilter" class="rec-filter" aria-label="按时间筛选" @change="load()">
         <option value="">全部时间</option>
         <option value="7">最近7天</option>
         <option value="30">最近30天</option>
@@ -709,11 +712,27 @@ onMounted(() => {
   margin-top: 4px;
 }
 
+.rec-tabs-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 18px;
+}
+
+.rec-tabs-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
 .rec-tabs {
   display: flex;
   gap: 0;
-  border-bottom: 1px solid var(--border-color);
-  margin-bottom: 20px;
 }
 
 .rec-tab {
@@ -741,16 +760,25 @@ onMounted(() => {
   font-weight: 600;
 }
 
-.rec-toolbar {
+.rec-search-box {
+  position: relative;
   display: flex;
-  gap: 12px;
-  margin-bottom: 20px;
+  align-items: center;
+  flex: 1;
+  max-width: 300px;
+}
+
+.rec-search-ic {
+  position: absolute;
+  left: 11px;
+  font-size: 15px;
+  color: var(--text-muted);
+  pointer-events: none;
 }
 
 .rec-search {
-  flex: 1;
-  max-width: 300px;
-  padding: 8px 14px;
+  width: 100%;
+  padding: 8px 14px 8px 34px;
   border: 1px solid var(--border-color);
   border-radius: 8px;
   background: var(--bg-card);
@@ -764,7 +792,8 @@ onMounted(() => {
 }
 
 .rec-filter {
-  padding: 8px 14px;
+  padding: 6px 12px;
+  margin-bottom: 6px;
   border: 1px solid var(--border-color);
   border-radius: 8px;
   background: var(--bg-card);
@@ -867,15 +896,17 @@ onMounted(() => {
 }
 
 .rec-notice {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  margin: 0 0 16px;
-  padding: 10px 14px;
+  gap: 5px;
+  margin: 0;
+  padding: 4px 10px;
   background: rgba(22, 93, 255, 0.08);
-  border-radius: 6px;
+  border-radius: 999px;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
 }
 
 .rec-title-row {

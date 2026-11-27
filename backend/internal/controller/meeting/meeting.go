@@ -30,14 +30,15 @@ var roiHintSuccess uint64
 type Controller struct {
 	meetingSvc *service.MeetingService
 	authSvc    *service.AuthService
+	userSvc    *service.UserService
 	dictSvc    *service.DictService
 	adapter    *thirdparty.Adapter
 	registry   *session.Registry
 	pump       RoomPump
 }
 
-func New(meetingSvc *service.MeetingService, authSvc *service.AuthService, dictSvc *service.DictService, adapter *thirdparty.Adapter, registry *session.Registry, pump RoomPump) *Controller {
-	return &Controller{meetingSvc: meetingSvc, authSvc: authSvc, dictSvc: dictSvc, adapter: adapter, registry: registry, pump: pump}
+func New(meetingSvc *service.MeetingService, authSvc *service.AuthService, userSvc *service.UserService, dictSvc *service.DictService, adapter *thirdparty.Adapter, registry *session.Registry, pump RoomPump) *Controller {
+	return &Controller{meetingSvc: meetingSvc, authSvc: authSvc, userSvc: userSvc, dictSvc: dictSvc, adapter: adapter, registry: registry, pump: pump}
 }
 
 // Caller 是"这次请求是谁"的两件套：本库 userId + 他映射的三方账号。
@@ -452,6 +453,17 @@ func (c *Controller) Join(r *ghttp.Request) {
 			return
 		}
 	}
+	var preLocalId int64
+	if local != nil {
+		preLocalId = local.Id
+	}
+	if preKey := c.registry.RoomKey(preLocalId, externalNo); preKey != 0 {
+		if existingRoom, ok := c.registry.Room(preKey); ok {
+			if override := existingRoom.GetDisplayNameOverride(userId); override != "" {
+				displayName = override
+			}
+		}
+	}
 	endpointType, deviceID := service.JoinEndpoint(r.Context())
 	var result *thirdparty.JoinResult
 	err = c.authSvc.WithTokenRetry(r.Context(), userId, func(token string) error {
@@ -516,6 +528,12 @@ func (c *Controller) Join(r *ghttp.Request) {
 		ParticipantToken: result.ParticipantToken,
 		JoinedAt:         gtime.Now().Time,
 	})
+	if room, ok := c.registry.Room(roomKey); ok {
+		if ct := room.GetCustomTitle(); ct != "" {
+			title = ct
+		}
+		room.SyncParticipantCount(1, gtime.Now().Time)
+	}
 	// 三方心跳兼令牌续期，必须从入会这一刻就有人负责，而不是等前端连上 WebSocket 才开始。
 	if c.pump != nil {
 		c.pump.EnsureRoom(roomKey)

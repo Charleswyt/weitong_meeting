@@ -39,6 +39,15 @@ type Session struct {
 	LastSeen          time.Time // 最近一次"这个客户端还活着"的证据（WS 消息或 REST 调用）
 }
 
+// TitleChangeRequest 是非主持人发起的会中改名申请，等待主持人同意或拒绝。
+type TitleChangeRequest struct {
+	RequestId       string `json:"requestId"`
+	RequesterUserId int64  `json:"requesterUserId"`
+	RequesterName   string `json:"requesterName"`
+	NewTitle        string `json:"newTitle"`
+	CreatedAtMs     int64  `json:"createdAtMs"`
+}
+
 // MeetingRoom 是一场（本库 id 视角）会议的服务端聚合：成员会话、状态快照、流别名。
 type MeetingRoom struct {
 	mu           sync.RWMutex
@@ -47,6 +56,14 @@ type MeetingRoom struct {
 	ThirdPartyId string // 三方 meetingId（录制/板卡操作用）
 	Sessions     map[int64]*Session
 	lastState    *thirdparty.MeetingResponse
+	// CustomTitle 会中修改后的最新会议名称（主持直接改或审批通过后写入）。
+	CustomTitle string
+	// TitleRequests 待主持人审批的改名申请（requestId -> req）。
+	TitleRequests map[string]*TitleChangeRequest
+	// DisplayNameOverrides 本场会议内的临时改名（userId -> displayName），退出重进依旧保持。
+	DisplayNameOverrides map[int64]string
+	// activeStartAt 当前有人参会这一段的起始时刻；参会人数归 0 时清零，确保人数为 0 不计时。
+	activeStartAt time.Time
 	// stateByUser = 每个参会者"用自己令牌拉的"那份状态，按人分键。三方在 publications 里
 	// 给每条订阅地址都嵌了一张绑到该参会者的票据，所以这份缓存不是"谁都能复用的快照"：
 	// 另一个人拿它去订 WHEP，用的就是别人的票（实测这类回答是 401 authentication error）。
@@ -630,4 +647,133 @@ func newHexId(prefix string) string {
 	buf := make([]byte, 16)
 	_, _ = rand.Read(buf)
 	return prefix + hex.EncodeToString(buf)
+}
+
+func (room *MeetingRoom) SetCustomTitle(title string) {
+	if room == nil {
+		return
+	}
+	room.mu.Lock()
+	room.CustomTitle = title
+	room.mu.Unlock()
+}
+
+func (room *MeetingRoom) GetCustomTitle() string {
+	if room == nil {
+		return ""
+	}
+	room.mu.RLock()
+	defer room.mu.RUnlock()
+	return room.CustomTitle
+}
+
+func (room *MeetingRoom) AddTitleRequest(userId int64, requesterName, newTitle string) *TitleChangeRequest {
+	if room == nil {
+		return nil
+	}
+	req := &TitleChangeRequest{
+		RequestId:       newHexId("treq_"),
+		RequesterUserId: userId,
+		RequesterName:   requesterName,
+		NewTitle:        newTitle,
+		CreatedAtMs:     time.Now().UnixMilli(),
+	}
+	room.mu.Lock()
+	if room.TitleRequests == nil {
+		room.TitleRequests = make(map[string]*TitleChangeRequest)
+	}
+	room.TitleRequests[req.RequestId] = req
+	room.mu.Unlock()
+	return req
+}
+
+func (room *MeetingRoom) TakeTitleRequest(requestId string) (*TitleChangeRequest, bool) {
+	if room == nil {
+		return nil, false
+	}
+	room.mu.Lock()
+	defer room.mu.Unlock()
+	req, ok := room.TitleRequests[requestId]
+	if ok {
+		delete(room.TitleRequests, requestId)
+	}
+	return req, ok
+}
+
+func (room *MeetingRoom) SetDisplayNameOverride(userId int64, name string) {
+	if room == nil {
+		return
+	}
+	room.mu.Lock()
+	if room.DisplayNameOverrides == nil {
+		room.DisplayNameOverrides = make(map[int64]string)
+	}
+	room.DisplayNameOverrides[userId] = name
+	room.mu.Unlock()
+}
+
+func (room *MeetingRoom) GetDisplayNameOverride(userId int64) string {
+	if room == nil {
+		return ""
+	}
+	room.mu.RLock()
+	defer room.mu.RUnlock()
+	return room.DisplayNameOverrides[userId]
+}
+
+// DisplayNameOverrideForParticipant 根据 participantId 查本场会议的临时/最新显示名。
+func (room *MeetingRoom) DisplayNameOverrideForParticipant(participantId string) string {
+	if room == nil || participantId == "" {
+		return ""
+	}
+	room.mu.RLock()
+	defer room.mu.RUnlock()
+	if len(room.DisplayNameOverrides) == 0 {
+		return ""
+	}
+	for uid, sess := range room.Sessions {
+		if sess != nil && sess.ParticipantId == participantId {
+			if name := room.DisplayNameOverrides[uid]; name != "" {
+				return name
+			}
+			break
+		}
+	}
+	return ""
+}
+
+// SyncParticipantCount 按当前参会人数维护活跃计时起点：
+// 人数 > 0 且未开始计时时记录起点；人数归 0 时清空起点，确保无人时段不计时、再次入会重新计时。
+func (room *MeetingRoom) SyncParticipantCount(count int, now time.Time) time.Time {
+	if room == nil {
+		return time.Time{}
+	}
+	room.mu.Lock()
+	defer room.mu.Unlock()
+	if count <= 0 {
+		room.activeStartAt = time.Time{}
+		return time.Time{}
+	}
+	if room.activeStartAt.IsZero() {
+		room.activeStartAt = now
+	}
+	return room.activeStartAt
+}
+
+func (room *MeetingRoom) ActiveStartedAt() time.Time {
+	if room == nil {
+		return time.Time{}
+	}
+	room.mu.RLock()
+	defer room.mu.RUnlock()
+	return room.activeStartAt
+}
+
+func (room *MeetingRoom) LastState() *thirdparty.MeetingResponse {
+	if room == nil {
+		return nil
+	}
+	room.mu.RLock()
+	defer room.mu.RUnlock()
+	return room.lastState
 }

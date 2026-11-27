@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gogf/gf/v2/os/glog"
 	"github.com/gogf/gf/v2/os/gtime"
@@ -32,6 +33,7 @@ func BuildMeetingStateVo(meetingId int64, resp *thirdparty.MeetingResponse, room
 	}
 	vo := &model.MeetingStateVo{
 		MeetingId:        meetingId,
+		Title:            resp.Meeting.Title,
 		Status:           resp.Meeting.Status,
 		ServerTime:       resp.ServerUnixMs,
 		ClockDriftMs:     resp.ServerClockUncertaintyMs,
@@ -42,11 +44,17 @@ func BuildMeetingStateVo(meetingId int64, resp *thirdparty.MeetingResponse, room
 		Participants:     make([]model.ParticipantVo, 0, len(resp.Participants)),
 		Streams:          make([]model.StreamVo, 0, len(resp.Publications)),
 	}
+	if ct := room.GetCustomTitle(); ct != "" {
+		vo.Title = ct
+	}
 	if resp.Meeting.StartedAtMs() > 0 {
 		vo.StartedAt = gtime.NewFromTimeStamp(resp.Meeting.StartedAtMs() / 1000).Format("Y-m-d\\TH:i:sP")
 	}
 	if vo.ParticipantCount == 0 {
 		vo.ParticipantCount = len(resp.Participants)
+	}
+	if activeAt := room.SyncParticipantCount(vo.ParticipantCount, time.Now()); !activeAt.IsZero() {
+		vo.ActiveStartedAt = gtime.NewFromTime(activeAt).Format("Y-m-d\\TH:i:sP")
 	}
 
 	// 徽标以真实流为准：某成员"看得见/听得到"当且仅当上游 publications 里存在**已就绪且带可播端点**
@@ -71,7 +79,11 @@ func BuildMeetingStateVo(meetingId int64, resp *thirdparty.MeetingResponse, room
 
 	nameById := make(map[string]string, len(resp.Participants))
 	for _, p := range resp.Participants {
-		nameById[p.ParticipantId] = p.DisplayName
+		displayName := p.DisplayName
+		if override := room.DisplayNameOverrideForParticipant(p.ParticipantId); override != "" {
+			displayName = override
+		}
+		nameById[p.ParticipantId] = displayName
 		// 主持人只认会议级 hostParticipantId 一个来源；它为空（上游未给出）时才退回成员级标记。
 		// 原先两者做 OR，一旦上游两侧不一致就会出现多个"主持人"。
 		isHost := p.ParticipantId == resp.Meeting.HostParticipantId
@@ -80,7 +92,7 @@ func BuildMeetingStateVo(meetingId int64, resp *thirdparty.MeetingResponse, room
 		}
 		vo.Participants = append(vo.Participants, model.ParticipantVo{
 			Id:        p.ParticipantId,
-			Name:      p.DisplayName,
+			Name:      displayName,
 			IsHost:    isHost,
 			NodeType:  NodeTypeOf(p.EndpointType),
 			CameraOn:  realMedia[p.ParticipantId].camera,

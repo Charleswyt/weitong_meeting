@@ -35,7 +35,7 @@ window.addEventListener('unhandledrejection', (event) => {
 
 const pinia = createPinia()
 app.use(pinia)
-app.use(ElementPlus, { locale: zhCn })
+app.use(ElementPlus, { locale: zhCn, message: { max: 1, grouping: true } })
 
 // 免登录（2026-10-08 起的临时方案，契约 §5.1）：先问一次后端"这台免不免登录"，再挂路由。
 // 为什么答案必须由后端给：前端产物是构建期烘死的，容器运行时的环境变量改不动它。

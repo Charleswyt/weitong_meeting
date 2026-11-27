@@ -8,11 +8,13 @@
     @update:model-value="$emit('update:modelValue', $event)"
   >
     <template #header>
-      <div class="inv-head">
-        <i class="inv-head-icon ri-group-line" />
-        <span class="inv-head-title">邀请参会人</span>
-        <button class="inv-close" @click="$emit('update:modelValue', false)"><i class="ri-close-line" /></button>
+      <div class="wt-dlg-head-left">
+        <i class="wt-dlg-icon ri-group-line" />
+        <h3 class="el-dialog__title">邀请参会人</h3>
       </div>
+      <button class="modal-close" type="button" aria-label="关闭" @click="$emit('update:modelValue', false)">
+        <i class="ri-close-line" />
+      </button>
     </template>
 
     <div class="inv-body">
@@ -31,12 +33,10 @@
     </div>
 
     <template #footer>
-      <div class="inv-foot">
-        <button class="inv-cancel" @click="$emit('update:modelValue', false)">取消</button>
-        <button class="inv-confirm" :disabled="!inviteText" @click="copy(inviteText, '邀请信息')">
-          复制邀请信息
-        </button>
-      </div>
+      <button class="btn-cancel" type="button" @click="$emit('update:modelValue', false)">取消</button>
+      <button class="btn-confirm" type="button" :disabled="!inviteText" @click="copy(inviteText, '邀请信息')">
+        <i class="ri-file-copy-line" />复制邀请信息
+      </button>
     </template>
   </el-dialog>
 </template>

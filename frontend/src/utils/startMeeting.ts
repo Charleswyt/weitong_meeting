@@ -1,10 +1,35 @@
 import type { Router } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { quickStartMeeting } from '@/api/meeting'
 import { useMediaSettings } from '@/composables/useMediaSettings'
+import { useMeetingStore } from '@/store/meeting'
 import { preJoinPathByNumber } from '@/utils/joinFlow'
 
 export type LaunchKind = 'quick' | 'share' | 'voice'
+
+/**
+ * 防止同一时间重复开多个会：
+ * 若当前已在会议中，阻止继续新建会议并引导用户返回当前会议。
+ */
+export async function guardSingleActiveMeeting(router: Router): Promise<boolean> {
+  const store = useMeetingStore()
+  if (!store.inMeeting || !store.meetingId) return true
+  try {
+    await ElMessageBox.confirm(
+      `您当前正在会议「${store.title || store.meetingNo || '进行中会议'}」中，同一时间只能参与一场会议。是否返回当前会议？`,
+      '已在会议中',
+      {
+        confirmButtonText: '返回当前会议',
+        cancelButtonText: '留在当前页',
+        type: 'warning',
+      },
+    )
+    await router.push(`/meeting/${store.meetingId}`)
+  } catch {
+    /* 用户选择留在当前页 */
+  }
+  return false
+}
 
 function defaultTitle(kind: LaunchKind): string {
   const now = new Date()
@@ -21,6 +46,7 @@ export async function startQuickMeeting(
   router: Router,
   opts: { launchKind?: LaunchKind } = {},
 ): Promise<boolean> {
+  if (!(await guardSingleActiveMeeting(router))) return false
   const launchKind = opts.launchKind || 'quick'
   // 预加载过渡页与会中页代码块，缩短跳转白屏等待
   void import('@/views/meeting/PreMeetingView.vue')

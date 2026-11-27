@@ -1,9 +1,12 @@
 <template>
   <div v-if="modelValue" class="ls-mask" @click.self="close">
     <div class="ls-panel" role="dialog" aria-modal="true" aria-label="设置">
-      <header class="ls-head">
-        <h3>设置</h3>
-        <button type="button" class="ls-close" title="关闭" @click="close">
+      <header class="modal-header">
+        <div class="wt-dlg-head-left">
+          <i class="wt-dlg-icon ri-settings-3-line" />
+          <h3>设置</h3>
+        </div>
+        <button type="button" class="modal-close" title="关闭" @click="close">
           <i class="ri-close-line" />
         </button>
       </header>
@@ -220,53 +223,58 @@
     </div>
 
     <!-- 吐个槽：典型问题半星评分 -->
-    <div v-if="feedbackOpen" class="fb-mask" @click.self="feedbackOpen = false">
-      <div class="fb-panel" role="dialog" aria-modal="true" aria-label="吐个槽">
-        <header class="fb-head">
-          <h4>吐个槽</h4>
+    <div v-if="feedbackOpen" class="modal-overlay show fb-overlay" @click.self="feedbackOpen = false">
+      <div class="modal-box fb-modal-box" role="dialog" aria-modal="true" aria-label="吐个槽">
+        <header class="modal-header">
+          <div class="wt-dlg-head-left">
+            <i class="wt-dlg-icon ri-chat-smile-2-line" />
+            <h3>吐个槽</h3>
+          </div>
           <button
             type="button"
-            class="ls-close"
+            class="modal-close"
             title="关闭"
             @click="feedbackOpen = false"
           >
             <i class="ri-close-line" />
           </button>
         </header>
-        <p class="fb-hint">请为下列典型问题打分，可点半星（1–5 星）</p>
-        <ul class="fb-list">
-          <li v-for="item in feedbackItems" :key="item.id">
-            <span class="fb-label">{{ item.label }}</span>
-            <el-rate
-              v-model="item.score"
-              allow-half
-              :colors="rateColors"
-              void-color="#CBD5E1"
-              clearable
+        <div class="modal-body">
+          <p class="fb-hint">请为下列典型问题打分，可点半星（1–5 星）</p>
+          <ul class="fb-list">
+            <li v-for="item in feedbackItems" :key="item.id">
+              <span class="fb-label">{{ item.label }}</span>
+              <el-rate
+                v-model="item.score"
+                allow-half
+                :colors="rateColors"
+                void-color="#CBD5E1"
+                clearable
+              />
+            </li>
+          </ul>
+          <label class="fb-more">
+            <span class="fb-more-label">更多意见</span>
+            <textarea
+              v-model="feedbackMore"
+              class="fb-more-input"
+              maxlength="300"
+              rows="4"
+              placeholder="欢迎补充具体建议或遇到的问题（选填，最多 300 字）"
             />
-          </li>
-        </ul>
-        <label class="fb-more">
-          <span class="fb-more-label">更多意见</span>
-          <textarea
-            v-model="feedbackMore"
-            class="fb-more-input"
-            maxlength="300"
-            rows="4"
-            placeholder="欢迎补充具体建议或遇到的问题（选填，最多 300 字）"
-          />
-          <span class="fb-more-count">{{ feedbackMore.length }}/300</span>
-        </label>
-        <footer class="fb-foot">
-          <button type="button" class="ls-btn" @click="feedbackOpen = false">
+            <span class="fb-more-count">{{ feedbackMore.length }}/300</span>
+          </label>
+        </div>
+        <footer class="modal-footer">
+          <button type="button" class="btn-cancel" @click="feedbackOpen = false">
             取消
           </button>
           <button
             type="button"
-            class="ls-btn ls-btn-primary"
+            class="btn-confirm"
             @click="submitFeedback"
           >
-            提交
+            <i class="ri-send-plane-line" />提交
           </button>
         </footer>
       </div>
@@ -964,6 +972,12 @@ watch(
   color: var(--text-muted);
 }
 
+.fb-overlay {
+  z-index: 1120;
+}
+.fb-modal-box {
+  width: min(440px, 94vw);
+}
 .fb-mask {
   position: fixed;
   inset: 0;

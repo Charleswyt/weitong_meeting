@@ -22,6 +22,10 @@ export type WsEvent =
   | { type: 'speaking'; data: components['schemas']['WsSpeakingDown'] }
   | { type: 'mute_all'; data: { byUserId?: number } }
   | { type: 'kicked'; data: { meetingId?: number; reason?: string } }
+  | { type: 'title_changed'; data: { meetingId?: number; title?: string; byName?: string } }
+  | { type: 'title_change_request'; data: { meetingId?: number; requestId?: string; requesterName?: string; newTitle?: string } }
+  | { type: 'title_change_result'; data: { meetingId?: number; approved?: boolean; title?: string } }
+  | { type: 'member_renamed'; data: { meetingId?: number; participantId?: string; displayName?: string; scope?: string } }
   // 未知 type 后端静默丢（`hub.go:456-462`），所以这里必须容得下没见过的帧
   | { type: string; data: null }
 
@@ -70,6 +74,10 @@ export function useWebSocket() {
   let onMuteAllCb: (() => void) | null = null
   let onKickedCb: ((reason: string) => void) | null = null
   let onReconnectedCb: (() => void) | null = null
+  let onTitleChangedCb: ((payload: { title: string; byName?: string }) => void) | null = null
+  let onTitleChangeRequestCb: ((payload: { requestId: string; requesterName: string; newTitle: string }) => void) | null = null
+  let onTitleChangeResultCb: ((payload: { approved: boolean; title: string }) => void) | null = null
+  let onMemberRenamedCb: ((payload: { participantId: string; displayName: string }) => void) | null = null
   let hasOpenedOnce = false
 
   // 状态通道的三种真实形态：连着 / 断了但在重连 / 断了且已经持续一会儿（该说"画面可能不再更新"）。
@@ -165,6 +173,34 @@ export function useWebSocket() {
         case 'kicked':
           onKickedCb?.(String((evt.data as { reason?: string })?.reason || '你已被主持人移出会议'))
           break
+        case 'title_changed': {
+          const d = evt.data as { title?: string; byName?: string } | null
+          if (d?.title) onTitleChangedCb?.({ title: d.title, byName: d.byName })
+          break
+        }
+        case 'title_change_request': {
+          const d = evt.data as { requestId?: string; requesterName?: string; newTitle?: string } | null
+          if (d?.requestId && d?.newTitle) {
+            onTitleChangeRequestCb?.({
+              requestId: d.requestId,
+              requesterName: d.requesterName || '参会成员',
+              newTitle: d.newTitle,
+            })
+          }
+          break
+        }
+        case 'title_change_result': {
+          const d = evt.data as { approved?: boolean; title?: string } | null
+          if (d) onTitleChangeResultCb?.({ approved: !!d.approved, title: d.title || '' })
+          break
+        }
+        case 'member_renamed': {
+          const d = evt.data as { participantId?: string; displayName?: string } | null
+          if (d?.participantId && d?.displayName) {
+            onMemberRenamedCb?.({ participantId: d.participantId, displayName: d.displayName })
+          }
+          break
+        }
       }
     }
 
@@ -266,6 +302,10 @@ export function useWebSocket() {
   function onMuteAll(cb: () => void) { onMuteAllCb = cb }
   function onKicked(cb: (reason: string) => void) { onKickedCb = cb }
   function onReconnected(cb: () => void) { onReconnectedCb = cb }
+  function onTitleChanged(cb: (payload: { title: string; byName?: string }) => void) { onTitleChangedCb = cb }
+  function onTitleChangeRequest(cb: (payload: { requestId: string; requesterName: string; newTitle: string }) => void) { onTitleChangeRequestCb = cb }
+  function onTitleChangeResult(cb: (payload: { approved: boolean; title: string }) => void) { onTitleChangeResultCb = cb }
+  function onMemberRenamed(cb: (payload: { participantId: string; displayName: string }) => void) { onMemberRenamedCb = cb }
 
   onUnmounted(disconnect)
 
@@ -287,5 +327,9 @@ export function useWebSocket() {
     onMuteAll,
     onKicked,
     onReconnected,
+    onTitleChanged,
+    onTitleChangeRequest,
+    onTitleChangeResult,
+    onMemberRenamed,
   }
 }

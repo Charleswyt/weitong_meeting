@@ -2,7 +2,7 @@
   <el-drawer
     :model-value="modelValue"
     direction="rtl"
-    size="min(560px, 100vw)"
+    size="min(288px, 100vw)"
     class="ma-drawer"
     append-to-body
     @update:model-value="emit('update:modelValue', $event)"
@@ -1228,41 +1228,47 @@ onBeforeUnmount(() => {
 }
 
 .ma-tabs {
-  display: flex;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
   gap: 4px;
-  padding: 10px 16px;
-  background: var(--bg-card, var(--el-bg-color));
+  padding: 8px 10px;
+  background: var(--bg-soft, var(--el-fill-color-light));
   border-bottom: 1px solid var(--border-color, var(--el-border-color-lighter));
-  overflow-x: auto;
   flex-shrink: 0;
 }
 .ma-tab {
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 12px;
+  justify-content: center;
+  gap: 4px;
+  padding: 7px 6px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 8px;
   background: transparent;
   color: var(--text-secondary, var(--el-text-color-regular));
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.16s, color 0.16s;
+  min-width: 0;
+  overflow: hidden;
+  transition: background 0.16s, color 0.16s, box-shadow 0.16s;
 }
 .ma-tab i {
-  font-size: 15px;
+  font-size: 13.5px;
+  flex-shrink: 0;
 }
 .ma-tab:hover {
   background: var(--bg-hover, var(--el-fill-color));
   color: var(--text-primary, var(--el-text-color-primary));
 }
 .ma-tab.active {
-  background: var(--primary-soft, rgba(22, 93, 255, 0.12));
+  background: var(--bg-card, var(--el-bg-color));
   color: var(--primary-text, var(--primary, #165dff));
   font-weight: 600;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
 }
 .ma-badge {
   font-style: normal;

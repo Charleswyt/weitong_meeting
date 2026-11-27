@@ -1,0 +1,260 @@
+/* ============================================================
+   全局商用级统一弹窗规范（覆盖自定义 modal-overlay / el-dialog / el-message-box / el-picker-panel）
+   职责：统一全系统所有面板的遮罩、容器、标题行、按钮行、日历浮层对齐与动效
+   ============================================================ */
+@keyframes wtDialogIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.modal-overlay,
+.el-overlay {
+  background: rgba(15, 23, 42, 0.46) !important;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.dark-theme .modal-overlay,
+.dark-theme .el-overlay {
+  background: rgba(2, 6, 23, 0.66) !important;
+}
+
+.modal-box,
+.schedule-modal,
+.el-dialog,
+.el-message-box {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: 16px !important;
+  box-shadow:
+    0 24px 60px rgba(15, 23, 42, 0.16),
+    0 4px 16px rgba(15, 23, 42, 0.06) !important;
+  overflow: hidden;
+  padding: 0 !important;
+  animation: wtDialogIn 0.24s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.dark-theme .modal-box,
+.dark-theme .schedule-modal,
+.dark-theme .el-dialog,
+.dark-theme .el-message-box {
+  box-shadow:
+    0 28px 72px rgba(0, 0, 0, 0.56),
+    0 4px 18px rgba(0, 0, 0, 0.3) !important;
+}
+
+/* 统一标题行 */
+.modal-header,
+.schedule-header,
+.el-dialog__header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 12px;
+  min-height: 58px;
+  padding: 14px 22px !important;
+  margin-right: 0 !important;
+  border-bottom: 1px solid var(--border-soft) !important;
+  background: var(--bg-card);
+  box-sizing: border-box;
+}
+.modal-header h3,
+.schedule-header h3,
+.el-dialog__title {
+  margin: 0 !important;
+  font-size: 16px !important;
+  font-weight: 650 !important;
+  line-height: 1.35 !important;
+  letter-spacing: -0.01em;
+  color: var(--text-primary) !important;
+}
+.wt-dlg-head-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.wt-dlg-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: var(--primary-soft);
+  color: var(--primary-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+.modal-close,
+.el-dialog__headerbtn {
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: 8px !important;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary) !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.16s ease, color 0.16s ease;
+}
+.el-dialog__headerbtn {
+  position: static !important;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.modal-close:hover,
+.el-dialog__headerbtn:hover {
+  background: var(--bg-hover) !important;
+  color: var(--text-primary) !important;
+}
+.el-dialog__headerbtn .el-dialog__close {
+  color: inherit !important;
+  font-size: 17px;
+}
+
+/* 统一内容区 */
+.modal-body,
+.schedule-body,
+.el-dialog__body {
+  padding: 20px 22px !important;
+  color: var(--text-primary);
+  box-sizing: border-box;
+}
+
+/* 统一底部按钮行：次按钮在左，主按钮在右，高度 38px，圆角 10px */
+.modal-footer,
+.el-dialog__footer {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 10px !important;
+  padding: 14px 22px !important;
+  border-top: 1px solid var(--border-soft) !important;
+  background: var(--bg-soft) !important;
+  box-sizing: border-box;
+}
+.btn-cancel,
+.btn-confirm,
+.el-dialog__footer .el-button {
+  height: 38px !important;
+  padding: 0 18px !important;
+  border-radius: 10px !important;
+  font-size: 13.5px !important;
+  font-weight: 500 !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, transform 0.12s ease;
+}
+.btn-cancel {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-color) !important;
+  color: var(--text-secondary) !important;
+}
+.btn-cancel:hover {
+  background: var(--bg-hover) !important;
+  border-color: var(--text-muted) !important;
+  color: var(--text-primary) !important;
+}
+.btn-confirm {
+  background: var(--primary) !important;
+  border: 1px solid transparent !important;
+  color: #fff !important;
+  box-shadow: 0 4px 12px rgba(22, 93, 255, 0.24);
+}
+.btn-confirm:hover:not(:disabled) {
+  background: var(--primary-dark) !important;
+  box-shadow: 0 6px 16px rgba(22, 93, 255, 0.3);
+}
+.btn-confirm:active:not(:disabled),
+.btn-cancel:active:not(:disabled) {
+  transform: scale(0.98);
+}
+.btn-confirm:disabled {
+  opacity: 0.5;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+/* MessageBox 同步升级 */
+.el-message-box__header {
+  padding: 16px 22px 12px !important;
+  border-bottom: 1px solid var(--border-soft);
+}
+.el-message-box__title {
+  font-size: 16px !important;
+  font-weight: 650 !important;
+  color: var(--text-primary) !important;
+}
+.el-message-box__content {
+  padding: 18px 22px !important;
+  font-size: 14px;
+  color: var(--text-secondary) !important;
+}
+.el-message-box__btns {
+  padding: 12px 22px 14px !important;
+  background: var(--bg-soft);
+  border-top: 1px solid var(--border-soft);
+  gap: 8px;
+}
+.el-message-box__btns .el-button {
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 10px;
+}
+
+/* Element Plus 日期/时间选择器弹出面板：严格对齐 + 商用级精致质感 */
+.el-picker__popper.el-popper {
+  border-radius: 14px !important;
+  border: 1px solid var(--border-color) !important;
+  box-shadow:
+    0 18px 48px rgba(15, 23, 42, 0.16),
+    0 2px 10px rgba(15, 23, 42, 0.06) !important;
+  overflow: hidden;
+}
+.el-date-picker .el-date-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+.el-date-picker .el-date-table th,
+.el-date-picker .el-date-table td {
+  text-align: center !important;
+  vertical-align: middle !important;
+  padding: 2px 0 !important;
+}
+.el-date-picker .el-date-table th {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  height: 30px;
+}
+.el-date-picker .el-date-table td .el-date-table-cell {
+  height: 32px;
+  padding: 2px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.el-date-picker .el-date-table td .el-date-table-cell__text {
+  width: 28px;
+  height: 28px;
+  line-height: 28px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.el-date-picker .el-date-table td.disabled .el-date-table-cell {
+  background: transparent;
+}
+.el-date-picker .el-date-table td.disabled .el-date-table-cell__text {
+  opacity: 0.35;
+}

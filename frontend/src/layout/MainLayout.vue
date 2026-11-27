@@ -5,13 +5,19 @@
       'is-phone': isPhone,
       'is-tablet': isTablet,
       'is-desktop': isDesktop,
+      'sidebar-collapsed': isDesktop && sidebarCollapsed,
       'in-meeting': immersiveMeeting,
       'drawer-open': drawerOpen,
     }"
   >
     <!-- 手机顶栏：会中全沉浸时收起，把高度还给画面 -->
     <header v-if="isPhone && !immersiveMeeting" class="mobile-top">
-      <button class="mobile-top-btn" type="button" aria-label="打开菜单" @click="drawerOpen = true">
+      <button
+        class="mobile-top-btn"
+        type="button"
+        aria-label="打开菜单"
+        @click="drawerOpen = true"
+      >
         <i class="ri-menu-line" />
       </button>
       <div class="mobile-top-brand">
@@ -36,7 +42,14 @@
     />
 
     <aside class="sidebar" :class="{ 'is-drawer': isPhone }">
-      <div class="sidebar-header">
+      <div
+        class="sidebar-header"
+        title="返回会议管理"
+        @click="
+          router.push('/');
+          drawerOpen = false;
+        "
+      >
         <div class="sidebar-logo">
           <div class="sidebar-logo-icon">
             <img :src="appIcon" alt="" width="32" height="32" />
@@ -46,6 +59,20 @@
             <span class="sidebar-subtitle">Weitong Meeting</span>
           </div>
         </div>
+        <button
+          v-if="isDesktop"
+          class="sidebar-collapse-btn"
+          type="button"
+          :title="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
+          :aria-label="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
+          @click.stop="toggleSidebar"
+        >
+          <i
+            :class="
+              sidebarCollapsed ? 'ri-menu-unfold-line' : 'ri-menu-fold-line'
+            "
+          />
+        </button>
         <button
           v-if="isPhone"
           class="drawer-close"
@@ -63,6 +90,7 @@
           :key="m.path"
           class="nav-item"
           :class="{ active: isActive(m) }"
+          :title="m.label"
           @click="goMenu(m.path)"
         >
           <i class="nav-item-icon" :class="m.icon" />
@@ -76,39 +104,59 @@
         <div class="device-status-title">
           <span><i class="ri-headphone-line" /> 设备状态</span>
           <!-- 进页/刷新已静默自检；按钮保留给用户手动再测一次 -->
-          <button class="device-check-btn" :disabled="deviceBusy" @click="openDeviceAuth">
-            {{ deviceBusy ? '检测中' : (deviceChecked ? '重新检测' : '检测') }}
+          <button
+            class="device-check-btn"
+            :disabled="deviceBusy"
+            @click="openDeviceAuth"
+          >
+            {{ deviceBusy ? "检测中" : deviceChecked ? "重新检测" : "检测" }}
           </button>
         </div>
         <div class="device-row">
           <i class="device-icon ri-camera-line" />
           <span class="device-label">摄像头</span>
           <span class="device-value">{{ deviceState.camera.text }}</span>
-          <i v-if="deviceChecked" class="device-dot" :class="deviceState.camera.ok ? 'dot-ok' : 'dot-missing'"></i>
+          <i
+            v-if="deviceChecked"
+            class="device-dot"
+            :class="deviceState.camera.ok ? 'dot-ok' : 'dot-missing'"
+          ></i>
         </div>
         <div class="device-row">
           <i class="device-icon ri-mic-line" />
           <span class="device-label">麦克风</span>
           <span class="device-value">{{ deviceState.mic.text }}</span>
-          <i v-if="deviceChecked" class="device-dot" :class="deviceState.mic.ok ? 'dot-ok' : 'dot-missing'"></i>
+          <i
+            v-if="deviceChecked"
+            class="device-dot"
+            :class="deviceState.mic.ok ? 'dot-ok' : 'dot-missing'"
+          ></i>
         </div>
         <div class="device-row">
           <i class="device-icon ri-volume-up-line" />
           <span class="device-label">扬声器</span>
           <span class="device-value">{{ deviceState.speaker.text }}</span>
-          <i v-if="deviceChecked" class="device-dot" :class="deviceState.speaker.ok ? 'dot-ok' : 'dot-missing'"></i>
+          <i
+            v-if="deviceChecked"
+            class="device-dot"
+            :class="deviceState.speaker.ok ? 'dot-ok' : 'dot-missing'"
+          ></i>
         </div>
       </div>
 
       <div v-else class="device-status">
-        <div class="device-status-title"><i class="ri-vidicon-line" /> 会议信息</div>
+        <div class="device-status-title">
+          <i class="ri-vidicon-line" /> 会议信息
+        </div>
         <div class="device-row">
           <span class="device-label">会议号</span>
-          <span class="device-value">{{ meetingStore.meetingNo || '—' }}</span>
+          <span class="device-value">{{ meetingStore.meetingNo || "—" }}</span>
         </div>
         <div class="device-row">
           <span class="device-label">参会人数</span>
-          <span class="device-value">{{ meetingStore.participants.length }}</span>
+          <span class="device-value">{{
+            meetingStore.participants.length
+          }}</span>
         </div>
         <div class="device-row">
           <span class="device-label">会议时长</span>
@@ -116,28 +164,48 @@
         </div>
         <div class="device-row">
           <span class="device-label">本端媒体上行</span>
-          <span class="device-value">{{ measuredRateText(meetingStore.mediaStats?.upKbps) }}</span>
+          <span class="device-value">{{
+            measuredRateText(meetingStore.mediaStats?.upKbps)
+          }}</span>
         </div>
         <div class="device-row">
           <span class="device-label">本端媒体下行</span>
-          <span class="device-value">{{ measuredRateText(meetingStore.mediaStats?.downKbps) }}</span>
+          <span class="device-value">{{
+            measuredRateText(meetingStore.mediaStats?.downKbps)
+          }}</span>
         </div>
-
       </div>
 
       <div class="sidebar-footer">
-        <div class="sidebar-theme-toggle" :title="appStore.isDarkTheme ? '切换白昼模式' : '切换夜间模式'" @click="appStore.toggleTheme()">
+        <div
+          class="sidebar-theme-toggle"
+          :title="appStore.isDarkTheme ? '切换白昼模式' : '切换夜间模式'"
+          @click="appStore.toggleTheme()"
+        >
           <i :class="appStore.isDarkTheme ? 'ri-sun-line' : 'ri-moon-line'" />
-          <span class="theme-label">{{ appStore.isDarkTheme ? '白昼模式' : '夜间模式' }}</span>
+          <span class="theme-label">{{
+            appStore.isDarkTheme ? "白昼模式" : "夜间模式"
+          }}</span>
         </div>
-        <el-dropdown trigger="click" @command="onUserCommand" placement="top-start">
+        <el-dropdown
+          trigger="click"
+          @command="onUserCommand"
+          placement="top-start"
+        >
           <div class="sidebar-user">
             <div class="sidebar-avatar">
-              <img v-if="avatarSrc" :src="avatarSrc" alt="头像" @error="avatarBroken = true" />
+              <img
+                v-if="avatarSrc"
+                :src="avatarSrc"
+                alt="头像"
+                @error="avatarBroken = true"
+              />
               <span v-else class="sidebar-avatar-letter">{{ avatarChar }}</span>
             </div>
             <div class="sidebar-user-info">
-              <span class="sidebar-user-name">{{ userStore.userInfo?.displayName || '用户' }}</span>
+              <span class="sidebar-user-name">{{
+                userStore.userInfo?.displayName || "用户"
+              }}</span>
             </div>
           </div>
           <template #dropdown>
@@ -145,7 +213,12 @@
               <el-dropdown-item command="settings">个人设置</el-dropdown-item>
               <!-- 免登录模式下藏着「退出登录」：点了它，下一次导航又被自动登回来 ——
                    一个只能把人留在原地的按钮不如没有（退出入口随 auth.autoLogin.enabled 一起回退）。 -->
-              <el-dropdown-item v-if="!userStore.autoLoginMode" command="logout" divided>退出登录</el-dropdown-item>
+              <el-dropdown-item
+                v-if="!userStore.autoLoginMode"
+                command="logout"
+                divided
+                >退出登录</el-dropdown-item
+              >
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -161,13 +234,24 @@
       >
         <span class="return-meeting-dot" />
         <span class="return-meeting-text">
-          正在会议中{{ meetingStore.title ? `：${meetingStore.title}` : '' }}
+          正在会议中{{ meetingStore.title ? `：${meetingStore.title}` : "" }}
+          <span class="return-meeting-meta">
+            · 在会 {{ meetingStore.participants.length }} 人
+            <template v-if="awayDurationText">
+              · 离开画面 {{ awayDurationText }}</template
+            >
+          </span>
         </span>
-        <span class="return-meeting-cta">返回会议 <i class="ri-arrow-right-s-line" /></span>
+        <span class="return-meeting-cta"
+          >返回会议 <i class="ri-arrow-right-s-line"
+        /></span>
       </button>
       <div v-if="!userStore.linkSynced" class="link-sync-banner">
-        <i class="ri-error-warning-line" /> 会议服务连接异常：录制与会中状态暂不可用。
-        <span v-if="userStore.linkReason" class="link-sync-reason">{{ userStore.linkReason }}</span>
+        <i class="ri-error-warning-line" />
+        会议服务连接异常：录制与会中状态暂不可用。
+        <span v-if="userStore.linkReason" class="link-sync-reason">{{
+          userStore.linkReason
+        }}</span>
       </div>
       <div class="content-scroll">
         <router-view />
@@ -175,7 +259,11 @@
     </main>
 
     <!-- 手机底栏：会中沉浸时不占高度；入口与侧栏同源，少一层信息即可稳定进出会 -->
-    <nav v-if="isPhone && !immersiveMeeting" class="mobile-tabbar" aria-label="主导航">
+    <nav
+      v-if="isPhone && !immersiveMeeting"
+      class="mobile-tabbar"
+      aria-label="主导航"
+    >
       <button
         v-for="m in mobileTabs"
         :key="m.path"
@@ -195,261 +283,422 @@
     <!-- 设备授权：应用内面板引导；真正取流仍须浏览器放行（无法用自绘 UI 替代系统权限） -->
     <div
       v-if="deviceAuthOpen"
-      class="device-auth-mask"
+      class="modal-overlay show"
       role="presentation"
       @click.self="deviceAuthOpen = false"
     >
-      <div class="device-auth-panel" role="dialog" aria-modal="true" aria-labelledby="device-auth-title">
-        <h3 id="device-auth-title">检测摄像头与麦克风</h3>
-        <p>需要确认本机设备是否可用，以便会中正常开关画面与声音。</p>
-        <ul class="device-auth-list">
-          <li><i class="ri-camera-line" /> 摄像头：用于本地预览与推送画面</li>
-          <li><i class="ri-mic-line" /> 麦克风：用于发言与本地录制</li>
-        </ul>
-        <p class="device-auth-note">点击「允许检测」后开始；若地址栏再次询问，请选择允许。</p>
-        <div class="device-auth-actions">
-          <button type="button" class="device-auth-btn" @click="deviceAuthOpen = false">取消</button>
-          <button type="button" class="device-auth-btn primary" :disabled="deviceBusy" @click="confirmDeviceAuth">
-            {{ deviceBusy ? '检测中…' : '允许检测' }}
+      <div
+        class="modal-box device-auth-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="device-auth-title"
+      >
+        <div class="modal-header">
+          <div class="wt-dlg-head-left">
+            <i class="wt-dlg-icon ri-shield-check-line" />
+            <h3 id="device-auth-title">检测摄像头与麦克风</h3>
+          </div>
+          <button
+            type="button"
+            class="modal-close"
+            aria-label="关闭"
+            @click="deviceAuthOpen = false"
+          >
+            <i class="ri-close-line" />
+          </button>
+        </div>
+        <div class="modal-body device-auth-body">
+          <p class="device-auth-lead">
+            确认本机设备是否可用，以便会中正常开关画面与声音。
+          </p>
+          <ul class="device-auth-list">
+            <li><i class="ri-camera-line" /> 摄像头：用于本地预览与画面推送</li>
+            <li><i class="ri-mic-line" /> 麦克风：用于发言与本地录制</li>
+          </ul>
+          <p class="device-auth-note">
+            点击「允许检测」后开始；若地址栏再次询问，请选择允许。
+          </p>
+        </div>
+        <div class="modal-footer">
+          <button
+            type="button"
+            class="btn-cancel"
+            @click="deviceAuthOpen = false"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            class="btn-confirm"
+            :disabled="deviceBusy"
+            @click="confirmDeviceAuth"
+          >
+            <i v-if="!deviceBusy" class="ri-check-line" />
+            {{ deviceBusy ? "检测中…" : "允许检测" }}
           </button>
         </div>
       </div>
     </div>
 
-    <div v-if="visibleComposeTasks.length" class="compose-float" role="status" aria-live="polite">
-      <div v-for="t in visibleComposeTasks" :key="t.id" class="compose-float-row">
+    <div
+      v-if="visibleComposeTasks.length"
+      class="compose-float"
+      role="status"
+      aria-live="polite"
+    >
+      <div
+        v-for="t in visibleComposeTasks"
+        :key="t.id"
+        class="compose-float-row"
+      >
         <i class="compose-float-icon ri-movie-line" />
         <div class="compose-float-body">
           <div class="compose-float-title">{{ t.label }}</div>
           <div class="compose-float-bar">
-            <span class="compose-float-bar-fill" :style="{ width: `${Math.round((t.ratio || 0) * 100)}%` }" />
+            <span
+              class="compose-float-bar-fill"
+              :style="{ width: `${Math.round((t.ratio || 0) * 100)}%` }"
+            />
           </div>
           <div class="compose-float-meta">{{ composeStateText(t) }}</div>
         </div>
-        <button class="compose-float-cancel" @click="composeStore.cancel(t.id)">取消</button>
+        <button class="compose-float-cancel" @click="composeStore.cancel(t.id)">
+          取消
+        </button>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { assetUrl } from '@/utils/request'
-import { playbackResumePath } from '@/utils/playbackResume'
-import { measuredRateText } from '@/utils/compression'
-import { ensureStoragePersisted } from '@/utils/localRecorder'
-import { ensureRecordingsRecovered } from '@/utils/recordingRecovery'
-import { useUserStore } from '@/store/user'
-import { useMeetingStore } from '@/store/meeting'
-import { useAppStore } from '@/store/app'
-import appIcon from '@/assets/icon.png'
-import { useComposeStore } from '@/store/compose'
-import type { ComposeTaskRecord } from '@/utils/offlineCompose/composeQueue'
-import type { ComposeOutcome } from '@/utils/offlineCompose/engine'
-import { useMediaSettings } from '@/composables/useMediaSettings'
-import { useViewport } from '@/composables/useViewport'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { ElMessage, ElMessageBox } from "element-plus";
+import { assetUrl } from "@/utils/request";
+import { playbackResumePath } from "@/utils/playbackResume";
+import { measuredRateText } from "@/utils/compression";
+import { ensureStoragePersisted } from "@/utils/localRecorder";
+import { ensureRecordingsRecovered } from "@/utils/recordingRecovery";
+import { useUserStore } from "@/store/user";
+import { useMeetingStore } from "@/store/meeting";
+import { useAppStore } from "@/store/app";
+import appIcon from "@/assets/icon.png";
+import { useComposeStore } from "@/store/compose";
+import type { ComposeTaskRecord } from "@/utils/offlineCompose/composeQueue";
+import type { ComposeOutcome } from "@/utils/offlineCompose/engine";
+import { useMediaSettings } from "@/composables/useMediaSettings";
+import { useViewport } from "@/composables/useViewport";
 
-const route = useRoute()
-const router = useRouter()
-const userStore = useUserStore()
-const appStore = useAppStore()
-const meetingStore = useMeetingStore()
-const composeStore = useComposeStore()
-const { isPhone, isTablet, isDesktop } = useViewport()
+const route = useRoute();
+const router = useRouter();
+const userStore = useUserStore();
+const appStore = useAppStore();
+const meetingStore = useMeetingStore();
+const composeStore = useComposeStore();
+const { isPhone, isTablet, isDesktop } = useViewport();
 
 /** 会中页全屏沉浸：不占顶栏/底栏/侧栏，把可视高度全给画面与主控。 */
-const immersiveMeeting = computed(() => meetingStore.inMeeting && route.name === 'InMeeting')
-const drawerOpen = ref(false)
+const immersiveMeeting = computed(
+  () => meetingStore.inMeeting && route.name === "InMeeting",
+);
+const drawerOpen = ref(false);
+const sidebarCollapsed = ref(localStorage.getItem("sidebar.collapsed") === "1");
+
+function toggleSidebar() {
+  sidebarCollapsed.value = !sidebarCollapsed.value;
+  localStorage.setItem("sidebar.collapsed", sidebarCollapsed.value ? "1" : "0");
+}
 
 watch(
   () => route.fullPath,
   () => {
-    drawerOpen.value = false
+    drawerOpen.value = false;
   },
-)
+);
 
 function goMenu(path: string) {
-  drawerOpen.value = false
-  if (route.path !== path) router.push(path)
+  drawerOpen.value = false;
+  if (route.path !== path) router.push(path);
 }
 
 /** 浮标只显示还没跑完的任务：跑完的那条已经用一次性提示说过结果，留着就成了常驻状态条 */
 const visibleComposeTasks = computed(() =>
-  composeStore.tasks.filter((t) => t.state === 'queued' || t.state === 'running'),
-)
+  composeStore.tasks.filter(
+    (t) => t.state === "queued" || t.state === "running",
+  ),
+);
 
 function composeStateText(t: ComposeTaskRecord<ComposeOutcome>): string {
-  if (t.state === 'queued') return '排队中，前面还有事情在跑'
+  if (t.state === "queued") return "排队中，前面还有事情在跑";
   // 收尾那几秒进度已经是 100%，不给一句"正在生成成品"就像卡死在这台电脑上
-  if (t.phase === 'wrap') return '正在生成成品…'
-  const pct = Math.round((t.ratio || 0) * 100)
+  if (t.phase === "wrap") return "正在生成成品…";
+  const pct = Math.round((t.ratio || 0) * 100);
   // 后台合成只报"已到第几秒"，不报"还要多久"：那个数要靠没标定的吞吐算，写出来就是承诺
-  if (t.engine === 'realtime') {
-    const left = Math.max(0, Math.round((t.expectedSec || 0) - t.coveredSec))
-    return `合成中 ${pct}% · 约剩 ${left} 秒`
+  if (t.engine === "realtime") {
+    const left = Math.max(0, Math.round((t.expectedSec || 0) - t.coveredSec));
+    return `合成中 ${pct}% · 约剩 ${left} 秒`;
   }
-  return `合成中 ${pct}% · 已到第 ${Math.round(t.coveredSec || 0)} 秒`
+  return `合成中 ${pct}% · 已到第 ${Math.round(t.coveredSec || 0)} 秒`;
 }
-const { devices, captureIssue, mediaAccess, checkDeviceAccess } = useMediaSettings()
+const { devices, captureIssue, mediaAccess, checkDeviceAccess } =
+  useMediaSettings();
 
 // 进页：已授权则静默刷新设备名；未询问不弹框（显示「待授权」）。点「检测」才请求权限。
-const deviceChecked = ref(false)
-const deviceBusy = ref(false)
-const deviceAuthOpen = ref(false)
+const deviceChecked = ref(false);
+const deviceBusy = ref(false);
+const deviceAuthOpen = ref(false);
 
 async function runDeviceCheck(interactive = false) {
-  if (deviceBusy.value) return
-  deviceBusy.value = true
+  if (deviceBusy.value) return;
+  deviceBusy.value = true;
   try {
-    await checkDeviceAccess({ interactive })
-    deviceChecked.value = true
+    await checkDeviceAccess({ interactive });
+    deviceChecked.value = true;
   } finally {
-    deviceBusy.value = false
+    deviceBusy.value = false;
   }
 }
 
 function openDeviceAuth() {
-  if (deviceBusy.value) return
-  deviceAuthOpen.value = true
+  if (deviceBusy.value) return;
+  deviceAuthOpen.value = true;
 }
 
 async function confirmDeviceAuth() {
-  deviceAuthOpen.value = false
-  await runDeviceCheck(true)
+  deviceAuthOpen.value = false;
+  // 不设超时：浏览器权限弹窗需要用户操作，超时提前出结论会把"还没答复"误报成"未授权"。
+  await runDeviceCheck(true);
+  const s = deviceState.value;
+  if (s.camera.ok && s.mic.ok && s.speaker.ok) {
+    ElMessage.success("设备检测完成：摄像头、麦克风、扬声器均正常");
+    return;
+  }
+  const blocked =
+    !s.camera.ok && !s.mic.ok && mediaAccess.value.camera === "denied";
+  if (blocked) {
+    ElMessage.warning(
+      "摄像头和麦克风未能访问：请点击地址栏左侧的锁形图标设为「允许」；若仍不行，请到 Windows「设置 → 隐私和安全性」开启「允许桌面应用访问摄像头/麦克风」",
+    );
+    return;
+  }
+  const issues: string[] = [];
+  if (!s.camera.ok) issues.push(`摄像头（${s.camera.text}）`);
+  if (!s.mic.ok) issues.push(`麦克风（${s.mic.text}）`);
+  if (!s.speaker.ok) issues.push(`扬声器（${s.speaker.text}）`);
+  ElMessage.warning(`设备检测完成，以下设备需要处理：${issues.join("、")}`);
 }
 
 // label 非空 = 本页已拿到授权证据；否则用 Permissions / 探测结果区分「待授权」与「未授权」。
-function deviceLabel(list: MediaDeviceInfo[], access: 'unknown' | 'granted' | 'denied' | 'prompt') {
-  if (!deviceChecked.value) return '未检测'
-  if (list.some((d) => d.label) || access === 'granted') return '正常'
-  if (list.length === 0) return '未检测到'
-  if (access === 'denied') return '未授权'
-  return '待授权'
+function deviceLabel(
+  list: MediaDeviceInfo[],
+  access: "unknown" | "granted" | "denied" | "prompt",
+) {
+  if (!deviceChecked.value) return "未检测";
+  if (list.some((d) => d.label) || access === "granted") return "正常";
+  if (list.length === 0) return "未检测到";
+  if (access === "denied") return "未授权";
+  return "待授权";
 }
 
 const deviceState = computed(() => ({
   camera: {
     ok:
       !captureIssue.value.camera &&
-      (devices.value.cameras.some((d) => d.label) || mediaAccess.value.camera === 'granted'),
-    text: captureIssue.value.camera || deviceLabel(devices.value.cameras, mediaAccess.value.camera),
+      (devices.value.cameras.some((d) => d.label) ||
+        mediaAccess.value.camera === "granted"),
+    text:
+      captureIssue.value.camera ||
+      deviceLabel(devices.value.cameras, mediaAccess.value.camera),
   },
   mic: {
     ok:
       !captureIssue.value.mic &&
-      (devices.value.microphones.some((d) => d.label) || mediaAccess.value.mic === 'granted'),
-    text: captureIssue.value.mic || deviceLabel(devices.value.microphones, mediaAccess.value.mic),
+      (devices.value.microphones.some((d) => d.label) ||
+        mediaAccess.value.mic === "granted"),
+    text:
+      captureIssue.value.mic ||
+      deviceLabel(devices.value.microphones, mediaAccess.value.mic),
   },
   speaker: {
     ok: devices.value.speakers.length > 0,
-    text: deviceChecked.value ? (devices.value.speakers.length ? '正常' : '未检测到') : '未检测',
+    text: deviceChecked.value
+      ? devices.value.speakers.length
+        ? "正常"
+        : "未检测到"
+      : "未检测",
   },
-}))
+}));
 
 // 「会议信息」是**会中页**的东西，不是"账号在某场会里"的东西：
 // 会中用户切到设置/录制/所有会议时，原型那几页的侧栏底部同样是设备状态卡。
-const showMeetingInfo = computed(() => meetingStore.inMeeting && route.name === 'InMeeting')
+const showMeetingInfo = computed(
+  () => meetingStore.inMeeting && route.name === "InMeeting",
+);
 
 // computed 里的 Date.now() 不是响应依赖，会中时长会停在第一次渲染值；
 // 会中信息卡可见时每秒推一次 nowTick，让时长跟着走。
-const nowTick = ref(Date.now())
-let durationTimer: number | undefined
+const nowTick = ref(Date.now());
+let durationTimer: number | undefined;
 watch(
-  showMeetingInfo,
+  () => showMeetingInfo.value || isAwayFromMeeting.value,
   (on) => {
     if (durationTimer !== undefined) {
-      window.clearInterval(durationTimer)
-      durationTimer = undefined
+      window.clearInterval(durationTimer);
+      durationTimer = undefined;
     }
-    if (!on) return
-    nowTick.value = Date.now()
+    if (!on) return;
+    nowTick.value = Date.now();
     durationTimer = window.setInterval(() => {
-      nowTick.value = Date.now()
-    }, 1000)
+      nowTick.value = Date.now();
+    }, 1000);
   },
   { immediate: true },
-)
+);
 onBeforeUnmount(() => {
-  if (durationTimer !== undefined) window.clearInterval(durationTimer)
-})
+  if (durationTimer !== undefined) window.clearInterval(durationTimer);
+});
+
+const awayStartMs = ref(0);
+const isAwayFromMeeting = computed(
+  () => meetingStore.inMeeting && route.name !== "InMeeting",
+);
+
+watch(
+  isAwayFromMeeting,
+  (away) => {
+    awayStartMs.value = away ? Date.now() : 0;
+  },
+  { immediate: true },
+);
+
+const awayDurationText = computed(() => {
+  void nowTick.value;
+  if (!awayStartMs.value) return "";
+  const sec = Math.max(
+    0,
+    Math.floor((nowTick.value - awayStartMs.value) / 1000),
+  );
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+});
 
 const meetingDurationText = computed(() => {
-  void nowTick.value
-  const started = meetingStore.state?.startedAt
-  if (!started) return '—'
-  const ms = new Date(started).getTime()
-  if (isNaN(ms)) return '—'
-  const total = Math.max(0, Math.floor((nowTick.value - ms) / 1000))
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${pad(Math.floor(total / 3600))}:${pad(Math.floor((total % 3600) / 60))}:${pad(total % 60)}`
-})
+  void nowTick.value;
+  if (meetingStore.participants.length === 0) return "00:00:00";
+  const activeIso = meetingStore.state?.activeStartedAt;
+  const ms = activeIso
+    ? new Date(activeIso).getTime()
+    : meetingStore.joinedAtMs;
+  if (!ms || isNaN(ms)) return "00:00:00";
+  const total = Math.max(0, Math.floor((nowTick.value - ms) / 1000));
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(Math.floor(total / 3600))}:${pad(Math.floor((total % 3600) / 60))}:${pad(total % 60)}`;
+});
 
 onMounted(() => {
   if (userStore.token && !userStore.userInfo) {
-    userStore.fetchUserInfo().catch(() => {})
+    userStore.fetchUserInfo().catch(() => {});
   }
   // 恢复出来的会议 id 可能早已作废（后端重启、会已在别处结束）：先校验再决定挂不挂"已入会"。
-  void meetingStore.validateRestored()
+  void meetingStore.validateRestored();
   // 上一次没点「停止」就关掉的那场：分片其实都在这台设备上，启动时重建回列表（工作 A）。
   // 只在真恢复出东西时说一句，不挂常驻状态条。
   void ensureRecordingsRecovered().then((rows) => {
-    if (rows.length) ElMessage.success('上次未正常结束的录制已恢复到列表')
-  })
+    if (rows.length) ElMessage.success("上次未正常结束的录制已恢复到列表");
+  });
   // D7：顺便把本机录制库标成"别回收"。批不下来不影响录制，但少了它，磁盘吃紧时浏览器会连分片一起清 ——
   // 那时自愈也救不回来（它只收真取得到字节的那一路）。这里不问用户，也不在界面上报状态。
-  void ensureStoragePersisted()
+  void ensureStoragePersisted();
   // 进页静默检测：已授权会刷新设备名；未询问不弹框。
-  void runDeviceCheck(false)
-})
+  void runDeviceCheck(false);
+});
 
 const menus = computed(() => {
   // 「录制会议」在离开列表页之后指向**上次看的那条回放**（续看）。存的是整条地址（含查询串），
   // 所以本机录制的 `?local=` 不会丢；读到脏值就落回列表页（见 utils/playbackResume.ts）。
-  const resumePath = route.name === 'Recordings' ? '' : playbackResumePath()
+  const resumePath = route.name === "Recordings" ? "" : playbackResumePath();
   return [
-    { path: '/', active: ['/', '/meetings'], icon: 'ri-clipboard-line', label: '会议管理', short: '首页' },
-    { path: meetingStore.inMeeting ? `/meeting/${meetingStore.meetingId}` : '/meeting-empty', active: ['/meeting/*', '/meeting-empty'], icon: 'ri-vidicon-line', label: '卫通会议', short: '会议', badge: meetingStore.inMeeting ? '已入会' : '' },
-    { path: '/all-meetings', active: ['/all-meetings'], icon: 'ri-calendar-line', label: '所有会议', short: '全部' },
-    { path: resumePath || '/recordings', active: ['/recordings', '/recordings/*'], icon: 'ri-clapperboard-line', label: '录制会议', short: '录制' },
-    { path: '/settings', active: ['/settings'], icon: 'ri-settings-3-line', label: '设置', short: '设置' },
-  ]
-})
+    {
+      path: "/",
+      active: ["/", "/meetings"],
+      icon: "ri-clipboard-line",
+      label: "会议管理",
+      short: "首页",
+    },
+    {
+      path: meetingStore.inMeeting
+        ? `/meeting/${meetingStore.meetingId}`
+        : "/meeting-empty",
+      active: ["/meeting/*", "/meeting-empty"],
+      icon: "ri-vidicon-line",
+      label: "卫通会议",
+      short: "会议",
+      badge: meetingStore.inMeeting ? "已入会" : "",
+    },
+    {
+      path: "/all-meetings",
+      active: ["/all-meetings"],
+      icon: "ri-calendar-line",
+      label: "所有会议",
+      short: "全部",
+    },
+    {
+      path: resumePath || "/recordings",
+      active: ["/recordings", "/recordings/*"],
+      icon: "ri-clapperboard-line",
+      label: "录制会议",
+      short: "录制",
+    },
+    {
+      path: "/settings",
+      active: ["/settings"],
+      icon: "ri-settings-3-line",
+      label: "系统设置",
+      short: "设置",
+    },
+  ];
+});
 
 /** 底栏四格：首页 / 会议 / 录制 / 设置；「全部」只在侧栏抽屉，避免五个标签挤成一条。 */
 const mobileTabs = computed(() => {
-  const all = menus.value
-  return [all[0], all[1], all[3], all[4]].filter(Boolean)
-})
+  const all = menus.value;
+  return [all[0], all[1], all[3], all[4]].filter(Boolean);
+});
 
-const avatarChar = computed(() => (userStore.userInfo?.displayName || '用').charAt(0))
+const avatarChar = computed(() =>
+  (userStore.userInfo?.displayName || "用").charAt(0),
+);
 
-const avatarBroken = ref(false)
+const avatarBroken = ref(false);
 const avatarSrc = computed(() => {
-  const a = userStore.userInfo?.avatar
-  return a && !avatarBroken.value ? assetUrl(a) : ''
-})
+  const a = userStore.userInfo?.avatar;
+  return a && !avatarBroken.value ? assetUrl(a) : "";
+});
 
 function isActive(menu: { active: string[] }) {
   // '/*' 结尾按前缀命中（会中/会前页都算"卫通会议"），其余按整段路径精确命中。
-  return menu.active.some((p) => (p.endsWith('/*') ? route.path.startsWith(p.slice(0, -1)) : route.path === p))
+  return menu.active.some((p) =>
+    p.endsWith("/*") ? route.path.startsWith(p.slice(0, -1)) : route.path === p,
+  );
 }
 
 async function onUserCommand(cmd: string) {
-  if (cmd === 'settings') {
-    router.push('/settings')
-  } else if (cmd === 'logout') {
+  if (cmd === "settings") {
+    router.push("/settings");
+  } else if (cmd === "logout") {
     try {
-      await ElMessageBox.confirm('确定退出登录？', '提示', { type: 'warning' })
+      await ElMessageBox.confirm("确定退出登录？", "提示", { type: "warning" });
     } catch {
-      return
+      return;
     }
-    await userStore.logout()
+    await userStore.logout();
     // 合成队列是内存态、不跟着身份走：不清的话下一个人登录上来能在浮标上
     // 看见并下载上一个人合成的那一场
-    composeStore.forgetAll()
-    router.push('/login')
+    composeStore.forgetAll();
+    router.push("/login");
   }
 }
 </script>
@@ -475,21 +724,59 @@ async function onUserCommand(cmd: string) {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  transition: width 0.34s cubic-bezier(0.32, 0.72, 0, 1);
+  overflow: hidden;
+  will-change: width;
 }
 
 .sidebar-header {
   height: 64px;
-  padding: 0 18px;
+  padding: 0 14px 0 18px;
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: space-between;
+  gap: 8px;
   flex-shrink: 0;
+  cursor: pointer;
+  transition: padding 0.34s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.sidebar-collapse-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 17px;
+  transition:
+    background 0.18s ease,
+    color 0.18s ease,
+    border-color 0.18s ease;
+}
+.sidebar-collapse-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-soft);
 }
 
 .sidebar-logo {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+  max-width: 196px;
+  opacity: 1;
+  transition:
+    max-width 0.34s cubic-bezier(0.32, 0.72, 0, 1),
+    opacity 0.22s ease,
+    gap 0.34s cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 /* 只展示圆形徽章本体：裁掉外圈暗底/底部纹理，不加底板光晕 */
@@ -523,6 +810,15 @@ async function onUserCommand(cmd: string) {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  max-width: 150px;
+  opacity: 1;
+  transform: translateX(0);
+  transition:
+    max-width 0.34s cubic-bezier(0.32, 0.72, 0, 1),
+    opacity 0.2s ease,
+    transform 0.34s cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .sidebar-logo-text {
@@ -530,6 +826,7 @@ async function onUserCommand(cmd: string) {
   font-weight: 700;
   color: var(--text-primary);
   line-height: 1.2;
+  white-space: nowrap;
 }
 
 .sidebar-subtitle {
@@ -539,6 +836,7 @@ async function onUserCommand(cmd: string) {
   font-weight: 400;
   color: var(--text-muted);
   line-height: 1.2;
+  white-space: nowrap;
 }
 
 .sidebar-nav {
@@ -599,7 +897,8 @@ async function onUserCommand(cmd: string) {
 }
 
 .device-status {
-  overflow-y: auto; min-height: 0;
+  overflow-y: auto;
+  min-height: 0;
   margin: 0 16px 12px;
   padding: 14px;
   background: var(--bg-hover);
@@ -615,6 +914,20 @@ async function onUserCommand(cmd: string) {
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 10px;
+}
+.device-auth-modal {
+  width: min(440px, 94vw);
+}
+.device-auth-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.device-auth-lead {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text-secondary);
 }
 .device-auth-mask {
   position: fixed;
@@ -661,7 +974,9 @@ async function onUserCommand(cmd: string) {
   gap: 8px;
   line-height: 1.5;
 }
-.device-auth-list li + li { margin-top: 8px; }
+.device-auth-list li + li {
+  margin-top: 8px;
+}
 .device-auth-note {
   margin: 0 0 16px !important;
   font-size: 12px !important;
@@ -686,7 +1001,10 @@ async function onUserCommand(cmd: string) {
   border-color: var(--primary);
   color: #fff;
 }
-.device-auth-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.device-auth-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 
 /* 「重新检测」键：颜色全部取既有 token，不引新色值（第 20 项的口径纪律） */
 .device-check-btn {
@@ -842,6 +1160,7 @@ async function onUserCommand(cmd: string) {
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
+  padding: 0;
 }
 
 .link-sync-banner {
@@ -849,7 +1168,7 @@ async function onUserCommand(cmd: string) {
   padding: 8px 24px;
   background: rgba(255, 152, 0, 0.1);
   border-bottom: 1px solid rgba(255, 152, 0, 0.3);
-  color: var(--orange, #FF9800);
+  color: var(--orange, #ff9800);
   font-size: 13px;
 }
 
@@ -866,13 +1185,18 @@ async function onUserCommand(cmd: string) {
   min-height: 0;
 }
 
-/* 首页：外层不滚，把滚动留给「近期会议」面板 */
-.content-scroll:has(> .home-page) {
+/* 首页与会中页：外层不滚，画面自适应视口且底部控制栏置底 */
+.content-scroll:has(> .home-page),
+.content-scroll:has(> .m-app-home),
+.content-scroll:has(> .im-root) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  padding: 0;
 }
-.content-scroll:has(> .home-page) > .home-page {
+.content-scroll:has(> .home-page) > .home-page,
+.content-scroll:has(> .m-app-home) > .m-app-home,
+.content-scroll:has(> .im-root) > .im-root {
   flex: 1;
   min-height: 0;
 }
@@ -963,6 +1287,115 @@ async function onUserCommand(cmd: string) {
   display: none;
 }
 
+/* 桌面端手动收起：iOS 曲线丝滑过渡，避免文字换行和跳变 */
+.app-shell.is-desktop .nav-item,
+.app-shell.is-desktop .sidebar-nav,
+.app-shell.is-desktop .sidebar-footer,
+.app-shell.is-desktop .sidebar-theme-toggle,
+.app-shell.is-desktop .sidebar-user {
+  transition:
+    padding 0.34s cubic-bezier(0.32, 0.72, 0, 1),
+    gap 0.34s cubic-bezier(0.32, 0.72, 0, 1),
+    background-color 0.18s ease,
+    color 0.18s ease;
+}
+.app-shell.is-desktop .nav-item-label,
+.app-shell.is-desktop .nav-item-badge,
+.app-shell.is-desktop .theme-label,
+.app-shell.is-desktop .sidebar-user-info {
+  white-space: nowrap;
+  overflow: hidden;
+  max-width: 160px;
+  opacity: 1;
+  transition:
+    max-width 0.34s cubic-bezier(0.32, 0.72, 0, 1),
+    opacity 0.2s ease;
+}
+.app-shell.is-desktop .device-status {
+  max-height: 280px;
+  opacity: 1;
+  transition:
+    max-height 0.34s cubic-bezier(0.32, 0.72, 0, 1),
+    opacity 0.22s ease,
+    margin 0.34s cubic-bezier(0.32, 0.72, 0, 1),
+    padding 0.34s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.app-shell.is-desktop.sidebar-collapsed .sidebar {
+  width: 68px;
+}
+.app-shell.is-desktop.sidebar-collapsed .sidebar-logo {
+  max-width: 0;
+  opacity: 0;
+  gap: 0;
+  pointer-events: none;
+}
+.app-shell.is-desktop.sidebar-collapsed .sidebar-brand-text {
+  max-width: 0;
+  opacity: 0;
+  transform: translateX(-8px);
+}
+.app-shell.is-desktop.sidebar-collapsed .nav-item-label,
+.app-shell.is-desktop.sidebar-collapsed .nav-item-badge,
+.app-shell.is-desktop.sidebar-collapsed .theme-label,
+.app-shell.is-desktop.sidebar-collapsed .sidebar-user-info {
+  max-width: 0;
+  opacity: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  pointer-events: none;
+}
+.app-shell.is-desktop.sidebar-collapsed .device-status {
+  max-height: 0;
+  opacity: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  pointer-events: none;
+}
+.app-shell.is-desktop.sidebar-collapsed .sidebar-header {
+  justify-content: center;
+  padding: 0 8px;
+  gap: 0;
+}
+.app-shell.is-desktop.sidebar-collapsed .sidebar-nav {
+  padding: 14px 8px;
+}
+.app-shell.is-desktop.sidebar-collapsed .nav-item {
+  justify-content: center;
+  padding: 0;
+  gap: 0;
+  height: 44px;
+}
+.app-shell.is-desktop.sidebar-collapsed .sidebar-footer {
+  padding: 10px 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.app-shell.is-desktop.sidebar-collapsed .sidebar-footer :deep(.el-dropdown) {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+.app-shell.is-desktop.sidebar-collapsed .sidebar-theme-toggle {
+  width: 44px;
+  height: 40px;
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+  margin-bottom: 0;
+}
+.app-shell.is-desktop.sidebar-collapsed .sidebar-user {
+  width: 44px;
+  height: 44px;
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+}
+
 /* 平板：264px 侧栏在 8~11 寸横屏吃掉近三分之一宽度 → 收成图标栏，把宽度还给画面。 */
 .app-shell.is-tablet .sidebar {
   width: 68px;
@@ -975,13 +1408,29 @@ async function onUserCommand(cmd: string) {
 .app-shell.is-tablet .sidebar-user-info {
   display: none;
 }
-.app-shell.is-tablet .sidebar-header { justify-content: center; padding: 0 8px; }
-.app-shell.is-tablet .sidebar-logo { gap: 0; }
-.app-shell.is-tablet .sidebar-nav { padding: 14px 8px; }
-.app-shell.is-tablet .nav-item { justify-content: center; padding: 0; gap: 0; height: 44px; }
-.app-shell.is-tablet .sidebar-footer { padding: 10px 6px; }
+.app-shell.is-tablet .sidebar-header {
+  justify-content: center;
+  padding: 0 8px;
+}
+.app-shell.is-tablet .sidebar-logo {
+  gap: 0;
+}
+.app-shell.is-tablet .sidebar-nav {
+  padding: 14px 8px;
+}
+.app-shell.is-tablet .nav-item {
+  justify-content: center;
+  padding: 0;
+  gap: 0;
+  height: 44px;
+}
+.app-shell.is-tablet .sidebar-footer {
+  padding: 10px 6px;
+}
 .app-shell.is-tablet .sidebar-theme-toggle,
-.app-shell.is-tablet .sidebar-user { justify-content: center; }
+.app-shell.is-tablet .sidebar-user {
+  justify-content: center;
+}
 
 /* 手机：侧栏改抽屉；顶栏 + 底栏；会中全沉浸不占 chrome */
 .app-shell.is-phone {
@@ -994,6 +1443,8 @@ async function onUserCommand(cmd: string) {
   gap: 8px;
   flex-shrink: 0;
   height: calc(var(--mobile-top-h) + var(--safe-top));
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
   padding: var(--safe-top) 12px 0;
   background: var(--bg-sidebar);
   border-bottom: 1px solid var(--border-soft);
@@ -1009,7 +1460,9 @@ async function onUserCommand(cmd: string) {
   font-size: 20px;
   cursor: pointer;
 }
-.mobile-top-btn:active { background: var(--bg-hover); }
+.mobile-top-btn:active {
+  background: var(--bg-hover);
+}
 .mobile-top-brand {
   display: flex;
   align-items: center;
@@ -1054,23 +1507,40 @@ async function onUserCommand(cmd: string) {
   padding: calc(12px + var(--safe-top)) 14px 12px;
   height: auto;
 }
-.app-shell.is-phone .drawer-close { display: inline-flex; align-items: center; justify-content: center; }
+.app-shell.is-phone .drawer-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 .app-shell.is-phone .sidebar-brand-text {
   display: flex;
 }
-.app-shell.is-phone .device-status { display: block; }
+.app-shell.is-phone .device-status {
+  display: block;
+}
 .app-shell.is-phone .theme-label,
-.app-shell.is-phone .nav-item-label { display: block; }
-.app-shell.is-phone .sidebar-user-info { display: flex; }
-.app-shell.is-phone .nav-item-badge { display: inline-block; }
+.app-shell.is-phone .nav-item-label {
+  display: block;
+}
+.app-shell.is-phone .sidebar-user-info {
+  display: flex;
+}
+.app-shell.is-phone .nav-item-badge {
+  display: inline-block;
+}
 .app-shell.is-phone .nav-item {
   justify-content: flex-start;
   padding: 0 16px;
   gap: 12px;
   height: 48px;
 }
-.app-shell.is-phone .sidebar-nav { padding: 12px 14px; }
-.app-shell.is-phone .sidebar-footer { padding: 14px; padding-bottom: calc(14px + var(--safe-bottom)); }
+.app-shell.is-phone .sidebar-nav {
+  padding: 12px 14px;
+}
+.app-shell.is-phone .sidebar-footer {
+  padding: 14px;
+  padding-bottom: calc(14px + var(--safe-bottom));
+}
 
 .app-shell.is-phone .main-content {
   flex: 1;
@@ -1108,8 +1578,14 @@ async function onUserCommand(cmd: string) {
   min-height: var(--mobile-nav-h);
   -webkit-tap-highlight-color: transparent;
 }
-.mobile-tab > i { font-size: 20px; line-height: 1; }
-.mobile-tab.active { color: var(--primary-text); font-weight: 600; }
+.mobile-tab > i {
+  font-size: 20px;
+  line-height: 1;
+}
+.mobile-tab.active {
+  color: var(--primary-text);
+  font-weight: 600;
+}
 .mobile-tab-dot {
   position: absolute;
   top: 8px;

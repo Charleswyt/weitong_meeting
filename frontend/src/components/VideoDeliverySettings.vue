@@ -1,70 +1,81 @@
 <template>
   <div class="delivery" :data-delivery="kind" aria-label="视频传输设置">
-    <div class="source-switch" role="group" aria-label="配置的视频源">
-      <button
-        v-for="source in rows"
-        :key="source.kind"
-        type="button"
-        :data-source="source.kind"
-        :aria-pressed="source.kind === kind"
-        @click="kind = source.kind"
-      >
-        {{ source.label }}
-      </button>
+    <div class="delivery-top">
+      <div class="source-switch" role="group" aria-label="配置的视频源">
+        <button
+          v-for="source in rows"
+          :key="source.kind"
+          type="button"
+          :data-source="source.kind"
+          :aria-pressed="source.kind === kind"
+          @click="kind = source.kind"
+        >
+          {{ source.label }}
+        </button>
+      </div>
+      <div class="actions">
+        <span role="status">{{ row.status }}</span>
+        <el-button
+          type="primary"
+          size="default"
+          :loading="row.busy"
+          :disabled="!account"
+          @click="apply(row)"
+          >应用设置</el-button
+        >
+      </div>
     </div>
-    <label class="field"
-      ><span>传输方式</span>
-      <select
-        v-model="row.value.transportMode"
-        data-field="mode"
-        :disabled="row.busy"
-        @change="row.status = ''"
-      >
-        <option value="original">原始转发</option>
-        <option value="cloud">压缩转发</option>
-      </select>
-    </label>
-    <template v-if="row.value.transportMode === 'cloud'">
+    <div class="delivery-fields">
       <label class="field"
         ><span
-          >压缩策略<small>{{ hints[row.value.encodingStrategy] }}</small></span
+          >传输方式<small>{{
+            row.value.transportMode === "original"
+              ? "直接转发原始画面，延迟最低；若带宽受限可切至压缩转发。"
+              : "由云端按目标码率与策略二次压缩，节省下行带宽。"
+          }}</small></span
         >
         <select
-          v-model="row.value.encodingStrategy"
-          data-field="strategy"
+          v-model="row.value.transportMode"
+          data-field="mode"
           :disabled="row.busy"
           @change="row.status = ''"
         >
-          <option v-for="s in strategies" :key="s.value" :value="s.value">
-            {{ s.label }}
-          </option>
+          <option value="original">原始转发</option>
+          <option value="cloud">压缩转发</option>
         </select>
       </label>
-      <label class="field"
-        ><span>云端目标码率<small>20 至 6000 kbps</small></span>
-        <span class="bitrate"
-          ><input
-            v-model.number="row.value.targetBitrateKbps"
-            data-field="target"
-            type="number"
-            min="20"
-            max="6000"
-            step="1"
+      <template v-if="row.value.transportMode === 'cloud'">
+        <label class="field"
+          ><span
+            >压缩策略<small>{{ hints[row.value.encodingStrategy] }}</small></span
+          >
+          <select
+            v-model="row.value.encodingStrategy"
+            data-field="strategy"
             :disabled="row.busy"
-            @input="row.status = ''"
-          /><span>kbps</span></span
-        >
-      </label>
-    </template>
-    <div class="actions">
-      <span role="status">{{ row.status }}</span>
-      <el-button
-        type="primary"
-        :loading="row.busy"
-        :disabled="!account"
-        @click="apply(row)"
-        >应用设置</el-button
-      >
+            @change="row.status = ''"
+          >
+            <option v-for="s in strategies" :key="s.value" :value="s.value">
+              {{ s.label }}
+            </option>
+          </select>
+        </label>
+        <label class="field"
+          ><span>云端目标码率<small>20 至 6000 kbps</small></span>
+          <span class="bitrate"
+            ><input
+              v-model.number="row.value.targetBitrateKbps"
+              data-field="target"
+              type="number"
+              min="20"
+              max="6000"
+              step="1"
+              :disabled="row.busy"
+              @input="row.status = ''"
+            /><span>kbps</span></span
+          >
+        </label>
+      </template>
     </div>
   </div>
 </template>
@@ -138,12 +149,26 @@ async function apply(row: (typeof rows)[number]) {
 .delivery {
   color: var(--text-primary);
   font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.delivery-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.delivery-fields {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border-soft);
 }
 .source-switch {
   display: inline-flex;
   padding: 3px;
   gap: 2px;
-  margin: 4px 0;
   border-radius: 10px;
   background: var(--bg-input);
 }

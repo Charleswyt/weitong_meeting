@@ -88,8 +88,10 @@ type StreamVo struct {
 
 type MeetingStateVo struct {
 	MeetingId        int64            `json:"meetingId"`
+	Title            string           `json:"title,omitempty"`
 	Status           string           `json:"status"`
 	StartedAt        string           `json:"startedAt"`
+	ActiveStartedAt  string           `json:"activeStartedAt,omitempty"`
 	ServerTime       int64            `json:"serverTime"`
 	ClockDriftMs     float64          `json:"clockDriftMs"`
 	HostId           string           `json:"hostId"`

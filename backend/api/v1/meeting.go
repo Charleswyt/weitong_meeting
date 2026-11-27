@@ -393,3 +393,26 @@ type MeetingVo struct {
 	// HasMinutes：是否有可一键打开的会议纪要（当前产品未接纪要时恒 false）。
 	HasMinutes bool `json:"hasMinutes"`
 }
+
+// MeetingRenameReq 会中修改会议名称：主持人直接生效，其他参会人向主持人发起审批。
+type MeetingRenameReq struct {
+	g.Meta `path:"/meetings/{id}/title" method:"post" tags:"会议"`
+	Id     int64  `json:"id"`
+	Title  string `json:"title" v:"required|length:1,100#请输入会议名称|会议名称长度不能超过100个字符"`
+}
+
+// MeetingRenameDecisionReq 主持人审批会中改名申请。
+type MeetingRenameDecisionReq struct {
+	g.Meta    `path:"/meetings/{id}/title-requests/{requestId}" method:"post" tags:"会议"`
+	Id        int64  `json:"id"`
+	RequestId string `json:"requestId"`
+	Approve   bool   `json:"approve"`
+}
+
+// MeetingRenameSelfReq 会中修改自己的显示名称：scope=session 仅本场会议（退出重进保持），scope=permanent 同步改账号显示名。
+type MeetingRenameSelfReq struct {
+	g.Meta      `path:"/meetings/{id}/display-name" method:"post" tags:"会议"`
+	Id          int64  `json:"id"`
+	DisplayName string `json:"displayName" v:"required|length:1,40#请输入显示名称|显示名称长度不能超过40个字符"`
+	Scope       string `json:"scope" v:"required|in:session,permanent#请选择修改范围|修改范围仅支持 session 或 permanent"`
+}

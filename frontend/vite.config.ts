@@ -52,6 +52,7 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    // 生产包默认关闭 sourcemap，避免安全检测报告前端源码泄露
+    sourcemap: false,
   },
 })

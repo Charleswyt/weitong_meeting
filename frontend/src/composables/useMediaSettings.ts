@@ -64,7 +64,7 @@ async function queryMediaPermission(name: 'camera' | 'microphone'): Promise<'gra
 }
 
 /** 短暂 getUserMedia 再立刻停轨：刷新设备 label；已授权时不弹框，未授权时仅在 interactive 时弹。 */
-async function probeTrack(kind: 'video' | 'audio'): Promise<'ok' | 'denied' | 'missing' | 'busy' | 'fail'> {
+async function probeTrack(kind: 'video' | 'audio'): Promise<'ok' | 'denied' | 'system' | 'missing' | 'busy' | 'fail'> {
   if (!navigator.mediaDevices?.getUserMedia) return 'fail'
   try {
     const stream = await navigator.mediaDevices.getUserMedia(
@@ -74,7 +74,11 @@ async function probeTrack(kind: 'video' | 'audio'): Promise<'ok' | 'denied' | 'm
     return 'ok'
   } catch (e: any) {
     const name = e?.name as string
-    if (name === 'NotAllowedError' || name === 'SecurityError') return 'denied'
+    if (name === 'NotAllowedError' || name === 'SecurityError') {
+      // Chromium 在 Windows「隐私 → 摄像头/麦克风 → 允许桌面应用访问」关闭时，报的是 "Permission denied by system"。
+      // 与浏览器站点权限被禁分开，给用户的处理办法不同。
+      return /system/i.test(String(e?.message || '')) ? 'system' : 'denied'
+    }
     if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'missing'
     if (name === 'NotReadableError' || name === 'AbortError') return 'busy'
     return 'fail'
@@ -220,6 +224,9 @@ export function useMediaSettings() {
     }
 
     // 仅「已授权」或用户点检测时取流：未询问时进页不弹框；Permissions API 不可用时也等用户点检测。
+    if (interactive) {
+      captureIssue.value = { camera: '', mic: '' }
+    }
     const probeCam = interactive || camQ === 'granted'
     const probeMic = interactive || micQ === 'granted'
 
@@ -228,6 +235,10 @@ export function useMediaSettings() {
       const r = await probeTrack('video')
       if (r === 'ok') mediaAccess.value = { ...mediaAccess.value, camera: 'granted' }
       else if (r === 'denied') mediaAccess.value = { ...mediaAccess.value, camera: 'denied' }
+      else if (r === 'system') {
+        mediaAccess.value = { ...mediaAccess.value, camera: 'denied' }
+        captureIssue.value = { ...captureIssue.value, camera: '系统已禁止' }
+      }
       else if (r === 'busy') captureIssue.value = { ...captureIssue.value, camera: '被占用' }
       else if (r === 'missing') captureIssue.value = { ...captureIssue.value, camera: '未检测到' }
     }
@@ -235,6 +246,10 @@ export function useMediaSettings() {
       const r = await probeTrack('audio')
       if (r === 'ok') mediaAccess.value = { ...mediaAccess.value, mic: 'granted' }
       else if (r === 'denied') mediaAccess.value = { ...mediaAccess.value, mic: 'denied' }
+      else if (r === 'system') {
+        mediaAccess.value = { ...mediaAccess.value, mic: 'denied' }
+        captureIssue.value = { ...captureIssue.value, mic: '系统已禁止' }
+      }
       else if (r === 'busy') captureIssue.value = { ...captureIssue.value, mic: '被占用' }
       else if (r === 'missing') captureIssue.value = { ...captureIssue.value, mic: '未检测到' }
     }

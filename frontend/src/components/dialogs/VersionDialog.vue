@@ -1,12 +1,26 @@
 <template>
   <el-dialog
     :model-value="modelValue"
-    title="版本更新日志"
     width="560px"
     class="vd-dialog"
+    :show-close="false"
     align-center
     @update:model-value="$emit('update:modelValue', $event)"
   >
+    <template #header>
+      <div class="wt-dlg-head-left">
+        <i class="wt-dlg-icon ri-sparkling-line" />
+        <h3 class="el-dialog__title">版本更新日志</h3>
+      </div>
+      <button
+        type="button"
+        class="modal-close"
+        aria-label="关闭"
+        @click="$emit('update:modelValue', false)"
+      >
+        <i class="ri-close-line" />
+      </button>
+    </template>
     <!-- 头部只放"现在是什么版本"，历史版本在下面按倒序排；
          不在这里重复列条目 —— 最新那一版在列表里已经默认展开了。 -->
     <div class="vd-head">
@@ -17,7 +31,7 @@
         <span class="vd-date">{{ businessDayKey(current.date) }}</span>
       </div>
       <span v-if="buildDate" class="vd-build">构建于 {{ buildDate }}</span>
-      <span v-else class="vd-build vd-dev">开发态（未注入构建信息）</span>
+      <span v-else class="vd-build vd-dev">Beta 版</span>
     </div>
 
     <div class="vd-body">
@@ -44,6 +58,16 @@
         </div>
       </div>
     </div>
+
+    <template #footer>
+      <button
+        type="button"
+        class="btn-confirm"
+        @click="$emit('update:modelValue', false)"
+      >
+        我知道了
+      </button>
+    </template>
   </el-dialog>
 </template>
 

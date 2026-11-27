@@ -855,6 +855,16 @@ func (s *MeetingService) BackfillStartedAt(ctx context.Context, id int64, starte
 		Data(do.MeetingAppointment{StartedAt: startedAt}).Update()
 }
 
+// UpdateTitle 更新本系统会议的标题（会中改名或审批通过后落库）。
+func (s *MeetingService) UpdateTitle(ctx context.Context, id int64, title string) error {
+	if id <= 0 {
+		return nil
+	}
+	_, err := dao.MeetingAppointment.Ctx(ctx).Where(do.MeetingAppointment{Id: id}).
+		Data(do.MeetingAppointment{Title: strings.TrimSpace(title)}).Update()
+	return err
+}
+
 func boolToInt(v bool) int {
 	if v {
 		return 1
