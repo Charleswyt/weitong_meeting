@@ -71,7 +71,9 @@ class App:
         self.cfg = cfg
         self.root = Path(cfg["data"])
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.vault = Vault(self.root / "recordings", base64.b64decode(cfg["key"], validate=True))
+        self.vault = Vault(
+            self.root / "recordings", base64.b64decode(cfg["key"], validate=True)
+        )
         self.models = Models(cfg["models"])
         self.inference = threading.BoundedSemaphore(4)
         self.exports = threading.BoundedSemaphore(2)
@@ -80,7 +82,9 @@ class App:
 
     @contextlib.contextmanager
     def db(self):
-        with contextlib.closing(sqlite3.connect(self.root / "assistant.db", timeout=10)) as c:
+        with contextlib.closing(
+            sqlite3.connect(self.root / "assistant.db", timeout=10)
+        ) as c:
             c.row_factory = sqlite3.Row
             with c:
                 yield c
@@ -106,10 +110,12 @@ class App:
         )
         return state
 
-    def access(self, mid, user, external=""):
+    def access(self, mid, user, external="", *, allow_offline_stop=False):
         uid = user["id"]
         with contextlib.closing(
-            sqlite3.connect(Path(self.cfg["meetings"]).as_uri() + "?mode=ro", uri=True, timeout=3)
+            sqlite3.connect(
+                Path(self.cfg["meetings"]).as_uri() + "?mode=ro", uri=True, timeout=3
+            )
         ) as c:
             c.row_factory = sqlite3.Row
             lookup = (
@@ -137,7 +143,9 @@ class App:
                     mid = row["ID"]
             if row:
                 number = str(
-                    row["THIRD_PARTY_MEETING_NUMBER"] or row["THIRD_PARTY_MEETING_ID"] or ""
+                    row["THIRD_PARTY_MEETING_NUMBER"]
+                    or row["THIRD_PARTY_MEETING_ID"]
+                    or ""
                 )
                 host = row["CREATOR_ID"] == uid
                 title = row["TITLE"]
@@ -163,7 +171,14 @@ class App:
                         (number, uid),
                     ).fetchone()
                 )
-        room = self.activity()["rooms"].get(number, {})
+        try:
+            room = self.activity()["rooms"].get(number, {})
+        except Problem as exc:
+            if not allow_offline_stop or exc.status != 503:
+                raise
+            # Losing the roster must not prevent an authenticated organizer from
+            # stopping their recording. Never use this fallback to start a reader.
+            room = {}
         member = next(
             (
                 m
@@ -187,7 +202,10 @@ class App:
         )
         with self.db() as c:
             if organizer:
-                c.execute("insert or ignore into meeting_organizers values(?,?)", (mid, organizer))
+                c.execute(
+                    "insert or ignore into meeting_organizers values(?,?)",
+                    (mid, organizer),
+                )
             elif not row:
                 known = c.execute(
                     "select uid from meeting_organizers where meeting=?", (mid,)
@@ -227,18 +245,25 @@ class App:
                     "insert or replace into personal_terms values(?,?)",
                     (uid, json.dumps(terms, ensure_ascii=False)),
                 )
-            row = c.execute("select terms from personal_terms where uid=?", (uid,)).fetchone()
+            row = c.execute(
+                "select terms from personal_terms where uid=?", (uid,)
+            ).fetchone()
         return {"terms": {**DEFAULT_TERMS, **(json.loads(row[0]) if row else {})}}
 
     @staticmethod
     def can_export(row, a):
         return (
-            a["uid"] == row["capture_host"] if row["capture_host"] is not None else a["host"]
+            a["uid"] == row["capture_host"]
+            if row["capture_host"] is not None
+            else a["host"]
         ) or (
             a["history"]
             and (
                 row["audience"] == "attendees"
-                or (row["audience"] == "selected" and a["uid"] in json.loads(row["allowed"]))
+                or (
+                    row["audience"] == "selected"
+                    and a["uid"] in json.loads(row["allowed"])
+                )
             )
         )
 
@@ -246,6 +271,8 @@ class App:
         mid = a["id"]
         uid = a["uid"]
         with self.db() as c:
+            # Consent and the active capture must come from the same snapshot.
+            c.execute("begin")
             member_id = (a["member"] or {}).get("id", "")
             consent = c.execute(
                 "select cc.kinds from capture_consent cc join captures r on r.id=cc.capture "
@@ -254,12 +281,26 @@ class App:
             ).fetchone()
             viewers = {
                 r[0]
-                for r in c.execute("select member from caption_viewers where meeting=?", (mid,))
+                for r in c.execute(
+                    "select member from caption_viewers where meeting=?", (mid,)
+                )
             }
             managed = [
-                dict(id=r["id"], at=r["at"], status=r["status"], users=json.loads(r["allowed"]))
+                dict(
+                    id=r["id"],
+                    at=r["at"],
+                    status=r["status"],
+                    users=json.loads(r["allowed"]),
+                    endedAt=r["ended_at"],
+                    finishReason=r["reason"],
+                    finalizing=r["status"] != "running" and bool(r["writing"]),
+                    readyFiles=r["ready_files"],
+                )
                 for r in c.execute(
-                    "select r.* from captures r join capture_hosts h on h.capture=r.id "
+                    "select r.*, e.at ended_at, e.reason, exists(select 1 from files f where "
+                    "f.capture=r.id and f.status='writing') writing, (select count(*) from files f where "
+                    "f.capture=r.id and f.status='ready') ready_files from captures r "
+                    "join capture_hosts h on h.capture=r.id left join capture_finish e on e.capture=r.id "
                     "where r.meeting=? and h.uid=? order by r.at desc",
                     (mid, uid),
                 )
@@ -277,25 +318,43 @@ class App:
                 query = "select id,uid,raw,text,lang,speaker,speaker_id,attribution,at from captions where meeting=? and id>? order by id limit 100"
                 captions = [dict(r) for r in c.execute(query, (mid, after))]
             minutes = (
-                c.execute("select revision,body,at from minutes where meeting=?", (mid,)).fetchone()
+                c.execute(
+                    "select revision,body,at from minutes where meeting=?", (mid,)
+                ).fetchone()
                 if has and a["ended"]
                 else None
             )
             running = c.execute(
-                "select id,audience,at from captures where meeting=? and status='running'", (mid,)
+                "select id,audience,at from captures where meeting=? and status='running'",
+                (mid,),
             ).fetchone()
+            latest = (
+                c.execute(
+                    "select id from captures where meeting=? order by at desc,rowid desc limit 1",
+                    (mid,),
+                ).fetchone()
+                if a["host"]
+                else None
+            )
             files = []
             if has:
                 for r in c.execute(
-                    "select f.id,f.kind,f.owner,f.status,f.bytes,f.at,c.audience,c.allowed,h.uid capture_host from files f join captures c on c.id=f.capture left join capture_hosts h on h.capture=c.id where f.meeting=? and f.status in ('ready','writing') order by f.at desc",
+                    "select f.id,f.capture,f.kind,f.owner,f.status,f.bytes,f.at,c.at capture_at,c.audience,c.allowed,h.uid capture_host from files f join captures c on c.id=f.capture left join capture_hosts h on h.capture=c.id where f.meeting=? and f.status in ('ready','writing') order by c.at desc,f.at desc",
                     (mid,),
                 ):
                     if self.can_export(r, a):
-                        item = {k: r[k] for k in ("id", "kind", "owner", "status", "bytes", "at")}
+                        item = {
+                            k: r[k]
+                            for k in ("id", "kind", "owner", "status", "bytes", "at")
+                        }
+                        item.update(
+                            captureId=r["capture"], captureStartedAt=r["capture_at"]
+                        )
                         item["archived"] = (
                             Path(
                                 self.cfg.get(
-                                    "archiveReceipts", "/var/lib/weitong-recording-archive/receipts"
+                                    "archiveReceipts",
+                                    "/var/lib/weitong-recording-archive/receipts",
                                 )
                             )
                             / (r["id"] + ".json")
@@ -312,7 +371,10 @@ class App:
                     "active": bool(viewers & a["roster"]),
                 },
                 managedCaptures=managed,
-                minutesStatus="ready" if minutes else ("ended" if a["ended"] else "processing"),
+                lastCaptureId=latest[0] if latest else None,
+                minutesStatus="ready"
+                if minutes
+                else ("ended" if a["ended"] else "processing"),
                 terms=self.terms(c, mid),
                 materials=materials,
                 captions=captions,
@@ -368,7 +430,8 @@ class App:
         sealed = self.vault.seal(f"voice/{mid}/{uid}", v.astype("<f4").tobytes())
         with self.db() as c:
             c.execute(
-                "insert or replace into voices values(?,?,?,?)", (mid, uid, a["name"], sealed)
+                "insert or replace into voices values(?,?,?,?)",
+                (mid, uid, a["name"], sealed),
             )
         return {"bound": True}
 
@@ -386,16 +449,21 @@ class App:
         mid, uid = a["id"], a["uid"]
         with self.db() as c:
             prev = c.execute(
-                "select id from captions where meeting=? and uid=? and nonce=?", (mid, uid, nonce)
+                "select id from captions where meeting=? and uid=? and nonce=?",
+                (mid, uid, nonce),
             ).fetchone()
             if prev:
                 return {"id": prev[0]}
         with self.db() as c:
             if any(
                 r[0] in a["roster"]
-                for r in c.execute("select member from caption_viewers where meeting=?", (mid,))
+                for r in c.execute(
+                    "select member from caption_viewers where meeting=?", (mid,)
+                )
             ):
-                return {"id": None}  # The cloud already reads this published microphone.
+                return {
+                    "id": None
+                }  # The cloud already reads this published microphone.
         return self.caption_pcm(a, samples(blob), nonce, language, time.time())
 
     def caption_pcm(self, a, pcm, nonce, language, at):
@@ -412,7 +480,8 @@ class App:
                         r["uid"],
                         r["name"],
                         np.frombuffer(
-                            self.vault.open(f"voice/{mid}/{r['uid']}", r["vec"]), dtype="<f4"
+                            self.vault.open(f"voice/{mid}/{r['uid']}", r["vec"]),
+                            dtype="<f4",
                         ),
                     )
                     for r in c.execute("select * from voices where meeting=?", (mid,))
@@ -440,7 +509,9 @@ class App:
                     at,
                 ),
             )
-            c.execute("insert or ignore into pending_minutes values(?,?)", (mid, a["title"]))
+            c.execute(
+                "insert or ignore into pending_minutes values(?,?)", (mid, a["title"])
+            )
             return {
                 "id": c.execute(
                     "select id from captions where meeting=? and uid=? and nonce=?",
@@ -453,11 +524,13 @@ class App:
         need(lang in LANGUAGES, 400, "不支持的目标语言")
         with self.db() as c:
             row = c.execute(
-                "select text,lang from captions where id=? and meeting=?", (segment, a["id"])
+                "select text,lang from captions where id=? and meeting=?",
+                (segment, a["id"]),
             ).fetchone()
             need(row, 404, "未找到发言")
             cached = c.execute(
-                "select text from translation where segment=? and lang=?", (segment, lang)
+                "select text from translation where segment=? and lang=?",
+                (segment, lang),
             ).fetchone()
             if cached:
                 return {"text": cached[0]}
@@ -465,7 +538,9 @@ class App:
         with self.slot():
             text = self.models.translate(row["text"], row["lang"], lang)
         with self.db() as c:
-            c.execute("insert or ignore into translation values(?,?,?)", (segment, lang, text))
+            c.execute(
+                "insert or ignore into translation values(?,?,?)", (segment, lang, text)
+            )
         return {"text": text}
 
     def material(self, a, name, data):
@@ -485,7 +560,8 @@ class App:
         with self.db() as c:
             c.execute("begin immediate")
             size, n = c.execute(
-                "select coalesce(sum(size),0),count(*) from materials where meeting=?", (mid,)
+                "select coalesce(sum(size),0),count(*) from materials where meeting=?",
+                (mid,),
             ).fetchone()
             need(
                 size + len(data) <= 64 * 1024**2 and n < 64,
@@ -518,7 +594,8 @@ class App:
         buf = io.BytesIO()
         with self.db() as c:
             rows = c.execute(
-                "select id,name,data from materials where meeting=?" + (" and id=?" if fid else ""),
+                "select id,name,data from materials where meeting=?"
+                + (" and id=?" if fid else ""),
                 (mid, fid) if fid else (mid,),
             ).fetchall()
             need(rows, 404, "尚无材料")
@@ -572,18 +649,23 @@ class App:
         mid = a["id"]
         with self.db() as c:
             c.execute("begin immediate")
-            old = c.execute("select revision from minutes where meeting=?", (mid,)).fetchone()
+            old = c.execute(
+                "select revision from minutes where meeting=?", (mid,)
+            ).fetchone()
             rev = old[0] if old else 0
             need(body.get("revision", 0) == rev, 409, "纪要已更新，请刷新后重试")
             if body.get("generate") is True:
                 rows = c.execute(
-                    "select id,text,speaker,at from captions where meeting=? order by id", (mid,)
+                    "select id,text,speaker,at from captions where meeting=? order by id",
+                    (mid,),
                 ).fetchall()
                 need(rows, 409, "已有会议转录后可以生成纪要")
                 val = draft(a["title"], rows)
             else:
                 val = body.get("body")
-            need(isinstance(val, str) and 0 < len(val) <= 240000, 400, "纪要正文长度无效")
+            need(
+                isinstance(val, str) and 0 < len(val) <= 240000, 400, "纪要正文长度无效"
+            )
             c.execute(
                 "insert or replace into minutes values(?,?,?,?,?)",
                 (mid, rev + 1, val, time.time(), a["uid"]),
@@ -594,16 +676,22 @@ class App:
         need(a["member"], 403, "请先入会")
         kinds = body.get("kinds")
         need(
-            isinstance(kinds, list) and all(k in ("camera", "microphone", "screen") for k in kinds),
+            isinstance(kinds, list)
+            and all(k in ("camera", "microphone", "screen") for k in kinds),
             400,
             "无效的录制轨道",
         )
         with self.db() as c:
             c.execute("begin immediate")
             job = c.execute(
-                "select id from captures where meeting=? and status='running'", (a["id"],)
+                "select id from captures where meeting=? and status='running'",
+                (a["id"],),
             ).fetchone()
-            need(job and job[0] == body.get("captureId"), 409, "录制场次已变更，请重新确认")
+            need(
+                job and job[0] == body.get("captureId"),
+                409,
+                "录制场次已变更，请重新确认",
+            )
             c.execute(
                 "insert or replace into capture_consent values(?,?,?,?)",
                 (job[0], a["member"]["id"], a["uid"], ",".join(sorted(set(kinds)))),
@@ -613,29 +701,76 @@ class App:
     def capture(self, a, body, stop=False):
         need(a["host"], 403, "需要主持人权限")
         mid = a["id"]
+        fid = body.get("captureId")
+        need(
+            fid is None or isinstance(fid, str) and re.fullmatch(r"[a-f0-9]{32}", fid),
+            400,
+            "录制段 ID 无效",
+        )
         with self.db() as c:
             c.execute("begin immediate")
-            if stop:
-                c.execute("insert or ignore into capture_finish select id,?,'host_stop',? from captures where meeting=? and status='running'", (time.time(), a["uid"], mid))
+            active = c.execute(
+                "select id from captures where meeting=? and status='running'", (mid,)
+            ).fetchone()
+            prior = (
                 c.execute(
-                    "update captures set status='finished' where meeting=? and status='running'",
-                    (mid,),
-                )
-                return {"running": False}
+                    "select meeting,status from captures where id=?", (fid,)
+                ).fetchone()
+                if fid
+                else None
+            )
+            if stop:
+                if fid is None:
+                    if not active:
+                        return {"running": False}
+                    # A legacy stop is unambiguous only for the meeting's first capture.
+                    need(
+                        not c.execute(
+                            "select 1 from captures where meeting=? and id<>? limit 1",
+                            (mid, active[0]),
+                        ).fetchone(),
+                        409,
+                        "请用当前录制段 ID 停止录制",
+                    )
+                    fid = active[0]
+                else:
+                    need(prior and prior["meeting"] == mid, 404, "找不到该录制段")
+                if active and active[0] == fid:
+                    c.execute(
+                        "insert or ignore into capture_finish values(?,?,'host_stop',?)",
+                        (fid, time.time(), a["uid"]),
+                    )
+                    c.execute(
+                        "update captures set status='finished' where id=?", (fid,)
+                    )
+                return {"running": False, "id": fid}
+            if prior:
+                need(prior["meeting"] == mid, 409, "录制段 ID 已使用")
+                return {"running": prior["status"] == "running", "id": fid}
             need(a["member"] and not a["ended"], 403, "请先入会")
             need(
                 body.get("audience", "host") == "host" and not body.get("users"),
                 400,
                 "录制结束后可分发回放",
             )
-            fid = secrets.token_hex(16)
-            try:
-                c.execute(
-                    "insert into captures values(?,?,?,'host','[]','running',?)",
-                    (fid, mid, a["number"], time.time()),
+            if active and fid is None:
+                return {"running": True, "id": active[0]}
+            need(not active, 409, "另一段录制正在进行，请刷新状态")
+            if "previousCaptureId" in body:
+                latest = c.execute(
+                    "select id from captures where meeting=? order by at desc,rowid desc limit 1",
+                    (mid,),
+                ).fetchone()
+                need(
+                    body["previousCaptureId"] == (latest[0] if latest else None),
+                    409,
+                    "录制段已变更，请刷新状态",
                 )
-            except sqlite3.IntegrityError:
-                raise Problem(409, "本场已经在录制")
+            fid = fid or secrets.token_hex(16)
+            c.execute(
+                "insert into captures values(?,?,?,'host','[]','running',?)",
+                (fid, mid, a["number"], time.time()),
+            )
             c.execute("insert into capture_hosts values(?,?)", (fid, a["uid"]))
             c.execute(
                 "insert into capture_consent values(?,?,?,?)",
@@ -677,5 +812,8 @@ class App:
             need(r, 404, "录制文件尚未就绪")
             need(self.can_export(r, a), 403, "不在该录制的回放名单内")
             audit = secrets.token_hex(12)
-            c.execute("insert into exports values(?,?,?,?)", (audit, fid, a["uid"], time.time()))
+            c.execute(
+                "insert into exports values(?,?,?,?)",
+                (audit, fid, a["uid"], time.time()),
+            )
             return dict(r), audit

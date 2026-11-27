@@ -2417,6 +2417,8 @@ paths:
                       - bytes
                       - at
                       - archived
+                      - captureId
+                      - captureStartedAt
                       properties:
                         id:
                           type: string
@@ -2430,6 +2432,8 @@ paths:
                           type: integer
                         at:
                           type: number
+                        captureId: {type: string}
+                        captureStartedAt: {type: number}
                         archived:
                           type: boolean
                   materials:
@@ -2519,6 +2523,9 @@ paths:
                     - processing
                     - ready
                     - ended
+                  lastCaptureId:
+                    type: [string, "null"]
+                    description: 主持人最近一段录制的 ID，首次开启时为 null。
                   managedCaptures:
                     type: array
                     items:
@@ -2534,6 +2541,10 @@ paths:
                         at:
                           type: number
                         status: *id002
+                        endedAt: {type: [number, "null"]}
+                        finishReason: {type: [string, "null"]}
+                        finalizing: {type: boolean}
+                        readyFiles: {type: integer, minimum: 0}
                         users: &id003
                           type: array
                           items:
@@ -2566,6 +2577,8 @@ paths:
                   bytes: 87040
                   at: 1795600000.0
                   archived: true
+                  captureId: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                  captureStartedAt: 1795600000.0
                 materials:
                 - id: cccccccccccccccccccccccc
                   name: 议程.pdf
@@ -2589,6 +2602,7 @@ paths:
                   active: true
                 minutesStatus: processing
                 managedCaptures: []
+                lastCaptureId: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         '401':
           description: 请重新登录
         '403':
@@ -3064,7 +3078,7 @@ paths:
     - url: https://47.114.83.151/zwt-meeting
     post:
       summary: 开始加密云录制
-      description: 主持人明确同意后启动本次录制。回放默认仅发起者可见。其他入会成员须按本次 captureId 授权已发布轨道。
+      description: 主持人每次主动开启生成一个新的 32 位小写十六进制 captureId，并从状态带回 previousCaptureId（首次为 null）。超时使用完全相同的参数重试。已结束的 ID 返回 running=false，旧请求不会重新开启录制。
       security:
       - bearerAuth: []
       parameters:
@@ -3113,13 +3127,15 @@ paths:
             schema:
               type: object
               properties:
+                captureId: {type: string, pattern: "^[0-9a-f]{32}$"}
+                previousCaptureId: {type: [string, "null"]}
                 audience:
                   enum:
                   - host
-            example: {}
+            example: {captureId: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, previousCaptureId: null}
     delete:
       summary: 结束加密云录制
-      description: 停止读轨并完成加密分片。
+      description: 指定 captureId 停止该段。相同请求可重试，后续录制段继续运行。成功表示已停止订阅读轨，文件可能还在保存。旧版无 ID 请求仅在首段或空闲时兼容。
       security:
       - bearerAuth: []
       parameters:
@@ -3135,6 +3151,11 @@ paths:
         description: 无本地预约单的会议传真实会议号
         schema:
           type: string
+      - in: query
+        name: captureId
+        required: false
+        description: 本次要停止的录制段 ID，新客户端必传。
+        schema: {type: string, pattern: "^[0-9a-f]{32}$"}
       responses:
         '200':
           description: 成功
@@ -3145,10 +3166,13 @@ paths:
                 required:
                 - running
                 properties:
+                  id: {type: string}
                   running:
                     type: boolean
               example:
                 running: false
+        '404':
+          description: 录制段不存在或不属于此会议
         '401':
           description: 请重新登录
         '403':
@@ -3191,6 +3215,8 @@ paths:
               schema:
                 type: string
                 format: binary
+        '504':
+          description: 水印导出长时间无进度或超过总时限，可重新领取原文件。
         '401':
           description: 请重新登录
         '403':

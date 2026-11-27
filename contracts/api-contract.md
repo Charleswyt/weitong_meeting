@@ -948,7 +948,9 @@ decodedFrameKbps 按发布端解码后逐帧可见像素字节计算。publishKb
 ## 中卫通会中字幕、录制授权与会后纪要
 
 - 会中工具栏调用 `PUT /assist/v1/meetings/{assistantMeetingId}/transcription`，请求体为 `{"enabled":true}` 或 `{"enabled":false}`。一个观看者就能开启全场已发布麦克风的逐人转录，默认目标语言为中文。其他观看者独立开关并选语言。使用状态接口取得增量发言和署名，再按发言 ID 和目标语言读取译文。
-- 主持人调用 `POST .../capture` 并提交空对象后，只为本人授权本次摄像头、麦克风和共享屏幕。其他成员的 `PUT .../consent` 必须带状态中当前的 `captureId` 及 `kinds`。录制服务逐条校验场次、入会实例、账号和轨道，过期场次返回 409。
+- 每次明确开启录制时，主持人生成新的 32 位小写十六进制 `captureId`，将它与当前状态的 `lastCaptureId`（首次为 `null`）作为 `captureId`、`previousCaptureId` 提交到 `POST .../capture`。停止使用 `DELETE .../capture?captureId=本段ID`。请求超时可原样重试；重复开始已结束的一段会返回 `running:false`，重复停止前一段不会影响正在录制的新段。发生 409 时重新读取状态。旧版空对象开始请求仍可使用，无 ID 的停止请求在多段录制中会返回 409。
+- 主持人开启仅为本人授权本段的摄像头、麦克风和共享屏幕。其他成员在每次开启或重新入会时，按当前 `captureId`、入会实例及轨道提交 `PUT .../consent`。主持人停止后可立即开启下一段，上一段的加密写入与 OSS 归档独立完成。状态中的 `managedCaptures` 返回结束时间、结束原因及是否仍在保存；每个可见文件带有所属 `captureId`。
+- 媒体断流会重连，服务重启后重新核对在线成员及本段授权，再续录仍在发布的轨道。会议结束时关闭录制；连续五分钟确认空房也会关闭。查询在会状态超时时暂停取流。水印导出按实际编码进度判断超时，返回 504 时可以重新领取原文件。
 - 新录制默认仅发起录制的主持人可回放。停止后由其调用 `PUT .../sharing/{captureId}` 替换参会账号名单，空数组收回分发。每次获取文件重新鉴权。旧归档沿用创建时的权限。
 - 个人主持词库使用 `GET/PUT /assist/v1/settings/glossary`。本场主持人可从会议设置用既有 `PUT .../terms` 覆盖本场标准词，后续识别先对齐术语再翻译。
 - 会中返回 `minutesStatus=processing`、`minutes=null`。已存在的会后接口仅在会议正式结束后可用。本版本未新增外部纪要 API。

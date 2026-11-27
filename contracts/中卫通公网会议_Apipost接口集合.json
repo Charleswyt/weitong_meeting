@@ -253,7 +253,8 @@
     {
       "key": "captureId",
       "value": "",
-      "type": "string"
+      "type": "string",
+      "description": "每次主动开始更换为新的 32 位小写十六进制 ID，超时重试及停止时沿用。"
     },
     {
       "key": "webMeetingPassword",
@@ -262,6 +263,12 @@
     {
       "key": "webParticipantId",
       "value": ""
+    },
+    {
+      "key": "previousCaptureIdJson",
+      "value": "null",
+      "type": "string",
+      "description": "首次为 null。下一段填主持人状态 lastCaptureId 的 JSON 字符串值（含双引号）。"
     }
   ],
   "item": [
@@ -7102,7 +7109,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"meeting\": 42,\n  \"title\": \"技术例会\",\n  \"host\": true,\n  \"live\": true,\n  \"history\": true,\n  \"languages\": {\n    \"zh\": \"中文\",\n    \"en\": \"English\"\n  },\n  \"terms\": {\n    \"Ka 卫星\": [\n      \"卡卫星\"\n    ]\n  },\n  \"voiceBound\": true,\n  \"consent\": [\n    \"camera\"\n  ],\n  \"capture\": {\n    \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n    \"audience\": \"attendees\",\n    \"at\": 1795600000.0\n  },\n  \"files\": [\n    {\n      \"id\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\n      \"kind\": \"camera\",\n      \"owner\": 12,\n      \"status\": \"ready\",\n      \"bytes\": 87040,\n      \"at\": 1795600000.0,\n      \"archived\": true\n    }\n  ],\n  \"materials\": [\n    {\n      \"id\": \"cccccccccccccccccccccccc\",\n      \"name\": \"议程.pdf\",\n      \"size\": 512,\n      \"digest\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"at\": 1795600000.0,\n      \"downloads\": 2\n    }\n  ],\n  \"minutes\": null,\n  \"captions\": [\n    {\n      \"id\": 1,\n      \"uid\": 12,\n      \"raw\": \"卡卫星\",\n      \"text\": \"Ka 卫星\",\n      \"lang\": \"zh\",\n      \"speaker\": \"测试用户\",\n      \"speaker_id\": 12,\n      \"attribution\": \"voice\",\n      \"at\": 1795600000.0\n    }\n  ],\n  \"transcription\": {\n    \"enabled\": true,\n    \"active\": true\n  },\n  \"minutesStatus\": \"processing\",\n  \"managedCaptures\": []\n}"
+              "body": "{\n  \"meeting\": 42,\n  \"title\": \"技术例会\",\n  \"host\": true,\n  \"live\": true,\n  \"history\": true,\n  \"languages\": {\n    \"zh\": \"中文\",\n    \"en\": \"English\"\n  },\n  \"terms\": {\n    \"Ka 卫星\": [\n      \"卡卫星\"\n    ]\n  },\n  \"voiceBound\": true,\n  \"consent\": [\n    \"camera\"\n  ],\n  \"capture\": {\n    \"id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n    \"audience\": \"attendees\",\n    \"at\": 1795600000.0\n  },\n  \"files\": [\n    {\n      \"id\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\n      \"kind\": \"camera\",\n      \"owner\": 12,\n      \"status\": \"ready\",\n      \"bytes\": 87040,\n      \"at\": 1795600000.0,\n      \"archived\": true,\n      \"captureId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"captureStartedAt\": 1795600000.0\n    }\n  ],\n  \"materials\": [\n    {\n      \"id\": \"cccccccccccccccccccccccc\",\n      \"name\": \"议程.pdf\",\n      \"size\": 512,\n      \"digest\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"at\": 1795600000.0,\n      \"downloads\": 2\n    }\n  ],\n  \"minutes\": null,\n  \"captions\": [\n    {\n      \"id\": 1,\n      \"uid\": 12,\n      \"raw\": \"卡卫星\",\n      \"text\": \"Ka 卫星\",\n      \"lang\": \"zh\",\n      \"speaker\": \"测试用户\",\n      \"speaker_id\": 12,\n      \"attribution\": \"voice\",\n      \"at\": 1795600000.0\n    }\n  ],\n  \"transcription\": {\n    \"enabled\": true,\n    \"active\": true\n  },\n  \"minutesStatus\": \"processing\",\n  \"managedCaptures\": [],\n  \"lastCaptureId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n}"
             }
           ]
         },
@@ -7726,7 +7733,7 @@
                 "value": "application/json"
               }
             ],
-            "description": "主持人明确同意后启动本次录制。回放默认仅发起者可见。其他入会成员须按本次 captureId 授权已发布轨道。",
+            "description": "主持人每次主动开启生成一个新的 32 位小写十六进制 captureId，并从状态带回 previousCaptureId（首次为 null）。超时使用完全相同的参数重试。已结束的 ID 返回 running=false，旧请求不会重新开启录制。",
             "url": {
               "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/capture",
               "host": [
@@ -7740,7 +7747,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{}",
+              "raw": "{\n  \"captureId\": \"{{captureId}}\",\n  \"previousCaptureId\": {{previousCaptureIdJson}}\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -7763,7 +7770,7 @@
                     "value": "application/json"
                   }
                 ],
-                "description": "主持人明确同意后启动本次录制。回放默认仅发起者可见。其他入会成员须按本次 captureId 授权已发布轨道。",
+                "description": "主持人每次主动开启生成一个新的 32 位小写十六进制 captureId，并从状态带回 previousCaptureId（首次为 null）。超时使用完全相同的参数重试。已结束的 ID 返回 running=false，旧请求不会重新开启录制。",
                 "url": {
                   "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/capture",
                   "host": [
@@ -7777,7 +7784,7 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{}",
+                  "raw": "{\n  \"captureId\": \"{{captureId}}\",\n  \"previousCaptureId\": {{previousCaptureIdJson}}\n}",
                   "options": {
                     "raw": {
                       "language": "json"
@@ -7807,9 +7814,9 @@
                 "value": "Bearer {{meetingAccessToken}}"
               }
             ],
-            "description": "停止读轨并完成加密分片。",
+            "description": "指定 captureId 停止该段。相同请求可重试，后续录制段继续运行。成功表示已停止订阅读轨，文件可能还在保存。旧版无 ID 请求仅在首段或空闲时兼容。",
             "url": {
-              "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/capture",
+              "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/capture?captureId={{captureId}}",
               "host": [
                 "{{assistantUrl}}"
               ],
@@ -7817,6 +7824,12 @@
                 "meetings",
                 "{{assistantMeetingId}}",
                 "capture"
+              ],
+              "query": [
+                {
+                  "key": "captureId",
+                  "value": "{{captureId}}"
+                }
               ]
             }
           },
@@ -7831,9 +7844,9 @@
                     "value": "Bearer {{meetingAccessToken}}"
                   }
                 ],
-                "description": "停止读轨并完成加密分片。",
+                "description": "指定 captureId 停止该段。相同请求可重试，后续录制段继续运行。成功表示已停止订阅读轨，文件可能还在保存。旧版无 ID 请求仅在首段或空闲时兼容。",
                 "url": {
-                  "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/capture",
+                  "raw": "{{assistantUrl}}/meetings/{{assistantMeetingId}}/capture?captureId={{captureId}}",
                   "host": [
                     "{{assistantUrl}}"
                   ],
@@ -7841,6 +7854,12 @@
                     "meetings",
                     "{{assistantMeetingId}}",
                     "capture"
+                  ],
+                  "query": [
+                    {
+                      "key": "captureId",
+                      "value": "{{captureId}}"
+                    }
                   ]
                 }
               },

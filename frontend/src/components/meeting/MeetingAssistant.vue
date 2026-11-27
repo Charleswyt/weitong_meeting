@@ -219,8 +219,11 @@
                     <i class="ri-user-shared-line" />
                   </div>
                   <div class="ma-item-main">
-                    <strong class="ma-item-title">{{ clock(r.at) }} 录制场次</strong>
+                    <strong class="ma-item-title">{{ clock(r.at) }}{{ r.endedAt ? ' 至 ' + clock(r.endedAt) : '' }} 录制段</strong>
                     <div class="ma-item-meta">
+                      <span v-if="r.finalizing">正在保存</span>
+                      <span v-else-if="r.readyFiles === 0">本段没有可回放的轨道</span>
+                      <span v-if="r.finishReason">{{ finishLabels[r.finishReason] || r.finishReason }}</span>
                       <span v-if="r.users.length" class="ma-perm-pill ma-perm-pill--shared">
                         已授权 {{ r.users.length }} 人：{{ r.users.join('、') }}
                       </span>
@@ -281,7 +284,8 @@
                         </span>
                       </div>
                       <div class="ma-item-meta">
-                        <span>{{ clock(f.at) }}</span>
+                        <span v-if="f.captureStartedAt">{{ clock(f.captureStartedAt) }} 开始的录制段</span>
+                        <span>轨道 {{ clock(f.at) }}</span>
                         <template v-if="f.status === 'ready'">
                           <span class="ma-sep">·</span>
                           <span>{{ formatBytes(f.bytes) }}</span>
@@ -548,6 +552,9 @@ function clearPreview() {
 
 const translations = ref<Record<number, string>>({})
 const tracks: Record<string, string> = { camera: '摄像头', microphone: '麦克风', screen: '共享屏幕' }
+const finishLabels: Record<string, string> = { host_stop: '主持人停止', meeting_ended: '会议结束', empty_timeout: '空房超时', service_restart: '服务中断' }
+type CaptureControl = { id: string; stop: boolean; previous: string | null }
+let pendingControl: CaptureControl | null = null
 const enrolling = ref(false)
 const working = ref(false)
 const admissionError = ref('')
@@ -678,10 +685,14 @@ async function refresh() {
   const v = version
   const seq = ++requestSeq
   try {
-    const next: State = await (await api('state?after=' + seen)).json()
+    const next: State = await (await api('state?after=' + seen, { signal: AbortSignal.timeout(12000) })).json()
     if (!alive || v !== version || seq < applied) return false
     applied = seq
     state.value = next
+    if (pendingControl && (pendingControl.stop ? next.capture?.id !== pendingControl.id
+      : next.capture?.id === pendingControl.id || next.managedCaptures.some((r) => r.id === pendingControl?.id))) {
+      pendingControl = null
+    }
     const fresh = next.captions.filter((s) => s.id > seen)
     if (fresh.length) {
       captions.value.push(...fresh)
@@ -823,6 +834,7 @@ watch(
   () => {
     halt()
     version++
+    pendingControl = null
     seen = 0
     state.value = null
     captions.value = []
@@ -910,10 +922,12 @@ async function toggleRecording() {
   if (working.value) return
   working.value = true
   try {
-    if (!state.value) await refresh()
+    if (!state.value && !await refresh()) throw new Error('无法确认录制状态，请重试')
     if (!state.value?.host) throw new Error('仅主持人可控制云录制')
     const id = state.value.capture?.id
-    if (!id) {
+    const previous = state.value.lastCaptureId ?? null
+    const meetingVersion = version
+    if (!pendingControl && !id) {
       try {
         await ElMessageBox.confirm(
           '开始后将录制你发布的摄像头、麦克风和共享屏幕，并向其他参会人征求同意。',
@@ -924,8 +938,28 @@ async function toggleRecording() {
         return
       }
     }
-    await api('capture', id ? { method: 'DELETE' } : payload('POST', {}))
-    await refresh()
+    if (meetingVersion !== version || !alive) return
+    const command = pendingControl || { id: id || crypto.randomUUID().replace(/-/g, ''), stop: !!id, previous }
+    pendingControl = command
+    try {
+      const path = command.stop ? 'capture?captureId=' + encodeURIComponent(command.id) : 'capture'
+      const opts = command.stop ? { method: 'DELETE' } : payload('POST', { captureId: command.id, previousCaptureId: command.previous })
+      await api(path, { ...opts, signal: AbortSignal.timeout(12000) })
+      if (meetingVersion !== version) return
+      applied = ++requestSeq
+      if (await refresh()) pendingControl = null
+    } catch (e) {
+      if (meetingVersion !== version) return
+      applied = ++requestSeq
+      await refresh()
+      if (!pendingControl) return
+      const status = (e as { status?: number })?.status
+      if (status && status >= 400 && status < 500) {
+        pendingControl = null
+        throw e
+      }
+      throw new Error('录制请求尚未确认，再次点击可重试同一段录制')
+    }
   } catch (e) {
     report(e)
     ElMessage.error(error.value)

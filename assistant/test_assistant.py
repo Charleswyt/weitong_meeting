@@ -7,11 +7,14 @@ import subprocess
 import tempfile
 import unittest
 import zipfile
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 from service import App, Problem
 from speech import DEFAULT_TERMS, align
-from vault import watermarked
+from vault import CloudCapture, watermarked
+from server import wait_export
 from live_speech import LiveSpeech
 from cryptography.exceptions import InvalidTag
 
@@ -71,7 +74,9 @@ class Features(unittest.TestCase):
 
     def test_materials_pre_meeting_bundle_and_isolation(self):
         file = self.app.material(self.host, "议程.pdf", b"only-once")
-        self.assertEqual(self.app.download(self.invited, file["id"]), ("议程.pdf", b"only-once"))
+        self.assertEqual(
+            self.app.download(self.invited, file["id"]), ("议程.pdf", b"only-once")
+        )
         _, z = self.app.download(self.invited)
         self.assertEqual(zipfile.ZipFile(io.BytesIO(z)).read("议程.pdf"), b"only-once")
         self.assertEqual(self.app.state(self.host)["materials"][0]["downloads"], 1)
@@ -82,11 +87,16 @@ class Features(unittest.TestCase):
         with self.assertRaises(Problem):
             self.app.material(self.host, "../escape", b"x")
         with self.app.db() as c:
-            self.assertNotIn(b"only-once", c.execute("select data from materials").fetchone()[0])
+            self.assertNotIn(
+                b"only-once", c.execute("select data from materials").fetchone()[0]
+            )
 
     def test_glossary_and_edit_conflict(self):
         self.assertEqual(
-            align("卡卫星通信，边云协调 / 洛拉微调 升腾芯片 D C U 水电栈 船舶CCPD", DEFAULT_TERMS),
+            align(
+                "卡卫星通信，边云协调 / 洛拉微调 升腾芯片 D C U 水电栈 船舶CCPD",
+                DEFAULT_TERMS,
+            ),
             "Ka 卫星通信，边云协同 / LoRA微调 昇腾芯片 DCU 水电站 船舶 CCPD",
         )
         self.app.save_terms(self.host, {"terms": "标准词,别名\n雷达,雷达儿|蕾达"})
@@ -114,7 +124,8 @@ class Features(unittest.TestCase):
             self.app.minutes(self.host, {"revision": 0, "body": "覆盖"})
         self.assertIsNone(self.app.state(self.invited)["minutes"])
         self.assertEqual(
-            self.app.minutes(self.host, {"revision": 1, "body": "修订稿"})["revision"], 2
+            self.app.minutes(self.host, {"revision": 1, "body": "修订稿"})["revision"],
+            2,
         )
 
     def test_capture_access_consent_and_granular_watermark(self):
@@ -123,7 +134,8 @@ class Features(unittest.TestCase):
         job = self.app.capture(self.host, {})
         self.assertEqual(self.app.state(self.guest)["consent"], [])
         self.assertEqual(
-            set(self.app.state(self.host)["consent"]), {"microphone", "screen", "camera"}
+            set(self.app.state(self.host)["consent"]),
+            {"microphone", "screen", "camera"},
         )
         fid = "1" * 32
         self.app.consent(self.guest, {"captureId": job["id"], "kinds": ["microphone"]})
@@ -168,7 +180,8 @@ class Features(unittest.TestCase):
             with tempfile.TemporaryFile() as clear:
                 self.app.vault.decrypt_to(fid, 7, clear)
                 self.assertEqual(
-                    hashlib.sha256(clear.read()).digest(), hashlib.sha256(video).digest()
+                    hashlib.sha256(clear.read()).digest(),
+                    hashlib.sha256(video).digest(),
                 )
                 clear.seek(0)
                 proc = watermarked(clear, "camera", 7, a["uid"], fid, audit)
@@ -209,6 +222,132 @@ class Features(unittest.TestCase):
         with self.assertRaises(Problem):
             self.app.consent(self.guest, {"captureId": job["id"], "kinds": ["screen"]})
 
+    def test_repeated_capture_with_delayed_start_and_stop(self):
+        start = lambda fid, prev: self.app.capture(
+            self.host, {"captureId": fid, "previousCaptureId": prev}
+        )
+        stop = lambda fid: self.app.capture(self.host, {"captureId": fid}, True)
+        first, second, stale = "1" * 32, "2" * 32, "3" * 32
+        with ThreadPoolExecutor(4) as pool:
+            for result in pool.map(lambda _: start(first, None), range(4)):
+                self.assertEqual(result, {"id": first, "running": True})
+        self.app.consent(self.guest, {"captureId": first, "kinds": ["camera"]})
+        stop(first)
+        start(second, first)
+        self.assertEqual(stop(first), {"id": first, "running": False})
+        self.assertFalse(start(first, None)["running"])
+        self.assertEqual(self.app.state(self.guest)["consent"], [])
+        self.assertEqual(self.app.state(self.host)["capture"]["id"], second)
+        with self.assertRaises(Problem):
+            self.app.capture(self.host, {}, True)
+        with self.assertRaises(Problem):
+            self.app.capture(self.guest, {"captureId": second}, True)
+        stop(second)
+        with self.assertRaises(Problem):
+            start(stale, None)
+        state = self.app.state(self.host)
+        self.assertIsNone(state["capture"])
+        self.assertEqual(state["lastCaptureId"], second)
+        self.assertEqual(
+            [r["finishReason"] for r in state["managedCaptures"]], ["host_stop"] * 2
+        )
+
+    def test_roster_loss_empty_timeout_and_meeting_end(self):
+        worker = CloudCapture(self.app)
+        first = self.app.capture(self.host, {})["id"]
+        worker.empty_since[first] = time.monotonic() - 301
+        worker.tick()
+        self.assertNotIn(first, worker.empty_since)
+        with patch.object(self.app, "activity", side_effect=Problem(503, "offline")):
+            with self.assertRaises(Problem):
+                self.user(1)
+            offline = self.app.access(
+                7, {"id": 1, "name": "甲"}, allow_offline_stop=True
+            )
+            self.assertFalse(offline["member"])
+        self.roster["rooms"].clear()
+        worker.tick()
+        self.assertEqual(self.app.state(self.host)["capture"]["id"], first)
+        worker.empty_since[first] -= 301
+        worker.tick()
+        self.assertEqual(
+            self.app.state(self.host)["managedCaptures"][0]["finishReason"],
+            "empty_timeout",
+        )
+        second = self.app.capture(self.host, {})["id"]
+        with sqlite3.connect(self.business) as c:
+            c.execute("update meeting_appointment set status='ended' where id=7")
+        worker.tick()
+        self.assertEqual(
+            self.app.state(self.host)["managedCaptures"][0]["finishReason"],
+            "meeting_ended",
+        )
+        self.assertFalse(
+            self.app.capture(self.host, {"captureId": second}, True)["running"]
+        )
+
+    def test_restart_recovers_authenticated_draft_and_current_capture(self):
+        fid, cid = "a" * 32, self.app.capture(self.host, {})["id"]
+        video = subprocess.check_output(
+            [
+                "/usr/bin/ffmpeg",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=96x64:rate=8",
+                "-t",
+                "1",
+                "-c:v",
+                "libx264",
+                "-threads",
+                "1",
+                "-f",
+                "matroska",
+                "pipe:1",
+            ]
+        )
+        vault = self.app.vault
+        vault.write_stream(fid, 7, io.BytesIO(video), 1000000)
+        out = vault.dir / (fid + ".enc")
+        part = vault.dir / (fid + ".part")
+        part.write_bytes(out.read_bytes()[:-10])
+        out.unlink()
+        with self.app.db() as c:
+            c.execute(
+                "insert into files values(?,7,?,1,'camera','writing',1,0)", (fid, cid)
+            )
+        worker = CloudCapture(self.app)
+        worker.recover()
+        state = self.app.state(self.host)
+        self.assertEqual(state["capture"]["id"], cid)
+        self.assertEqual(state["files"][0]["status"], "ready")
+        self.assertEqual(state["files"][0]["captureId"], cid)
+        self.assertEqual(state["files"][0]["bytes"], len(video))
+        self.assertFalse(part.exists())
+        dst = io.BytesIO()
+        vault.decrypt_to(fid, 7, dst)
+        self.assertEqual(dst.read(), video)
+
+    def test_export_progress_and_idle_timeout(self):
+        def run(src):
+            return subprocess.Popen(
+                ["/usr/bin/python3", "-u", "-c", src], stderr=subprocess.PIPE
+            )
+
+        p = run(
+            "import sys,time\nfor i in range(12):\n print('frame='+str(i), file=sys.stderr);time.sleep(.1)"
+        )
+        self.assertEqual(
+            wait_export(p, lambda: True, idle_seconds=0.6, max_seconds=4), 0
+        )
+        p = run("import time;time.sleep(10)")
+        with self.assertRaises(Problem) as exc:
+            wait_export(p, lambda: True, idle_seconds=0.1, max_seconds=4)
+        self.assertEqual(exc.exception.status, 504)
+        self.assertIsNotNone(p.poll())
+
     def test_captions_follow_all_publishers_not_viewer_microphone(self):
         r = self.roster["rooms"]["1234567890"]
         for i, kind, owner in [
@@ -217,7 +356,13 @@ class Features(unittest.TestCase):
             ("3", "microphone", "bb"),
         ]:
             r["tracks"].append(
-                dict(id=i, kind=kind, participantId=owner, path="fixture/" + i, ready=True)
+                dict(
+                    id=i,
+                    kind=kind,
+                    participantId=owner,
+                    path="fixture/" + i,
+                    ready=True,
+                )
             )
         worker = LiveSpeech(self.app, None)
         self.assertFalse(worker.wanted())

@@ -34,6 +34,8 @@ import (
 )
 
 const mount = "/zwt-meeting"
+
+var replayPath = regexp.MustCompile("^" + mount + "/assist/v1/meetings/[0-9]{1,16}/files/[0-9a-f]{32}$")
 const limit = 128 << 10
 
 var publishPath = regexp.MustCompile(`^/zwt-meeting/api/v1/meetings/(-?[0-9]+)/publications(?:/([a-zA-Z0-9_-]{1,80})/(whip|stop))?$`)
@@ -55,6 +57,7 @@ type gateway struct {
 	target *url.URL
 	client *http.Client
 	proxy  *httputil.ReverseProxy
+	replay *httputil.ReverseProxy
 	mu     sync.Mutex
 	pubs   map[string]*publication
 }
@@ -263,6 +266,10 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		edgeaccess.Sign(r, g.cfg.Node, g.key, body)
 	}
+	if r.Method == http.MethodGet && replayPath.MatchString(p) {
+		g.replay.ServeHTTP(w, r)
+		return
+	}
 	if strings.HasPrefix(p, mount+"/api/") || strings.HasPrefix(p, mount+"/ws/") || strings.HasPrefix(p, mount+"/assist/") || p == mount+"/assets/media-player.js" {
 		g.proxy.ServeHTTP(w, r)
 		return
@@ -353,6 +360,10 @@ func main() {
 		r.Header.Del("X-Forwarded-Host")
 		r.Header.Del("X-Forwarded-Proto")
 	}
+	// The cloud verifies and watermarks the complete recording before sending headers.
+	download := tr.Clone()
+	download.ResponseHeaderTimeout = time.Hour
+	g.replay = &httputil.ReverseProxy{Director: g.proxy.Director, Transport: download}
 	go func() {
 		for range time.Tick(time.Minute) {
 			g.mu.Lock()

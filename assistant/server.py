@@ -2,13 +2,59 @@ import argparse
 import json
 import os
 import re
+import select
+import signal
+import socket
+import subprocess
 import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 from service import App, Problem, need
 from vault import CloudCapture, watermarked
 from live_speech import LiveSpeech
+
+
+def wait_export(process, connected, idle_seconds=90, max_seconds=3500):
+    """Sparse screen shares and long audio tracks can be tiny but take time to encode."""
+    started = last_progress = time.monotonic()
+    fields = {}
+
+    def progress():
+        nonlocal last_progress
+        with process.stderr as log:
+            for line in log:
+                key, _, value = line.strip().partition(b"=")
+                if (
+                    key in (b"frame", b"out_time_us", b"total_size")
+                    and value.strip().isdigit()
+                ):
+                    n = int(value)
+                    if n > fields.get(key, 0):
+                        fields[key] = n
+                        last_progress = time.monotonic()
+
+    meter = threading.Thread(target=progress, daemon=True)
+    meter.start()
+    try:
+        while True:
+            try:
+                return process.wait(timeout=0.5)
+            except subprocess.TimeoutExpired:
+                now = time.monotonic()
+                if not connected():
+                    raise BrokenPipeError()
+                need(
+                    now - last_progress < idle_seconds and now - started < max_seconds,
+                    504,
+                    "水印导出超时，请重新领取该录制文件",
+                )
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        meter.join(3)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -27,14 +73,17 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "private, no-store")
         if name:
             self.send_header(
-                "Content-Disposition", "attachment; filename*=UTF-8''" + quote(name, safe="")
+                "Content-Disposition",
+                "attachment; filename*=UTF-8''" + quote(name, safe=""),
             )
         self.end_headers()
         self.wfile.write(data)
 
     def read(self, mime, limit):
         need(
-            self.headers.get("Content-Type", "").split(";")[0].strip() == mime, 415, "请求格式无效"
+            self.headers.get("Content-Type", "").split(";")[0].strip() == mime,
+            415,
+            "请求格式无效",
         )
         need(not self.headers.get("Transfer-Encoding"), 400, "请指定正文长度")
         size = int(self.headers.get("Content-Length", "0"))
@@ -48,20 +97,32 @@ class Handler(BaseHTTPRequestHandler):
         need(isinstance(obj, dict), 400, "需要 JSON 对象")
         return obj
 
+    def connected(self):
+        if not select.select([self.connection], [], [], 0)[0]:
+            return True
+        return bool(self.connection.recv(1, socket.MSG_PEEK))
+
     def route(self):
         app = self.server.app
         parsed = urlsplit(self.path)
         if self.command == "GET" and parsed.path == "/health":
             return self.send_data(200, {"ok": True})
-        if parsed.path == "/zwt-meeting/assist/v1/settings/glossary" and self.command in (
-            "GET",
-            "PUT",
+        if (
+            parsed.path == "/zwt-meeting/assist/v1/settings/glossary"
+            and self.command
+            in (
+                "GET",
+                "PUT",
+            )
         ):
             bearer = self.headers.get("Authorization", "")
             need(bearer.startswith("Bearer "), 401, "请登录中卫通会议")
             user = app.identity(bearer[7:])
             return self.send_data(
-                200, app.personal_terms(user["id"], self.obj() if self.command == "PUT" else None)
+                200,
+                app.personal_terms(
+                    user["id"], self.obj() if self.command == "PUT" else None
+                ),
             )
         m = re.fullmatch(
             r"/zwt-meeting/assist/v1/meetings/(\d{1,16})/(state|terms|transcription|sharing|voice|captions|translations|materials|package|minutes|consent|capture|files)(?:/([a-z0-9-]{1,48}))?",
@@ -79,8 +140,14 @@ class Handler(BaseHTTPRequestHandler):
             return q.get(k, [d])[0]
 
         identity = app.identity(bearer[7:])
-        a = app.access(mid, identity, query("number"))
         verb = self.command
+        a = app.access(
+            mid,
+            identity,
+            query("number"),
+            allow_offline_stop=(verb, action, arg) == ("DELETE", "capture", None),
+        )
+        mid = a["id"]
         if verb == "GET" and action == "state" and not arg:
             result = app.state(a, max(0, int(query("after", "0"))))
         elif verb == "PUT" and (action, arg) == ("transcription", None):
@@ -90,7 +157,9 @@ class Handler(BaseHTTPRequestHandler):
         elif verb == "PUT" and (action, arg) == ("terms", None):
             result = app.save_terms(a, self.obj())
         elif (action, arg) == ("voice", None) and verb in ("PUT", "DELETE"):
-            result = app.bind(a, None if verb == "DELETE" else self.read("audio/wav", 540000))
+            result = app.bind(
+                a, None if verb == "DELETE" else self.read("audio/wav", 540000)
+            )
         elif verb == "POST" and (action, arg) == ("captions", None):
             result = app.caption(
                 a,
@@ -114,7 +183,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_data(
                 200,
                 data,
-                "application/zip" if action == "package" else "application/octet-stream",
+                "application/zip"
+                if action == "package"
+                else "application/octet-stream",
                 name,
             )
         elif verb == "PUT" and (action, arg) == ("minutes", None):
@@ -123,25 +194,52 @@ class Handler(BaseHTTPRequestHandler):
             need(a["history"], 403, "限实际参会人")
             need(a["ended"], 409, "会议结束后整理纪要")
             with app.db() as c:
-                r = c.execute("select body from minutes where meeting=?", (mid,)).fetchone()
+                r = c.execute(
+                    "select body from minutes where meeting=?", (mid,)
+                ).fetchone()
             need(r, 404, "尚无已发布纪要")
-            return self.send_data(200, r[0].encode(), "text/markdown; charset=utf-8", "会议纪要.md")
+            return self.send_data(
+                200, r[0].encode(), "text/markdown; charset=utf-8", "会议纪要.md"
+            )
         elif verb == "PUT" and (action, arg) == ("consent", None):
-            result = app.consent(a, self.obj())
+            body = self.obj()
+            result = app.consent(a, body)
+            self.server.recorder.changed(
+                body["captureId"], a["member"]["id"], result["kinds"]
+            )
         elif (action, arg) == ("capture", None) and verb in ("POST", "DELETE"):
-            result = app.capture(a, self.obj() if verb == "POST" else {}, verb == "DELETE")
+            body = (
+                self.obj()
+                if verb == "POST"
+                else {"captureId": query("captureId", None)}
+            )
+            result = app.capture(a, body, verb == "DELETE")
+            self.server.recorder.changed(result.get("id") if verb == "DELETE" else None)
         elif verb == "GET" and action == "files" and arg:
             r, audit = app.recording(a, arg)
-            need(app.exports.acquire(blocking=False), 429, "已有录制导出任务，请稍后重试")
+            need(
+                app.exports.acquire(blocking=False), 429, "已有录制导出任务，请稍后重试"
+            )
             try:
                 with tempfile.TemporaryFile() as export:
                     # Feed authenticated plaintext through a kernel pipe, never through a cleartext recording on disk.
                     reader, writer = os.pipe()
                     errors = []
                     with os.fdopen(reader, "rb") as clear:
-                        number = a["number"] if re.fullmatch(r"[0-9]{6,12}", a["number"]) else mid
+                        number = (
+                            a["number"]
+                            if re.fullmatch(r"[0-9]{6,12}", a["number"])
+                            else mid
+                        )
                         process = watermarked(
-                            clear, r["kind"], number, a["uid"], arg, audit, export
+                            clear,
+                            r["kind"],
+                            number,
+                            a["uid"],
+                            arg,
+                            audit,
+                            export,
+                            progress=True,
                         )
 
                     def feed():
@@ -154,14 +252,17 @@ class Handler(BaseHTTPRequestHandler):
                     decryptor = threading.Thread(target=feed, daemon=True)
                     decryptor.start()
                     try:
-                        ret = process.wait(timeout=min(3600, 90 + r["bytes"] // 80000))
+                        ret = wait_export(process, self.connected)
                     finally:
                         if process.poll() is None:
                             process.kill()
                             process.wait()
                         decryptor.join(5)
                     need(
-                        ret == 0 and not errors and not decryptor.is_alive() and export.tell() > 0,
+                        ret == 0
+                        and not errors
+                        and not decryptor.is_alive()
+                        and export.tell() > 0,
                         503,
                         "水印导出未完成，请稍后重试",
                     )
@@ -198,7 +299,12 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             import sys
 
-            print("Assistant request failed:", type(e).__name__, file=sys.stderr, flush=True)
+            print(
+                "Assistant request failed:",
+                type(e).__name__,
+                file=sys.stderr,
+                flush=True,
+            )
             self.send_data(503, {"message": "会议助手暂时不可用，请重试"})
 
     do_GET = do_POST = do_PUT = do_DELETE = handle_api
@@ -219,12 +325,20 @@ def main():
     threading.Thread(target=captions.run, daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", int(cfg.get("port", 19917))), Handler)
     server.app = app
+    server.recorder = worker
+    # shutdown() must run outside the serve_forever thread.
+    signal.signal(
+        signal.SIGTERM,
+        lambda *_: threading.Thread(target=server.shutdown, daemon=True).start(),
+    )
     try:
         server.serve_forever()
     finally:
         worker.stop.set()
+        worker.wake.set()
         captions.stop.set()
         server.server_close()
+        thread.join(20)
 
 
 if __name__ == "__main__":

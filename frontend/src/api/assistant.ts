@@ -12,7 +12,7 @@ export async function assistantRequest(path: string, options: RequestInit = {}, 
   if (!response.ok) {
     const error = await response.json().catch(() => ({}))
     console.warn('[assistant] 请求失败', response.status, error)
-    throw new Error(error.message || '会议助手请求失败，请稍后重试')
+    throw Object.assign(new Error(error.message || '会议助手请求失败，请稍后重试'), { status: response.status })
   }
   const ct = response.headers.get('content-type') || ''
   if (ct.includes('text/html')) {
