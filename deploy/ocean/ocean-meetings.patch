@@ -66,6 +66,15 @@
          preview_ready = False
          if refresh_runtime and hd_ready and preview_path and publication.get("has_video"):
              preview_ready, _ = self.ensure_conference_preview_worker(publication)
+@@ -5158,7 +5167,7 @@
+             if source_audio_telemetry:
+                 payload["sourceAudioTelemetry"] = source_audio_telemetry
+         viewer_device_id = str((viewer_participant or {}).get("device_id") or "").strip()
+-        viewer_endpoint = str((viewer_participant or {}).get("endpoint_type") or "").strip().lower()
++        viewer_endpoint = weitong_federation.receiver_endpoint(viewer_participant)
+         source_device_id = str(publication.get("source_device_id") or "").strip()
+         if (
+             publication_active
 @@ -5329,6 +5338,7 @@
                              "browserDeliveryMode": "rk_local_https_whep",
                          }
@@ -74,6 +83,15 @@
          return payload
 
      def prepare_conference_browser_replay(self, publication, state):
+@@ -5382,7 +5392,7 @@
+         participant, reason = self.verify_conference_participant_token(participant_token)
+         if not participant:
+             return {"ok": False, "reason": reason, "status": HTTPStatus.UNAUTHORIZED}
+-        if str(participant.get("endpoint_type") or "").strip().lower() not in {"direct", "shore"}:
++        if weitong_federation.receiver_endpoint(participant) not in {"direct", "shore"}:
+             return {
+                 "ok": False,
+                 "reason": "compressed_receiver_required",
 @@ -5736,7 +5746,7 @@
                  "status": str(meeting.get("status") or "scheduled"),
                  "hostParticipantId": host_participant_id,

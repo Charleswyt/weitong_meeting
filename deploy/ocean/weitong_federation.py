@@ -142,6 +142,15 @@ def recording_enabled(meeting):
     return bool(capture_since(str(meeting.get('meeting_number') or '')))
 
 
+def receiver_endpoint(participant):
+    member = participant or {}
+    endpoint = str(member.get('endpoint_type') or '').strip().lower()
+    # The board's standalone client uploads via MPP and plays the download in the browser.
+    if endpoint == 'ship' and re.fullmatch(r'urn:weitong:[1-9][0-9]{0,17}', str(member.get('account_name') or '')):
+        return 'shore'
+    return endpoint
+
+
 def original_track(state, publication, owner=None):
     if (not publication or publication.get('source_type') != 'browser_whip'
             or publication.get('status') not in ('publishing', 'ready', 'registered')

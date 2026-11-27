@@ -79,3 +79,11 @@ class Federation(unittest.TestCase):
         state.verify_conference_participant_token = lambda _: (None, 'invalid_token')
         self.assertTrue(f.serve_original(request, 'p1', 'video', 'x'))
         self.assertEqual(responses, [403, 401])
+
+    def test_board_upload_identity_and_browser_playback_are_independent(self):
+        regular = {'endpoint_type': 'ship', 'account_name': 'rk-lab'}
+        standalone = {'endpoint_type': 'ship', 'account_name': f.PREFIX + '417'}
+        self.assertEqual(f.receiver_endpoint(regular), 'ship')
+        self.assertEqual(f.receiver_endpoint(standalone), 'shore')
+        self.assertEqual(standalone['endpoint_type'], 'ship')
+        self.assertEqual(f.receiver_endpoint(None), '')
