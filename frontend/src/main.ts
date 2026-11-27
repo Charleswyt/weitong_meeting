@@ -1,10 +1,25 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import ElementPlus from 'element-plus'
+import ElementPlus, { ElMessage } from 'element-plus'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import 'element-plus/dist/index.css'
 // 原型图标体系是 remixicon，全局引一次，组件里只用 `ri-*` 字形类。
 import 'remixicon/fonts/remixicon.css'
+
+// 全局消息提示防刷屏：每次弹出新消息前先关闭旧消息，且固定顶部位置，
+// 保证屏幕上最多只有 1 条提示，新消息原地替换旧消息、不向下堆叠。
+const MESSAGE_TYPES = ['success', 'warning', 'error', 'info'] as const
+for (const type of MESSAGE_TYPES) {
+  const raw = ElMessage[type].bind(ElMessage)
+  ;(ElMessage as any)[type] = (options: any, appContext?: any) => {
+    ElMessage.closeAll()
+    const normalized =
+      typeof options === 'string'
+        ? { message: options, type, offset: 16, grouping: true }
+        : { offset: 16, grouping: true, ...options, type }
+    return raw(normalized, appContext)
+  }
+}
 
 import App from './App.vue'
 import router from './router'

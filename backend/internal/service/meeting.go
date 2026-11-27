@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -85,10 +86,91 @@ func (s *MeetingService) GetDetail(ctx context.Context, id int64) (*entity.Meeti
 
 // Schedule 先落库，再尽力同步三方；三方失败不回滚本地预约单，
 // 但把 local_status 置为 failed 并把原因原样返回，由 controller 如实提示。
+// checkTimeConflict 校验同一用户在 [startTime, startTime+duration) 内是否已有未结束的重叠会议。
+func (s *MeetingService) checkTimeConflict(
+	ctx context.Context,
+	userId int64,
+	startTime *gtime.Time,
+	durationMinutes int,
+	excludeId int64,
+) error {
+	if userId <= 0 || startTime == nil {
+		return nil
+	}
+	if durationMinutes <= 0 {
+		durationMinutes = 60
+	}
+	newStart := startTime.Time
+	newEnd := newStart.Add(time.Duration(durationMinutes) * time.Minute)
+
+	cols := dao.MeetingAppointment.Columns()
+	m := dao.MeetingAppointment.Ctx(ctx).
+		Where(cols.CreatorId, userId).
+		WhereNull(cols.DeletedAt).
+		WhereIn(cols.Status, []string{consts.MeetingStatusScheduled, consts.MeetingStatusRunning})
+	if excludeId > 0 {
+		m = m.WhereNot(cols.Id, excludeId)
+	}
+	var existing []*entity.MeetingAppointment
+	if err := m.Scan(&existing); err != nil {
+		return fmt.Errorf("检查会议时间冲突失败: %w", err)
+	}
+	for _, item := range existing {
+		if item.StartTime == nil {
+			continue
+		}
+		dur := item.DurationMinutes
+		if dur <= 0 {
+			dur = 60
+		}
+		existStart := item.StartTime.Time
+		existEnd := existStart.Add(time.Duration(dur) * time.Minute)
+		if existStart.Before(newEnd) && newStart.Before(existEnd) {
+			return errs.Bizf(
+				"您在该时间段已有会议「%s」（%s - %s），同一时间不能安排多场会议",
+				item.Title,
+				existStart.Format("01-02 15:04"),
+				existEnd.Format("15:04"),
+			)
+		}
+	}
+	return nil
+}
+
+// checkNoActiveMeeting 校验同一用户当前是否已有正在进行的会议，避免同时开启多场进行中会议。
+func (s *MeetingService) checkNoActiveMeeting(ctx context.Context, userId, excludeId int64) error {
+	if userId <= 0 {
+		return nil
+	}
+	cols := dao.MeetingAppointment.Columns()
+	m := dao.MeetingAppointment.Ctx(ctx).
+		Where(cols.CreatorId, userId).
+		WhereNull(cols.DeletedAt).
+		Where(cols.Status, consts.MeetingStatusRunning)
+	if excludeId > 0 {
+		m = m.WhereNot(cols.Id, excludeId)
+	}
+	var active entity.MeetingAppointment
+	err := m.Limit(1).Scan(&active)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("检查进行中会议失败: %w", err)
+	}
+	if active.Id > 0 {
+		return errs.Bizf("您当前已有正在进行的会议「%s」，请先结束或返回该会议", active.Title)
+	}
+	return nil
+}
+
 func (s *MeetingService) Schedule(ctx context.Context, userId int64, in *ScheduleInput) (*entity.MeetingAppointment, string, error) {
 	startTimeGT, err := gtime.StrToTime(in.StartTime)
 	if err != nil {
 		return nil, "", fmt.Errorf("开始时间格式错误: %w", err)
+	}
+	if err := s.checkTimeConflict(ctx, userId, startTimeGT, in.DurationMinutes, 0); err != nil {
+		return nil, "", err
 	}
 
 	// 不再生成本地会议号：对外只认三方号，同步成功回填 THIRD_PARTY_MEETING_NUMBER 之前这场会没有号。
@@ -173,6 +255,9 @@ func NormalizeLaunchKind(kind string, scheduled bool) string {
 }
 
 func (s *MeetingService) QuickStart(ctx context.Context, userId int64, in *ScheduleInput) (*entity.MeetingAppointment, string, error) {
+	if err := s.checkNoActiveMeeting(ctx, userId, 0); err != nil {
+		return nil, "", err
+	}
 	now := gtime.Now()
 
 	meeting := &do.MeetingAppointment{
@@ -306,6 +391,9 @@ func (s *MeetingService) Start(ctx context.Context, id, userId int64, account st
 	// 谁都能 start 就等于谁都能替主持人把成员放进会里。
 	if !CanManage(m, userId, account) {
 		return "", errs.Bizf("只有会议主持人可以开始这场会议")
+	}
+	if err := s.checkNoActiveMeeting(ctx, userId, id); err != nil {
+		return "", err
 	}
 	if reason := s.callManagement(ctx, userId, m, "start"); reason != "" {
 		return reason, nil
@@ -770,6 +858,9 @@ func (s *MeetingService) Update(ctx context.Context, id int64, in *ScheduleInput
 	startTimeGT, err := gtime.StrToTime(in.StartTime)
 	if err != nil {
 		return nil, "", fmt.Errorf("开始时间格式错误: %w", err)
+	}
+	if err := s.checkTimeConflict(ctx, userId, startTimeGT, in.DurationMinutes, id); err != nil {
+		return nil, "", err
 	}
 
 	data := do.MeetingAppointment{
