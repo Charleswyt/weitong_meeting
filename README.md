@@ -8,3 +8,11 @@
 
 契约（改接口必动）：[`contracts/`](./contracts/)。  
 `AGENTS.md` 仅作仓内应用发现标志。
+
+## 中卫通公网会议
+
+网页在 `frontend/`，账号和会议业务后端在 `backend/`，转录和录制助手在 `assistant/`。音视频通过独立部署的中卫通媒体服务接入。
+
+- [公网适配变更记录](./docs/中卫通公网会议适配变更记录.md)
+- [可导入 ApiPost 的接口集合](./contracts/中卫通公网会议_Apipost接口集合.json) · [OpenAPI](./contracts/api.openapi.yaml)
+- [阿里云构建和部署](./deploy/aliyun/README.md)

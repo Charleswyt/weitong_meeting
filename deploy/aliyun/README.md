@@ -19,7 +19,17 @@
 
 ## 构建和发布
 
-使用 Node 24、pnpm 12 和仓库的锁文件构建前端。执行 `pnpm install --frozen-lockfile`、`pnpm exec vue-tsc` 和 `pnpm exec vite build --base=/zwt-meeting/ --sourcemap=false`。Go 后端使用 go.mod 对应的 Go 版本编译。部署时以发布目录和 `current` 软链接切换二进制和网页，数据库独立持久化。
+在 `frontend/` 使用 Node 24、pnpm 12 和仓库的锁文件构建前端。
+
+```sh
+pnpm install --frozen-lockfile
+pnpm exec vue-tsc
+pnpm exec vite build --base=/zwt-meeting/
+```
+
+公网版本 `20261126-adaptive-912d78286ac6` 对应会议源码 `48cb8fb`。该版本使用项目默认的 source map 配置生成 `dist/`，打发布包时排除 `*.map`。验收时使用原发布工作区共享的 `node_modules`，复现了全部 71 个前端文件的 SHA256。独立安装同一锁文件时，分块文件名可能变化，发布时应一起交付同次构建的首页和静态资源。
+
+Go 后端使用 `backend/go.mod` 对应的版本编译。部署时以发布目录和 `current` 软链接切换二进制和网页，数据库独立持久化。
 
 将现场提供的 `config.yaml` 和 `smtp.local.yaml` 放到源码的 `backend/manifest/config/`。原项目运行时读取 `config.yaml`。本次部署将后者中的邮件设置合并进生效配置，并为新实例生成专用 JWT 签名密钥、SM2 私钥和媒体交换凭据。更新时保留已生效的密钥和数据库。首次建库包含业务表及基础字典，正式用户通过邮箱注册。
 
