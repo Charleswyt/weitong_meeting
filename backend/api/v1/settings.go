@@ -27,6 +27,7 @@ type SettingsUpdateRes struct{}
 // SettingsCapabilitiesRes 是「当前部署支持什么」的只读回答。
 // 与偏好分开的理由：PreferenceVo 的 18 键是 PUT 的全量请求体，塞只读键会把全量覆盖弄坏。
 type SettingsCapabilitiesRes struct {
+	AccessNode      string       `json:"accessNode"`
 	FaceEnhancement CapabilityVo `json:"faceEnhancement"`
 }
 

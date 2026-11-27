@@ -11,6 +11,7 @@ import (
 
 	v1 "cloud-conference-backend/api/v1"
 	"cloud-conference-backend/internal/consts"
+	"cloud-conference-backend/internal/edgeaccess"
 	"cloud-conference-backend/internal/errs"
 	"cloud-conference-backend/internal/model/entity"
 	"cloud-conference-backend/internal/response"
@@ -390,6 +391,11 @@ func (c *Controller) Precheck(r *ghttp.Request) {
 
 // Join 完成三方入会并把参会令牌留在服务端（契约 §5.2）。
 func (c *Controller) Join(r *ghttp.Request) {
+	edge, valid := edgeaccess.Verify(r.Request, r.GetBody())
+	if !valid {
+		r.Response.WriteStatus(403)
+		return
+	}
 	var req v1.MeetingJoinReq
 	if err := r.Parse(&req); err != nil {
 		response.FailValidate(r, err)
@@ -465,12 +471,20 @@ func (c *Controller) Join(r *ghttp.Request) {
 		}
 	}
 	endpointType, deviceID := service.JoinEndpoint(r.Context())
+	if edge != "" {
+		endpointType, deviceID = "ship", edge
+	}
+	accountName := user.ThirdPartyAccount
+	if thirdparty.OceanFederation() {
+		accountName = thirdparty.OceanAccount(userId)
+	}
 	var result *thirdparty.JoinResult
 	err = c.authSvc.WithTokenRetry(r.Context(), userId, func(token string) error {
 		res, callErr := c.adapter.JoinMeeting(r.Context(), token, &thirdparty.JoinReq{
 			MeetingNumber:    externalNo,
 			DisplayName:      displayName,
-			AccountName:      user.ThirdPartyAccount,
+			AccountName:      accountName,
+			Password:         req.Password,
 			EndpointType:     endpointType,
 			DeviceId:         deviceID,
 			ClientId:         webClientId(userId),
@@ -526,6 +540,7 @@ func (c *Controller) Join(r *ghttp.Request) {
 		UserId:           userId,
 		ParticipantId:    result.ParticipantId,
 		ParticipantToken: result.ParticipantToken,
+		EndpointType:     endpointType,
 		JoinedAt:         gtime.Now().Time,
 	})
 	if room, ok := c.registry.Room(roomKey); ok {
@@ -584,7 +599,7 @@ func (c *Controller) Leave(r *ghttp.Request) {
 		glog.Warningf(r.Context(), "离会时上游已无此端 meeting=%d user=%d: %v", req.MeetingId, userId, err)
 	}
 	c.registry.Leave(req.MeetingId, userId)
-	if !c.adapter.IsSinosatV1(r.Context()) {
+	if !thirdparty.OceanFederation() && !c.adapter.IsSinosatV1(r.Context()) {
 		if m, err := c.meetingSvc.GetDetail(r.Context(), req.MeetingId); err == nil && m != nil && m.CreatorId == userId {
 			c.meetingSvc.MarkHostLeft(req.MeetingId, userId)
 		}

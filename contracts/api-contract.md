@@ -952,3 +952,19 @@ decodedFrameKbps 按发布端解码后逐帧可见像素字节计算。publishKb
 - 新录制默认仅发起录制的主持人可回放。停止后由其调用 `PUT .../sharing/{captureId}` 替换参会账号名单，空数组收回分发。每次获取文件重新鉴权。旧归档沿用创建时的权限。
 - 个人主持词库使用 `GET/PUT /assist/v1/settings/glossary`。本场主持人可从会议设置用既有 `PUT .../terms` 覆盖本场标准词，后续识别先对齐术语再翻译。
 - 会中返回 `minutesStatus=processing`、`minutes=null`。已存在的会后接口仅在会议正式结束后可用。本版本未新增外部纪要 API。
+
+## 共用会场与边云入口（2026-11-27）
+
+| 操作 | 前端使用的接口 | 语义 |
+| --- | --- | --- |
+| 识别入口 | `GET /api/v1/settings/capabilities` | 登录后读取 `data.accessNode`，云端为 `cloud`，板卡为 `edge`。`faceEnhancement.supported` 单独表示人脸增强能力。 |
+| 建会与预约 | `POST /api/v1/meetings/quick-start`、`POST /api/v1/meetings/schedule` | 分享返回的 `meetingNo`。公网、板卡、中卫通、Ocean 和海星可以输入同一个号码。 |
+| 查号、入会 | `POST /api/v1/meetings/precheck`、`POST /api/v1/meetings/join` | 发送 `meetingNo`，按预检补齐密码，会中录制须明确同意。成功后保存本次响应的 `meetingId` 与 `participantId`。 |
+| 会场名单及媒体 | `GET /api/v1/meetings/{id}/state`、原有会议 WebSocket | 使用本次入会的 `meetingId`，包含其他入口的成员、摄像头、麦克风和屏幕共享。按每路返回的传输方式播放。 |
+| 视频发送与观看 | `POST /api/v1/meetings/{id}/publications`、返回的同源媒体端点 | 云端按所选策略转发或压缩。板卡页面先把摄像头或共享屏幕交给本机 RK 编码器，麦克风使用 Opus。仅订阅其他成员的发布。 |
+
+两个页面都使用中卫通自己的登录方式。Ocean 与海星继续使用平台登录及已有会议授权，主持人以原会场指定的账号为准。中卫通网页只携带当前登录的业务令牌。平台应用沿用网关兑换参会句柄的接口，Ocean 原生客户端在入会后用自身的 `participantToken` 调用会场接口。各方各自维护登录令牌和成员句柄，邀请中只分享会议号。
+
+新建会议使用 Ocean 分配的号码。中卫通网页支持 6 至 12 位数字，粘贴时会去掉空格和短横线。历史预约的记录 ID 和旧回放继续使用原值。板卡页面复制邀请时给出公网地址。在自己的界面输入会议号即可互通。
+
+共用会场在发布时确定每路视频的接收方式。会中修改 `PUT /api/v1/meetings/{id}/publications/{pubId}/settings` 如返回 HTTP 409 和 `publication_republish_required`，发布端保留当前浏览器采集轨道，停止该路旧发布，再携带新配置创建发布并协商 WHIP。会场、麦克风和另一条视频持续运行。已有中卫通页面会自动执行，旧媒体服务的原地修改继续返回 revision。

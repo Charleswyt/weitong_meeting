@@ -1,3 +1,4 @@
+import re
 import hashlib
 import hmac
 import os
@@ -134,7 +135,9 @@ def watermarked(source, kind, meeting, user, recording, audit, target=None):
             "-shortest",
         ]
     else:
-        args += ["-map", "0:v:0", "-map", "0:a:0?"]
+        # Screen sharing can have a 1 kHz time base and irregularly spaced frames.
+        # Keep the captured timestamps when burning the per-viewer watermark.
+        args += ["-map", "0:v:0", "-map", "0:a:0?", "-vsync", "vfr"]
     args += [
         "-vf",
         overlay,
@@ -172,6 +175,7 @@ class CloudCapture:
         self.mutex = threading.Lock()
         self.stop = threading.Event()
         self.retry = {}
+        self.empty_since = {}
         # FFmpeg 4.x uses -timeout for listening as an RTSP server. Its client option is -stimeout.
         rtsp_help = subprocess.check_output(
             ["/usr/bin/ffmpeg", "-hide_banner", "-h", "demuxer=rtsp"],
@@ -180,6 +184,7 @@ class CloudCapture:
         )
         self.socket_timeout = "-stimeout" if "  -stimeout " in rtsp_help else "-timeout"
         with app.db() as c:
+            c.execute("insert or ignore into capture_finish select id,?,'service_restart',null from captures where status='running'", (time.time(),))
             c.execute("update captures set status='interrupted' where status='running'")
             c.execute("update files set status='interrupted' where status='writing'")
         for p in app.vault.dir.glob("*.part"):
@@ -187,6 +192,11 @@ class CloudCapture:
 
     def media_uri(self, path):
         cfg = self.app.cfg
+        if path.startswith("ocean:"):
+            native = path.removeprefix("ocean:")
+            if not re.fullmatch(r"conference/browser/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+", native):
+                raise ValueError("无效的公共会场媒体路径")
+            return f"rtsp://127.0.0.1:{int(cfg['oceanRtspPort'])}/{native}"
         return f"rtsp://{quote(cfg['mediaUser'], safe='')}:{quote(cfg['mediaPassword'], safe='')}@127.0.0.1:{int(cfg['rtspPort'])}/{path}"
 
     def action(self, key, job, track):
@@ -276,15 +286,26 @@ class CloudCapture:
             jobs = [dict(r) for r in c.execute("select * from captures where status='running'")]
         state = self.app.activity()["rooms"] if jobs else {}
         wanted = {}
+        self.empty_since = {job["id"]: self.empty_since[job["id"]] for job in jobs if job["id"] in self.empty_since}
         with self.app.db() as c:
             for job in jobs:
                 room = state.get(job["number"], {})
                 if not room.get("members"):
-                    c.execute("update captures set status='finished' where id=?", (job["id"],))
+                    empty = self.empty_since.setdefault(job["id"], time.monotonic())
+                    if time.monotonic() - empty >= 300:
+                        changed = c.execute("update captures set status='finished' where id=? and status='running'", (job["id"],)).rowcount
+                        if changed:
+                            c.execute("insert or ignore into capture_finish values(?,?,'empty_timeout',null)", (job["id"], time.time()))
                     continue
+                self.empty_since.pop(job["id"], None)
                 owner = {m["id"]: m["subject"] for m in room["members"] if m["source"] == "weitong"}
+                native = {m["id"]:m for m in room["members"] if m["source"] == "ocean"}
                 for t in room["tracks"]:
                     uid = owner.get(t["participantId"])
+                    guest = native.get(t["participantId"])
+                    if guest and float(guest["consentAt"]) >= job["at"] and t["ready"]:
+                        # An Ocean account cannot log into the Weitong replay ACL. Its files belong to the recording.
+                        wanted[(job["id"], t["id"], t["path"])] = (job, dict(t, owner=0))
                     if not uid or not t["ready"]:
                         continue
                     permission = c.execute(

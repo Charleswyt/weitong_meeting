@@ -60,17 +60,20 @@ func (c *Controller) CreatePublication(r *ghttp.Request) {
 	if sourceDeviceID != "" {
 		payload["sourceDeviceId"] = sourceDeviceID
 	}
-	if c.adapter.IsSinosatV1(r.Context()) {
+	if c.adapter.IsSinosatV1(r.Context()) || thirdparty.OceanFederation() {
 		if req.TransportMode == "cloud" && (req.MediaKind == "audio" || req.EncodingStrategy == "dynamic_gop" || req.TargetBitrateKbps < 0 || req.TargetBitrateKbps > 6000 || (req.TargetBitrateKbps > 0 && req.TargetBitrateKbps < 20)) {
 			response.FailValidate(r, fmt.Errorf("请为视频选择有效的云端压缩策略与目标码率"))
 			return
 		}
 		payload["transportMode"] = req.TransportMode
+		if thirdparty.OceanFederation() && (sess.EndpointType == "ship" || req.TransportMode != "cloud") {
+			payload["transportMode"] = "original"
+		}
 	}
 	if req.TargetBitrateKbps > 0 {
 		payload["targetBitrateKbps"] = req.TargetBitrateKbps
 	}
-	if req.EncodingStrategy != "" {
+	if req.EncodingStrategy != "" && !(thirdparty.OceanFederation() && payload["transportMode"] == "original") {
 		payload["encodingStrategy"] = req.EncodingStrategy
 	}
 	// 页面刷新会丢掉前端的 RTCPeerConnection，旧发布在三方还挂着；
@@ -99,9 +102,10 @@ func (c *Controller) CreatePublication(r *ghttp.Request) {
 		return
 	}
 	room.BindWhip(pubId, session.WhipTarget{
-		OfferURL:   whipURL,
-		UserId:     userId,
-		AuthBearer: sess.ParticipantToken, // 公网会议 WHIP 要 Bearer；Ocean 预授权 URL 忽略此字段
+		OfferURL:         whipURL,
+		UserId:           userId,
+		CloudCompression: thirdparty.OceanFederation() && payload["transportMode"] == "cloud",
+		AuthBearer:       sess.ParticipantToken, // 公网会议 WHIP 要 Bearer；Ocean 预授权 URL 忽略此字段
 	})
 	// 船端浏览器这一路要过船内的 RK 接收槽。三方自己的次序是"先把槽武装起来，再接上实时轨道"
 	// （其注释原文：the RK reader cannot miss the only startup IDR），所以赶在把地址交给浏览器之前调。
@@ -223,14 +227,35 @@ func (c *Controller) Whip(r *ghttp.Request) {
 	// 不一致时上游不会说"编码不对"，只会一直回 425 direct_video_not_ready（见 adapter.go 的投放头注释）。
 	// 所以把 answer 里选定的编码记下来，出问题时这是唯一的一手证据。
 	glog.Debugf(r.Context(), "WHIP 协商完成 pub=%s answer选定视频编码=%s", req.PubId, answerVideoCodec(answer))
-	// 这个函数（转发 offer）本身不调 prepare：browser_whip 那条发布实测回 404 rtsp_describe_404。
-	// 船端浏览器那一路是 rk_browser_roi，它在 CreatePublication 里**已经**武装过接收槽了 ——
-	// 时序要求是"先武装、再接轨道"，放到这里就晚了。
-	// 消费侧那条局域网槽反过来必须叫 prepare{role:"consumer"}，否则槽里永远没有流，见 armRkReceiver。
-	// 三处同名动作各自的边界别合并。
+	if target.CloudCompression {
+		// Publish the answer immediately. MediaMTX first needs the browser's ICE connection.
+		go c.prepareCloudEncoder(target.AuthBearer, req.PubId)
+	}
 	r.Response.Header().Set("Content-Type", "application/sdp")
 	r.Response.Header().Set("Cache-Control", "no-store")
 	r.Response.Write(answer)
+}
+
+func (c *Controller) prepareCloudEncoder(token, pub string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(650 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			glog.Warningf(ctx, "云端压缩未就绪 publication=%s", pub)
+			return
+		case <-ticker.C:
+			res, err := c.adapter.PreparePublication(ctx, token, pub, thirdparty.PrepareRolePublisher)
+			if err == nil && res != nil && res.SoftwareRoiAttached {
+				return
+			}
+			if res != nil && (res.Reason == "publication_not_found" || res.Reason == "participant_not_joined") {
+				return
+			}
+		}
+	}
 }
 
 // answerVideoCodec 从 WHIP answer 的 SDP 里取出**实际选定**的视频编码（H.264 带上 profile 参数）。
@@ -341,6 +366,10 @@ func (c *Controller) SetVideoSettings(r *ghttp.Request) {
 	}
 	if _, ok := room.WhipForUser(req.PubId, userID); !ok {
 		response.FailStatus(r, http.StatusForbidden, "仅发布者可设置自己的媒体", "publication_owner_required")
+		return
+	}
+	if thirdparty.OceanFederation() {
+		response.FailStatus(r, http.StatusConflict, "请沿用当前采集轨道，以所选配置重新发布本路视频", "publication_republish_required")
 		return
 	}
 	if !c.adapter.IsSinosatV1(ctx) {

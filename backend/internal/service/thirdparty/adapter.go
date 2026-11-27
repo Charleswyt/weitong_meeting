@@ -79,6 +79,9 @@ func (a *Adapter) FetchVendorAsset(ctx context.Context, path string) ([]byte, er
 
 // vendorAssetOrigin 静态资产所在 origin（scheme+host），不含 API path。
 func (a *Adapter) vendorAssetOrigin(ctx context.Context) string {
+	if origin := os.Getenv("WEITONG_OCEAN_ORIGIN"); OceanFederation() && origin != "" {
+		return strings.TrimRight(origin, "/")
+	}
 	base := a.getBaseURL(ctx)
 	u, err := url.Parse(base)
 	if err != nil || u.Scheme == "" || u.Host == "" {
@@ -114,6 +117,19 @@ func (a *Adapter) getBaseURL(ctx context.Context) string {
 // **不要改成"解 base64 直连云端"**：网关对 target 有白名单（外部目标实测 403 `media_target_forbidden`），
 // 且船端局域网本就未必能公网直连。
 func (a *Adapter) resolveTarget(ctx context.Context, targetURL string) string {
+	if OceanFederation() && os.Getenv("WEITONG_OCEAN_ORIGIN") != "" {
+		u, err := url.Parse(targetURL)
+		if err == nil && u.User == nil && u.Scheme+"://"+u.Host == os.Getenv("WEITONG_OCEAN_ORIGIN") {
+			// A signed media URL can be signaled on the same cloud host. ICE addresses
+			// in its answer remain the public MediaMTX addresses used by both clients.
+			switch {
+			case strings.HasPrefix(u.Path, "/conference/browser/"):
+				return "http://127.0.0.1:8889" + u.RequestURI()
+			case strings.HasPrefix(u.Path, "/api/conference/"):
+				return a.getBaseURL(ctx) + u.RequestURI()
+			}
+		}
+	}
 	if targetURL == "" || strings.HasPrefix(targetURL, "http") {
 		return targetURL
 	}

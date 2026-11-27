@@ -1,0 +1,23 @@
+[Unit]
+Description=Weitong standalone board meeting and Rockchip video gateway
+After=network-online.target rtsp-roi.service
+Wants=network-online.target
+
+[Service]
+User=weitong-edge
+Group=weitong-edge
+SupplementaryGroups=video render
+ExecStart=/opt/weitong-edge/current/edge -config /etc/weitong-edge/config.json
+Environment=LD_LIBRARY_PATH=/opt/rtsp_roi/runtime/ffmpeg-rockchip/prefix/lib
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+UMask=0077
+KillMode=control-group
+TimeoutStopSec=8
+
+[Install]
+WantedBy=multi-user.target

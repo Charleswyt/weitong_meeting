@@ -618,8 +618,6 @@ func (c *Controller) knownMeetingStatus(ctx context.Context, meetingId int64, ro
 	return ""
 }
 
-
-
 // StreamWhep 代理 WHEP 协商：浏览器发 recvonly offer，后端从上游状态里取预授权 WHEP 地址转发。
 // 上游地址与参会令牌都不进浏览器；RTP 由浏览器与媒体服务直连。
 func (c *Controller) StreamWhep(r *ghttp.Request) {
@@ -891,8 +889,8 @@ func whepVideoChannel(state *thirdparty.MeetingResponse, publicationId string) (
 	for _, p := range subscribableAliases(state, publicationId) {
 		switch service.VideoLegChannel(p) {
 		case consts.VideoChannelCloudWhep:
-			if p.CloudWhepUrl != "" {
-				return p.CloudWhepUrl, p, true
+			if p.BrowserWHEP() != "" {
+				return p.BrowserWHEP(), p, true
 			}
 		case consts.VideoChannelLanWhep:
 			return lanWhepURL(p), p, true
@@ -1021,4 +1019,3 @@ func parsePublication(raw []byte) (publicationId, whipURL string) {
 	}
 	return publicationId, whipURL
 }
-

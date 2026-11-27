@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS pending_minutes(meeting INTEGER PRIMARY KEY,title TEX
 CREATE TABLE IF NOT EXISTS capture_hosts(capture TEXT PRIMARY KEY,uid INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS capture_consent(capture TEXT,member TEXT,uid INTEGER,kinds TEXT,PRIMARY KEY(capture,member,uid));
 CREATE TABLE IF NOT EXISTS captures(id TEXT PRIMARY KEY,meeting INTEGER,number TEXT,audience TEXT,allowed TEXT,status TEXT,at REAL);
+CREATE TABLE IF NOT EXISTS capture_finish(capture TEXT PRIMARY KEY,at REAL NOT NULL,reason TEXT NOT NULL,actor INTEGER);
 CREATE UNIQUE INDEX IF NOT EXISTS active_capture ON captures(meeting) WHERE status='running';
 CREATE TABLE IF NOT EXISTS files(id TEXT PRIMARY KEY,meeting INTEGER,capture TEXT,owner INTEGER,kind TEXT,status TEXT,at REAL,bytes INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS exports(id TEXT PRIMARY KEY, file TEXT,uid INTEGER,at REAL);
@@ -615,6 +616,7 @@ class App:
         with self.db() as c:
             c.execute("begin immediate")
             if stop:
+                c.execute("insert or ignore into capture_finish select id,?,'host_stop',? from captures where meeting=? and status='running'", (time.time(), a["uid"], mid))
                 c.execute(
                     "update captures set status='finished' where meeting=? and status='running'",
                     (mid,),

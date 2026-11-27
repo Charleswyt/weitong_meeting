@@ -2280,9 +2280,15 @@ function deliveryFor(kind: VideoKind) {
   return readDelivery(userStore.userInfo?.username || '', kind)
 }
 async function applyVideoDelivery(kind: VideoKind, value: VideoDelivery): Promise<boolean> {
-  const id = await (kind === 'camera' ? whip : whipScreen).publicationIdWhenReady()
+  const publisher = kind === 'camera' ? whip : whipScreen
+  const id = await publisher.publicationIdWhenReady()
   if (!id) return false
-  await setVideoDelivery(meetingId, id, value)
+  try {
+    await setVideoDelivery(meetingId, id, value)
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.reason !== 'publication_republish_required') throw error
+    await publisher.republishVideo(id, value)
+  }
   return true
 }
 function resolveLaunchKind(): string {

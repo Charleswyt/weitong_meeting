@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -165,6 +166,10 @@ func (s *MeetingService) checkNoActiveMeeting(ctx context.Context, userId, exclu
 }
 
 func (s *MeetingService) Schedule(ctx context.Context, userId int64, in *ScheduleInput) (*entity.MeetingAppointment, string, error) {
+	if thirdparty.OceanFederation() {
+		// This database owns the organizer by user ID; legacy upstream account names belong to a different issuer.
+		in.HostAccount = ""
+	}
 	startTimeGT, err := gtime.StrToTime(in.StartTime)
 	if err != nil {
 		return nil, "", fmt.Errorf("开始时间格式错误: %w", err)
@@ -255,6 +260,10 @@ func NormalizeLaunchKind(kind string, scheduled bool) string {
 }
 
 func (s *MeetingService) QuickStart(ctx context.Context, userId int64, in *ScheduleInput) (*entity.MeetingAppointment, string, error) {
+	if thirdparty.OceanFederation() {
+		// This database owns the organizer by user ID; legacy upstream account names belong to a different issuer.
+		in.HostAccount = ""
+	}
 	if err := s.checkNoActiveMeeting(ctx, userId, 0); err != nil {
 		return nil, "", err
 	}
@@ -320,11 +329,17 @@ func (s *MeetingService) syncSchedule(ctx context.Context, userId, localId int64
 	}
 
 	var third *thirdparty.ThirdMeeting
+	hostAccount, cloudRecord := in.HostAccount, in.CloudRecord
+	if thirdparty.OceanFederation() {
+		// Encrypted recording is started and consented to per participant in the Weitong assistant.
+		cloudRecord = false
+		hostAccount = thirdparty.OceanAccount(userId)
+	}
 	err := s.WithTokenRetry(ctx, userId, func(token string) error {
 		if quick {
 			t, callErr := s.adapter.QuickStart(ctx, token, &thirdparty.QuickStartReq{
 				Title: in.Title, DurationMinutes: in.DurationMinutes,
-				HostUsername: in.HostAccount, CloudRecord: in.CloudRecord,
+				HostUsername: hostAccount, CloudRecord: cloudRecord,
 			})
 			if callErr == nil {
 				third = t
@@ -333,7 +348,7 @@ func (s *MeetingService) syncSchedule(ctx context.Context, userId, localId int64
 		}
 		t, callErr := s.adapter.ScheduleMeeting(ctx, token, &thirdparty.ScheduleReq{
 			Title: in.Title, StartAt: startAt, DurationMinutes: in.DurationMinutes,
-			HostUsername: in.HostAccount, CloudRecord: in.CloudRecord,
+			HostUsername: hostAccount, CloudRecord: cloudRecord,
 			Sources: []string{}, TargetDevices: []string{},
 		})
 		if callErr == nil {
@@ -913,7 +928,7 @@ func (s *MeetingService) GetExternalNumber(ctx context.Context, meetingNo string
 		return nil, fmt.Errorf("查询会议失败: %w", err)
 	}
 	if rec.IsEmpty() {
-		return nil, errs.Bizf("会议不存在")
+		return nil, errs.BizReason(errs.Bizf("会议不存在"), "meeting_not_found")
 	}
 	var m entity.MeetingAppointment
 	if err := rec.Struct(&m); err != nil {
@@ -925,14 +940,23 @@ func (s *MeetingService) GetExternalNumber(ctx context.Context, meetingNo string
 // ResolveExternal 把前端输入的会议号解析为三方会议号。只接三方号：
 // 命中本地行就取它记下的三方号 —— 没记下说明这场会根本没同步成功，明确报错而不是回落本地号（三方不认本地号）；
 // 本地没这行时，6 位以上的号按"三方建的会（手机/板卡发起）"放行，由上游判定存不存在。
+var externalNumber = regexp.MustCompile(`^[0-9]{6,12}$`)
+
 func (s *MeetingService) ResolveExternal(ctx context.Context, meetingNo string) (external string, local *entity.MeetingAppointment, err error) {
+	meetingNo = strings.NewReplacer(" ", "", "-", "").Replace(strings.TrimSpace(meetingNo))
+	if !externalNumber.MatchString(meetingNo) {
+		return "", nil, errs.Bizf("请输入 6 至 12 位数字会议号")
+	}
 	if local, err = s.GetExternalNumber(ctx, meetingNo); err == nil {
+		if IsTerminalStatus(local.Status) {
+			return "", nil, errs.Bizf("会议已结束")
+		}
 		if local.ThirdPartyMeetingNumber == "" {
 			return "", nil, errs.Bizf("这场会还没准备好，暂时无法入会")
 		}
 		return local.ThirdPartyMeetingNumber, local, nil
 	}
-	if len(meetingNo) >= 6 {
+	if errs.BizReasonOf(err) == "meeting_not_found" {
 		return meetingNo, nil, nil
 	}
 	return "", nil, err

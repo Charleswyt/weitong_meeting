@@ -29,6 +29,7 @@ type Session struct {
 	UserId           int64
 	ParticipantId    string
 	ParticipantToken string
+	EndpointType     string
 	MediaState       thirdparty.MediaState
 	// sourceTelemetryAt = 本端实测编码码率最近一次上报的时刻。三方只认 4 秒内的新鲜度，
 	// 过期的必须在取用时整段摘掉（见 NextMediaState）——留着旧值等于把"半分钟前的码率"
@@ -200,7 +201,8 @@ type WhipTarget struct {
 	OfferURL   string // 三方签发的预授权发布地址（公网会议则为绝对 WHIP 路径）
 	SessionURL string // WHIP 响应的 Location，用于 DELETE 拆流
 	// AuthBearer 公网会议族 WHIP/WHEP 需要参会令牌；Ocean 预授权 URL 留空。
-	AuthBearer string
+	AuthBearer       string
+	CloudCompression bool
 }
 
 func (room *MeetingRoom) BindWhip(publicationId string, t WhipTarget) {

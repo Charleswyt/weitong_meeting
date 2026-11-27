@@ -4,6 +4,7 @@ import (
 	"github.com/gogf/gf/v2/net/ghttp"
 
 	v1 "cloud-conference-backend/api/v1"
+	"cloud-conference-backend/internal/edgeaccess"
 	"cloud-conference-backend/internal/response"
 	"cloud-conference-backend/internal/service"
 )
@@ -27,12 +28,22 @@ func (c *Controller) Get(r *ghttp.Request) {
 }
 
 func (c *Controller) Capabilities(r *ghttp.Request) {
+	node, valid := edgeaccess.Verify(r.Request, nil)
+	if !valid {
+		r.Response.WriteStatus(403)
+		return
+	}
+	side := service.DeploymentSide
+	if node != "" {
+		side = "edge"
+	}
 	supported := service.FaceEnhancementSupported()
 	message := ""
 	if !supported {
 		message = service.FaceEnhancementUnsupportedMessage()
 	}
 	response.Ok(r, v1.SettingsCapabilitiesRes{
+		AccessNode:      side,
 		FaceEnhancement: v1.CapabilityVo{Supported: supported, Message: message},
 	})
 }

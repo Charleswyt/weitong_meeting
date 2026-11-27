@@ -204,7 +204,7 @@ export function useWhipPublish(getMeetingId: () => number) {
       conn.addTransceiver(track, init)
     }
     // 来源由后端定（按本实例端别与媒体类型），前端只照它决定编码偏好，别按"是不是边端"自己猜。
-    if (sourceType === 'rk_browser_roi') {
+    if (sourceType === 'rk_browser_roi' || (videoTrack && opts.delivery?.transportMode !== 'cloud')) {
       const caps = RTCRtpSender.getCapabilities?.('video')
       if (!caps?.codecs?.length) {
         // 不可判，不是"没有 H.264"：照默认协商继续发（与三方的 required 语义有一处差异，
@@ -397,5 +397,23 @@ export function useWhipPublish(getMeetingId: () => number) {
     return publishedSpec?.fps === next.fps && publishedSpec.width === next.width && publishedSpec.height === next.height
   }
 
-  return { publish, unpublish, publicationIdWhenReady, canReplaceVideoTrack, published: () => !!publicationId, publicationIdOf: () => publicationId, replaceVideoTrack, replaceAudioTrack }
+  async function republishVideo(expectedId: string, delivery: NonNullable<PublishOptions['delivery']>) {
+    const previous = options
+    const track = pc?.getSenders().find(sender => sender.track?.kind === 'video')?.track
+    if (publicationId !== expectedId || !previous || !track || track.readyState !== 'live') {
+      throw new PublishError('发布已变化，请重新选择设置')
+    }
+    const stream = new MediaStream([track])
+    const room = getMeetingId()
+    try {
+      await publish(stream, { ...previous, delivery })
+    } catch (error) {
+      if (!publicationId && getMeetingId() === room && track.readyState === 'live') {
+        await publish(stream, previous).catch(() => undefined)
+      }
+      throw error
+    }
+  }
+
+  return { publish, unpublish, republishVideo, publicationIdWhenReady, canReplaceVideoTrack, published: () => !!publicationId, publicationIdOf: () => publicationId, replaceVideoTrack, replaceAudioTrack }
 }

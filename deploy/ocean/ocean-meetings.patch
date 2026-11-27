@@ -1,0 +1,210 @@
+--- dev_cloud_backend.py
++++ dev_cloud_backend.py
+@@ -3,6 +3,7 @@
+ from __future__ import annotations
+
+ import argparse
++import weitong_federation
+ import base64
+ from collections import deque
+ import csv
+@@ -2496,6 +2497,8 @@
+         clean_username = str(requested or user.get("username") or "").strip()[:128]
+         if not clean_username:
+             return "", "host_account_required"
++        if weitong_federation.organizer(user) and clean_username == user["username"]:
++            return clean_username, "ok"
+         if str(user.get("role") or "") != "admin" and clean_username != str(user.get("username") or ""):
+             return "", "host_account_not_allowed"
+         with self.auth_db() as conn:
+@@ -3325,7 +3328,7 @@
+             ) for item in dynamic_publications] if detail == "full" else [],
+             "targetDevices": [str(value) for value in (meeting.get("target_devices") or []) if str(value).strip()],
+             "autoRecord": bool(meeting.get("auto_record")),
+-            "cloudRecord": bool(meeting.get("cloud_record")),
++            "cloudRecord": weitong_federation.recording_enabled(meeting),
+             "rkRecord": bool(meeting.get("rk_record")),
+             **self.board_recording_fields(meeting, rows=prefetched["board_recordings"] if prefetched is not None else None),
+             "roomId": room_id,
+@@ -3415,7 +3418,9 @@
+             return {"ok": False, "reason": "board_recording_admin_required"}
+         if board_enabled and (sources or target_devices):
+             return {"ok": False, "reason": "board_recording_dynamic_only"}
+-        if not self.frontend_can_manage(user) and not creation_device:
++        external_organizer = (weitong_federation.organizer(user) and not sources and not target_devices
++                              and not origin_proof and not board_enabled and not rk_record)
++        if not self.frontend_can_manage(user) and not creation_device and not external_organizer:
+             return {"ok": False, "reason": "meeting_participant_only"}
+         if not self.frontend_can_manage(user) and (sources or target_devices):
+             return {"ok": False, "reason": "meeting_participant_only"}
+@@ -3946,7 +3951,7 @@
+             if designated is not None:
+                 # The designated account always takes ownership when it is online.
+                 next_host_id = str(designated["participant_id"])
+-            elif not designated_has_joined:
++            elif designated_username.startswith(weitong_federation.PREFIX) or not designated_has_joined:
+                 # Before the designated account first joins, the room deliberately
+                 # remains hostless instead of promoting the first ordinary user.
+                 next_host_id = ""
+@@ -3955,7 +3960,7 @@
+             else:
+                 # Once the designated host has left, transfer to the earliest
+                 # remaining participant until the designated account returns.
+-                next_host_id = str(participants[0]["participant_id"]) if participants else ""
++                next_host_id = next((str(p["participant_id"]) for p in participants if not str(p["account_name"]).startswith(weitong_federation.PREFIX)), "")
+             conn.execute(
+                 "UPDATE conference_meetings SET host_participant_id=?, updated_at=? WHERE meeting_id=?",
+                 (next_host_id, now_sec(), clean_meeting_id),
+@@ -5085,6 +5090,10 @@
+                 f"{media_base}/{hd_path}/whep?"
+                 f"{self.conference_media_query(publication, ticket=read_ticket, role='consumer')}"
+             )
++        if (publication_active and source_type == "browser_whip" and publication.get("has_video")
++                and not compressed_delivery and hd_path and not hd_whep_url and viewer_participant):
++            ticket = self.conference_media_ticket(publication, actions=["read"], media_path=hd_path)
++            hd_whep_url = f"{media_base}/{hd_path}/whep?{self.conference_media_query(publication, ticket=ticket, role='consumer')}"
+         preview_ready = False
+         if refresh_runtime and hd_ready and preview_path and publication.get("has_video"):
+             preview_ready, _ = self.ensure_conference_preview_worker(publication)
+@@ -5329,6 +5338,7 @@
+                             "browserDeliveryMode": "rk_local_https_whep",
+                         }
+                     )
++        weitong_federation.legacy_offer(self, publication, participant, viewer_participant, payload)
+         return payload
+
+     def prepare_conference_browser_replay(self, publication, state):
+@@ -5736,7 +5746,7 @@
+                 "status": str(meeting.get("status") or "scheduled"),
+                 "hostParticipantId": host_participant_id,
+                 "participantCount": len(participants),
+-                "cloudRecord": bool(meeting.get("cloud_record")),
++                "cloudRecord": weitong_federation.recording_enabled(meeting),
+                 **self.board_recording_fields(meeting),
+             },
+             "participants": [
+@@ -5820,7 +5830,7 @@
+                 "durationMinutes": int(meeting.get("duration_minutes") or 60),
+                 "participantCount": len(participants),
+                 "publicationCount": len(publications),
+-                "cloudRecord": bool(meeting.get("cloud_record")),
++                "cloudRecord": weitong_federation.recording_enabled(meeting),
+                 "rkRecord": bool(meeting.get("rk_record")),
+                 **self.board_recording_fields(meeting),
+                 "hostUsername": str(meeting.get("host_username") or ""),
+@@ -5889,7 +5899,7 @@
+             return {
+                 "ok": False,
+                 "reason": "recording_consent_required",
+-                "cloudRecord": bool(meeting.get("cloud_record")),
++                "cloudRecord": weitong_federation.recording_enabled(meeting),
+                 "rkRecord": False,
+             }
+         clean_name = str(display_name or "").strip()[:64]
+@@ -6543,6 +6553,7 @@
+         *,
+         media_kind: str,
+         source_type: str,
++        transport_mode: str = "",
+         source_device_id: str = "",
+         source_lane_id: int = 0,
+         has_video: bool = True,
+@@ -6611,6 +6622,9 @@
+                 return {"ok": False, "reason": "bad_source_type"}
+         if not has_video and not has_audio:
+             return {"ok": False, "reason": "publication_has_no_media"}
++        federated_browser = clean_source_type == "browser_whip" and str(participant.get("account_name") or "").startswith(weitong_federation.PREFIX)
++        if federated_browser and transport_mode == "cloud" and not env_flag("DEV_CLOUD_CONFERENCE_BROWSER_SOFTWARE_ROI_ENABLE", False):
++            return {"ok": False, "reason": "cloud_compression_unavailable"}
+         clean_width = max(0, int(width or 0))
+         clean_height = max(0, int(height or 0))
+         clean_fps = max(0, int(fps or 0))
+@@ -6631,7 +6645,9 @@
+             size_valid = ((clean_width, clean_height) in CONFERENCE_VIDEO_SIZES
+                           if clean_encoding_strategy != "optimized" else
+                           16 <= clean_width <= 4096 and 16 <= clean_height <= 4096)
+-            if not size_valid or not 1 <= clean_fps <= max(CONFERENCE_VIDEO_FPS):
++            if federated_browser:
++                size_valid = 16 <= clean_width <= 4096 and 16 <= clean_height <= 4096 and not (clean_width % 2 or clean_height % 2)
++            if not size_valid or not 1 <= clean_fps <= (60 if federated_browser else max(CONFERENCE_VIDEO_FPS)):
+                 return {"ok": False, "reason": "bad_publication_video_spec"}
+             clean_source_fps_hint = (
+                 max(1.0, min(float(clean_fps), float(parsed_source_fps_hint)))
+@@ -6645,7 +6661,8 @@
+             clean_width = clean_height = clean_fps = 0
+             clean_source_fps_hint = 0.0
+         browser_software_roi = bool(
+-            has_video
++            not (federated_browser and transport_mode == "original")
++            and has_video
+             and clean_source_type == "browser_whip"
+             and env_flag("DEV_CLOUD_CONFERENCE_BROWSER_SOFTWARE_ROI_ENABLE", False)
+         )
+@@ -9603,7 +9620,12 @@
+             int(meeting.get("start_at") or current)
+             + max(1, int(meeting.get("duration_minutes") or 60)) * 60
+         )
+-        if current >= scheduled_end_at and active_count == 0:
++        close_empty = current >= scheduled_end_at
++        if str(meeting.get("created_by") or "").startswith(weitong_federation.PREFIX):
++            with self.conference_db() as conn:
++                last = conn.execute("SELECT max(left_at) FROM conference_participants WHERE meeting_id=?", (meeting_id,)).fetchone()[0]
++            close_empty = (current - int(last) >= 300) if last else close_empty
++        if close_empty and active_count == 0:
+             system_user = {
+                 "username": str(meeting.get("created_by") or "conference-system"),
+                 "role": str(meeting.get("created_role") or "admin"),
+@@ -25098,6 +25120,8 @@
+
+     def stream_conference_direct_media(self, publication_id: str, media_kind: str) -> None:
+         token = self.conference_participant_token_from_request()
++        if weitong_federation.serve_original(self, publication_id, media_kind, token):
++            return
+         info = self.state.conference_direct_media_stream_info(
+             publication_id,
+             token,
+@@ -25165,7 +25189,13 @@
+         return str((query.get("participantToken") or [""])[0]).strip()
+
+     def frontend_auth_user(self) -> dict[str, Any] | None:
+-        return self.state.frontend_user_for_token(self.frontend_bearer_token())
++        external = weitong_federation.actor(self)
++        if external:
++            return external
++        user = self.state.frontend_user_for_token(self.frontend_bearer_token())
++        if user and str(user.get("username") or "").startswith(weitong_federation.PREFIX):
++            return None
++        return user
+
+     def require_frontend_auth(self) -> dict[str, Any] | None:
+         user = self.frontend_auth_user()
+@@ -25362,6 +25392,10 @@
+
+     def do_GET(self) -> None:
+         request_received_unix_ns = time.time_ns()
++        if self.path == "/internal/weitong/rooms":
++            status, state = weitong_federation.native_activity(self)
++            self.send_json(status, state)
++            return
+         parsed = urlparse(self.path)
+         parts = [part for part in parsed.path.split("/") if part]
+         if parts[:3] == ["api", "frontend", "history"]:
+@@ -26321,6 +26355,10 @@
+             ):
+                 self.send_json(HTTPStatus.UNAUTHORIZED, {"ok": False, "reason": "account_auth_required"})
+                 return
++            denial = weitong_federation.deny_join(self.state, str(payload.get("meetingNumber") or ""), authenticated_user, payload)
++            if denial:
++                self.send_json(HTTPStatus.CONFLICT, {"ok": False, "reason": denial})
++                return
+             result = self.state.join_conference_meeting(
+                 meeting_number=str(payload.get("meetingNumber") or ""),
+                 display_name=str(payload.get("displayName") or ""),
+@@ -26421,6 +26459,7 @@
+                 source_lane_id = 0
+             result = self.state.create_conference_publication(
+                 self.conference_participant_token_from_request(payload),
++                transport_mode=str(payload.get("transportMode") or ""),
+                 media_kind=str(payload.get("mediaKind") or "camera"),
+                 source_type=str(payload.get("sourceType") or "browser_whip"),
+                 source_device_id=str(payload.get("sourceDeviceId") or ""),

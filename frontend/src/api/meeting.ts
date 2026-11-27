@@ -173,7 +173,7 @@ export interface PublicationCreateBody {
 
 // 发布/停止走我方后端；三方 whipUrl 与参会令牌都留在服务端，前端只拿 publicationId 和代理路径。
 export function setVideoDelivery(id: number, pubId: string, value: components['schemas']['VideoDelivery']) {
-  return put<{ revision: number }>(`/api/v1/meetings/${id}/publications/${pubId}/settings`, value)
+  return put<{ revision: number }>(`/api/v1/meetings/${id}/publications/${pubId}/settings`, value, { silent: true })
 }
 
 export function createPublication(meetingId: number, body: PublicationCreateBody) {

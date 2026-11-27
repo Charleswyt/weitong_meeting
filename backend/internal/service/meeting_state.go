@@ -77,8 +77,17 @@ func BuildMeetingStateVo(meetingId int64, resp *thirdparty.MeetingResponse, room
 		realMedia[pub.ParticipantId] = p
 	}
 
+	endpoints := make(map[string]string)
+	if room != nil {
+		for _, member := range room.SessionsSnapshot() {
+			endpoints[member.ParticipantId] = member.EndpointType
+		}
+	}
 	nameById := make(map[string]string, len(resp.Participants))
 	for _, p := range resp.Participants {
+		if p.EndpointType == "" {
+			p.EndpointType = endpoints[p.ParticipantId]
+		}
 		displayName := p.DisplayName
 		if override := room.DisplayNameOverrideForParticipant(p.ParticipantId); override != "" {
 			displayName = override
@@ -182,14 +191,14 @@ func pubReady(pub thirdparty.Publication) bool {
 	return pub.Status == "ready" || pub.HdReady || pub.RkReceiverLaneId > 0 ||
 		pub.DirectVideoUrl != "" || pub.DirectAudioUrl != "" ||
 		pub.AudioWhepUrl != "" || pub.RkReceiverWhepUrl != "" || pub.RkReceiverAudioWhepUrl != "" ||
-		pub.CloudWhepUrl != ""
+		pub.BrowserWHEP() != ""
 }
 
 // pubHasVideo 只认视频端点。RkReceiverAudioWhepUrl 是音频通道，不能算作视频。
 // RK 那条腿的"端点"有两种写法：网关直接给地址，或只给接收槽路径（由消费方拼
 // /__ship_lan_whep/{path}/whep）—— 两种都算有视频，否则会出现"通道判据说有、端点判据说没有"。
 func pubHasVideo(pub thirdparty.Publication) bool {
-	return pub.DirectVideoUrl != "" || pub.RkReceiverWhepUrl != "" || pub.RkReceiverPath != "" || pub.CloudWhepUrl != ""
+	return pub.DirectVideoUrl != "" || pub.RkReceiverWhepUrl != "" || pub.RkReceiverPath != "" || pub.BrowserWHEP() != ""
 }
 
 // VideoLegChannel 定这一路的视频腿走哪条通道，前端按这个机器值选播放器，不去猜错误文案。
@@ -207,7 +216,7 @@ func pubHasVideo(pub thirdparty.Publication) bool {
 // 三件套这条判据本身仍然照三方保留：缺 `rkReceiverLaneId` 就是三方还没给这条发布分配槽，
 // 签出去只会换出一条永远不亮的瓦片。
 func VideoLegChannel(pub thirdparty.Publication) string {
-	if pub.CloudWhepUrl != "" {
+	if pub.BrowserWHEP() != "" {
 		return consts.VideoChannelCloudWhep
 	}
 	if pub.DirectVideoUrl != "" {

@@ -156,6 +156,7 @@ type QuickStartReq struct {
 }
 
 type JoinReq struct {
+	Password         string `json:"password,omitempty"`
 	MeetingNumber    string `json:"meetingNumber"`
 	DisplayName      string `json:"displayName"`
 	AccountName      string `json:"accountName"`
@@ -286,6 +287,7 @@ type Publication struct {
 	RkReceiverAudioWhepUrl string            `json:"rkReceiverAudioWhepUrl"`
 	// CloudWhepUrl 是公网会议族（sinosat）浏览器 WHEP 绝对地址；Ocean 族不会填。
 	CloudWhepUrl string `json:"cloudWhepUrl"`
+	HDWhepURL    string `json:"hdWhepUrl"`
 	WhipUrl      string `json:"whipUrl"`
 }
 
@@ -302,10 +304,11 @@ const (
 // Reason 有两种来源，都要接住：就绪中三方回 200 + `receiverReason`，起不来回 404 + §17 的
 // `reason`（实测过 `rtsp_describe_404`）。两者是同一件事的两种写法，缺了就没法定责。
 type PrepareResult struct {
-	ReceiverReady    bool   `json:"receiverReady"`
-	ReceiverReason   string `json:"receiverReason"`
-	ConsumerAttached bool   `json:"consumerAttached"`
-	ConsumerProbeOk  bool   `json:"consumerProbeOk"`
+	SoftwareRoiAttached bool   `json:"softwareRoiAttached"`
+	ReceiverReady       bool   `json:"receiverReady"`
+	ReceiverReason      string `json:"receiverReason"`
+	ConsumerAttached    bool   `json:"consumerAttached"`
+	ConsumerProbeOk     bool   `json:"consumerProbeOk"`
 	// Reason 是 §17 错误体的 `reason`，与 ReceiverReason 二选一填。
 	Reason string `json:"reason"`
 }
@@ -385,13 +388,14 @@ func roundInt(f float64) int {
 // （证据 `evidence/2026-11-05-同侧分母配对-云边对拍.md`，契约 §6.3.1 第 5 条）。字段本身照留。
 //
 // 〔两条"不可达所以不加守卫"的账，Part 3 落地后重估过一遍〕
-//  ① 三方的 `sameRkSource → 0` 那支（远端行：`sourceDeviceId === rkTransportMetrics.deviceId` 时不采本机下行）
-//     要求 `publication.rkTransportMetrics` 存在。**我方从不解析这个字段**，三方自己也只刷新已存在的对象、
-//     从不创建它（`tp-meeting.js` 的 `refreshLocalTransportStats`）—— 所以即便船端来源已改成 `rk_browser_roi`，
-//     这一支在我方仍然**结构上不可达**，按"不可达就不加守卫"只记账。
-//  ② 三方算 `rk` 那一路的分母时**优先用 `localTransportSample`**（船内网关的本机遥测），拿不到才退到
-//     `metrics.upstreamVideoBitrateKbps`。我方没有那条本机遥测（不代理 `/api/local/transport-stats`），
-//     所以直接用服务端那个字段 —— 这正是三方的**同级回落**，不是自创口径。
+//
+//	① 三方的 `sameRkSource → 0` 那支（远端行：`sourceDeviceId === rkTransportMetrics.deviceId` 时不采本机下行）
+//	   要求 `publication.rkTransportMetrics` 存在。**我方从不解析这个字段**，三方自己也只刷新已存在的对象、
+//	   从不创建它（`tp-meeting.js` 的 `refreshLocalTransportStats`）—— 所以即便船端来源已改成 `rk_browser_roi`，
+//	   这一支在我方仍然**结构上不可达**，按"不可达就不加守卫"只记账。
+//	② 三方算 `rk` 那一路的分母时**优先用 `localTransportSample`**（船内网关的本机遥测），拿不到才退到
+//	   `metrics.upstreamVideoBitrateKbps`。我方没有那条本机遥测（不代理 `/api/local/transport-stats`），
+//	   所以直接用服务端那个字段 —— 这正是三方的**同级回落**，不是自创口径。
 func (p Publication) UpstreamBitrateKbps() int {
 	if p.TransportMetrics == nil || p.TransportMetrics.UpstreamVideoBitrateKbps <= 0 {
 		return 0
@@ -525,4 +529,16 @@ type Sm2PublicKey struct {
 	KeyID              string `json:"keyId"`
 	Challenge          string `json:"challenge"`
 	ChallengeExpiresAt int64  `json:"challengeExpiresAt"`
+}
+
+// BrowserWHEP returns the public receive leg issued for this publication.
+// A native processed video may already have its own direct delivery channel.
+func (p Publication) BrowserWHEP() string {
+	if p.CloudWhepUrl != "" {
+		return p.CloudWhepUrl
+	}
+	if p.DirectVideoUrl == "" {
+		return p.HDWhepURL
+	}
+	return ""
 }

@@ -683,10 +683,11 @@ components:
 
     SettingsCapabilitiesVo:
       type: object
-      description: 只读能力表；当前只有人脸增强一项
+      description: 当前入会服务的部署侧别和媒体功能。
       x-source: backend/api/v1/settings.go:SettingsCapabilitiesRes + service/capabilities.go
-      required: [faceEnhancement]
+      required: [accessNode, faceEnhancement]
       properties:
+        accessNode: { type: string, enum: [edge, cloud], description: 本次请求所连接的入会服务 }
         faceEnhancement: { $ref: '#/components/schemas/CapabilityVo' }
 
     CapabilityVo:
@@ -1526,7 +1527,7 @@ paths:
             schema:
               type: object
               properties:
-                meetingNo: { type: string, x-source: api/v1/meeting.go:161 }
+                meetingNo: { type: string, description: 中卫通、Ocean 或海星邀请中规范化的数字会议号, x-source: api/v1/meeting.go:161 }
                 meetingId: { type: integer, format: int64, x-source: api/v1/meeting.go:160 }
       responses:
         '200':
@@ -1558,7 +1559,7 @@ paths:
               required: [meetingNo]
               properties:
                 password: { type: string, maxLength: 32, writeOnly: true, description: 有密码时填写 }
-                meetingNo: { type: string, x-source: api/v1/meeting.go:119 }
+                meetingNo: { type: string, description: 中卫通、Ocean 或海星邀请中规范化的数字会议号, x-source: api/v1/meeting.go:119 }
                 displayName: { type: string, x-source: api/v1/meeting.go:120 }
                 recordingConsent: { type: boolean, x-source: api/v1/meeting.go:121 }
       responses:
@@ -1877,7 +1878,7 @@ paths:
     put:
       operationId: setVideoDelivery
       summary: 设置本人摄像头或共享屏幕的云端输出
-      description: 原始转发可仅传 transportMode。云端压缩需同时给出策略和目标码率。WHIP 保持连接，其他参会者按 revision 重新订阅 WHEP。
+      description: 原始转发可仅传 transportMode。云端压缩需同时给出策略和目标码率。旧媒体服务原地修改后返回 revision。Ocean 共用会场在发布时选择链路，返回 409 和 publication_republish_required 时，沿用原采集轨道重新发布该路摄像头或屏幕。
       parameters:
         - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
         - { name: pubId, in: path, required: true, schema: { type: string } }
@@ -1892,6 +1893,8 @@ paths:
                     - { $ref: '#/components/schemas/VideoDelivery' }
                     - { type: object, properties: { transportMode: { type: string, enum: [cloud] } } }
       responses:
+        '409':
+          description: 当前协议需要按新设置重新发布本路，reason 为 publication_republish_required
         '200':
           description: 已应用，返回当前媒体输出版本
           content:

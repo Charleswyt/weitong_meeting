@@ -4,7 +4,7 @@
     class="home-node-card"
     :class="[`is-${mode}`, { 'is-checking': checking }]"
     :title="tooltip"
-    @click="detect(true)"
+    @click="detect()"
   >
     <span class="home-node-art" aria-hidden="true">
       <svg

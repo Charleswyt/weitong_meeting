@@ -70,7 +70,9 @@ func (m *TokenManager) refreshToken(ctx context.Context, userId int64, account, 
 
 	var result *AuthResult
 	var err error
-	if bridge := os.Getenv("WEITONG_MEDIA_EXCHANGE_URL"); bridge != "" && m.adapter.IsSinosatV1(ctx) {
+	if OceanFederation() {
+		result, err = m.adapter.oceanIdentity(ctx, userId)
+	} else if bridge := os.Getenv("WEITONG_MEDIA_EXCHANGE_URL"); bridge != "" && m.adapter.IsSinosatV1(ctx) {
 		result, err = exchangeSinosatIdentity(ctx, bridge, userId, username, displayName)
 	} else {
 		result, err = m.adapter.Login(ctx, account, password)
@@ -80,6 +82,9 @@ func (m *TokenManager) refreshToken(ctx context.Context, userId int64, account, 
 	}
 
 	ttl := 2 * time.Hour
+	if OceanFederation() {
+		ttl = 30 * time.Minute
+	}
 	if m.adapter.IsSinosatV1(ctx) {
 		// 公网会议账号令牌文档示例 expiresIn=28800（8h）；缓存略短于上游以免踩过期。
 		ttl = 7 * time.Hour

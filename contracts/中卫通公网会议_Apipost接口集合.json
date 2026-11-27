@@ -2,8 +2,8 @@
   "info": {
     "name": "中卫通公网会议 · 前端联调",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "version": "1.6.0",
-    "description": "中卫通公网会议 · 前端联调\n\nApipost 导入本文件时选择 Postman Collection v2.1。新会议网页使用「06 中卫通网页」这一组，业务接口用会议账号令牌，登录响应可自动填写。当前网页同时在「设置 → 视频传输」和「会中设置 → 视频传输」提供摄像头、共享屏幕的独立配置。\n\n原始转发保留浏览器送来的编码。阿里云软件压缩输出 H.264，可选择 source_frames（原始帧率），bandwidth_first（动态帧率），或 optimized（优化策略）。后者按源短边自动选择 360p 或 540p 上限，保留宽高比，使用动态帧率、全帧 AQ 和渐进刷新。动态帧率取决于目标码率和画面复杂度。独立麦克风继续走音频轨。\n\n业务网页用 POST /meetings/{id}/publications 创建发布，PUT /meetings/{id}/publications/{pubId}/settings 会中修改，GET /meetings/{id}/state 或 WS streams 帧观察状态。目标码率单位为 kbps，云端输出和浏览器上行分别设置。完整网页 OpenAPI 与本集合在同一入口，文件名为 api.openapi.yaml。工作台打开独立中卫通网页。\n\n00–05 组保留底层媒体和平台联调。媒体房间号与网页会议记录 id 含义不同。底层 /rooms 操作使用该组签发的 participantToken。网页 /meetings 使用网页登录签发的 webToken。WHIP/WHEP 请求使用 application/sdp 和浏览器本次生成的 offer。本机直接预览本地轨道。云端收到发布流后按所选策略持续工作，全部观看端离开后仍可查询压缩比。订阅自身发布返回 403。\n\ndecodedFrameKbps 按发布端解码后逐帧可见像素字节计算。publishKbps 取该路视频 RTP 已发送字节增量。cloudInputKbps 和 cloudOutputKbps 表示云端编码视频的输入和单份输出。四项单位均为十进制 kbps。viewerCount 只计 WebRTC 观看连接，publicEgressKbps 为发给这些观看端的合计速率。无人观看时两项均为 0。每路云端视频压缩比为 cloudInputKbps / cloudOutputKbps，按阿里云接收和单份编码输出的视频有效载荷计算。发布端和所有观看端读取同一个 compressionRatio。两项速率均为正时返回两位小数的倍率。原始转发显示直传，缺样显示「—」。本端带宽只显示浏览器实际媒体上行和下行。各采样窗口可能略有错位，缺失样本使用 null。\n1.6.0 在第 07 组提供全场麦克风转录开关、逐场录制同意、回放分发和主持人词库。"
+    "version": "1.7.0",
+    "description": "中卫通公网会议 · 前端联调\n\nApipost 导入本文件时选择 Postman Collection v2.1。新会议网页使用「06 中卫通网页」这一组，业务接口用会议账号令牌，登录响应可自动填写。当前网页同时在「设置 → 视频传输」和「会中设置 → 视频传输」提供摄像头、共享屏幕的独立配置。\n\n原始转发保留浏览器送来的编码。阿里云软件压缩输出 H.264，可选择 source_frames（原始帧率），bandwidth_first（动态帧率），或 optimized（优化策略）。后者按源短边自动选择 360p 或 540p 上限，保留宽高比，使用动态帧率、全帧 AQ 和渐进刷新。动态帧率取决于目标码率和画面复杂度。独立麦克风继续走音频轨。\n\n业务网页用 POST /meetings/{id}/publications 创建发布，PUT /meetings/{id}/publications/{pubId}/settings 会中修改，GET /meetings/{id}/state 或 WS streams 帧观察状态。目标码率单位为 kbps，云端输出和浏览器上行分别设置。完整网页 OpenAPI 与本集合在同一入口，文件名为 api.openapi.yaml。工作台打开独立中卫通网页。\n\n00–05 组保留底层媒体和平台联调。媒体房间号与网页会议记录 id 含义不同。底层 /rooms 操作使用该组签发的 participantToken。网页 /meetings 使用网页登录签发的 webToken。WHIP/WHEP 请求使用 application/sdp 和浏览器本次生成的 offer。本机直接预览本地轨道。云端收到发布流后按所选策略持续工作，全部观看端离开后仍可查询压缩比。订阅自身发布返回 403。\n\ndecodedFrameKbps 按发布端解码后逐帧可见像素字节计算。publishKbps 取该路视频 RTP 已发送字节增量。cloudInputKbps 和 cloudOutputKbps 表示云端编码视频的输入和单份输出。四项单位均为十进制 kbps。viewerCount 只计 WebRTC 观看连接，publicEgressKbps 为发给这些观看端的合计速率。无人观看时两项均为 0。每路云端视频压缩比为 cloudInputKbps / cloudOutputKbps，按阿里云接收和单份编码输出的视频有效载荷计算。发布端和所有观看端读取同一个 compressionRatio。两项速率均为正时返回两位小数的倍率。原始转发显示直传，缺样显示「—」。本端带宽只显示浏览器实际媒体上行和下行。各采样窗口可能略有错位，缺失样本使用 null。\n1.6.0 在第 07 组提供全场麦克风转录开关、逐场录制同意、回放分发和主持人词库。\n1.7.0 起，中卫通网页与 Ocean、海星共用会场。用第 06 组创建、预检、入会、发布和订阅。第 01–05 组的旧媒体房间接口保留供旧服务联调。"
   },
   "variable": [
     {
@@ -6104,6 +6104,35 @@
           ]
         },
         {
+          "name": "查询接入节点与视频增强能力",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/settings/capabilities",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "settings",
+                "capabilities"
+              ]
+            },
+            "description": "返回 data.accessNode（cloud 或 edge）和独立的 data.faceEnhancement.supported 布尔值。将 baseUrl 改成板卡独立 HTTPS 入口可验证 edge。",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{webToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ]
+          }
+        },
+        {
           "name": "快速会议",
           "request": {
             "method": "POST",
@@ -6171,7 +6200,7 @@
                 "join"
               ]
             },
-            "description": "使用另一个账号及独立环境变量可验证真实接收。",
+            "description": "使用另一个账号及独立环境变量可验证真实接收。 meetingNo 填邀请中的实际会议号，可以来自中卫通、Ocean 或接入相同云服务的海星。网页接受 6 至 12 位数字，可粘贴带空格或短横线的号码。保存响应中的 meetingId 作为后续网页请求的 id。",
             "header": [
               {
                 "key": "Authorization",
@@ -6281,7 +6310,7 @@
                 "settings"
               ]
             },
-            "description": "仅发布者可改。成功返回 data.revision。重复提交同一配置保持原版本。",
+            "description": "仅发布者可改。成功返回 data.revision。重复提交同一配置保持原版本。 共用会场返回 409 / publication_republish_required 时，保留当前采集轨并按新设置重新发布本路。",
             "header": [
               {
                 "key": "Authorization",
@@ -6323,7 +6352,7 @@
                 "settings"
               ]
             },
-            "description": "仅发布者可改。成功返回 data.revision。重复提交同一配置保持原版本。",
+            "description": "仅发布者可改。成功返回 data.revision。重复提交同一配置保持原版本。 共用会场返回 409 / publication_republish_required 时，保留当前采集轨并按新设置重新发布本路。",
             "header": [
               {
                 "key": "Authorization",
@@ -6365,7 +6394,7 @@
                 "settings"
               ]
             },
-            "description": "仅发布者可改。成功返回 data.revision。重复提交同一配置保持原版本。",
+            "description": "仅发布者可改。成功返回 data.revision。重复提交同一配置保持原版本。 共用会场返回 409 / publication_republish_required 时，保留当前采集轨并按新设置重新发布本路。",
             "header": [
               {
                 "key": "Authorization",
@@ -6407,7 +6436,7 @@
                 "settings"
               ]
             },
-            "description": "仅发布者可改。成功返回 data.revision。重复提交同一配置保持原版本。",
+            "description": "仅发布者可改。成功返回 data.revision。重复提交同一配置保持原版本。 共用会场返回 409 / publication_republish_required 时，保留当前采集轨并按新设置重新发布本路。",
             "header": [
               {
                 "key": "Authorization",
@@ -6829,7 +6858,7 @@
                 "precheck"
               ]
             },
-            "description": "requiresPassword 表示当前账号入会是否需要密码。",
+            "description": "requiresPassword 表示当前账号入会是否需要密码。 可输入 Ocean 或海星创建的会议号。",
             "header": [
               {
                 "key": "Authorization",

@@ -1,7 +1,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { getCapabilities } from '@/api/settings'
 
-export type AccessNodeMode = 'checking' | 'cloud' | 'edge' | 'offline'
+export type AccessNodeMode = 'checking' | 'unknown' | 'cloud' | 'edge' | 'offline'
 
 const NODE_POLL_MS = 30_000
 
@@ -20,6 +20,7 @@ export function useAccessNode() {
     if (mode.value === 'cloud') return '云端入会'
     if (mode.value === 'edge') return '边缘入会'
     if (mode.value === 'offline') return '连接异常'
+    if (mode.value === 'unknown') return '节点类型未知'
     return '检测入会节点'
   })
 
@@ -30,7 +31,7 @@ export function useAccessNode() {
     if (mode.value === 'edge') {
       return rttMs.value !== null ? `边缘协同 · ${rttMs.value}ms` : '边缘节点在线'
     }
-    if (mode.value === 'offline') return '点击重新检测'
+    if (mode.value === 'offline' || mode.value === 'unknown') return '点击重新检测'
     return '正在识别节点…'
   })
 
@@ -44,7 +45,7 @@ export function useAccessNode() {
     return `${desc}（每 30 秒自动刷新，点击可立即重新检测）`
   })
 
-  async function detect(manual = false) {
+  async function detect() {
     if (checking.value) return
     if (!navigator.onLine) {
       mode.value = 'offline'
@@ -56,12 +57,11 @@ export function useAccessNode() {
     try {
       const res = await getCapabilities()
       rttMs.value = Math.max(1, Math.round(performance.now() - started))
-      mode.value = res.data?.faceEnhancement?.supported ? 'cloud' : 'edge'
+      const side = res.data?.accessNode
+      mode.value = side === 'cloud' || side === 'edge' ? side : 'unknown'
     } catch {
-      if (manual || mode.value === 'checking') {
-        mode.value = 'offline'
-        rttMs.value = null
-      }
+      mode.value = 'offline'
+      rttMs.value = null
     } finally {
       checking.value = false
     }

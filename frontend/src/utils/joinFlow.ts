@@ -156,11 +156,11 @@ export async function ensureShareOrigin(): Promise<string> {
 }
 
 // 分享/邀请用的入会链接 = 可被他机打开的前端地址 + 按会议号的预检入口。
-// 会议号嵌在路径里（/meeting/pre/no/{no}），邀请正文不再单独展示会议号行；
-// 粘贴回系统时仍从路径解析（见 parseMeetingNoFromText）。
+// 板卡分享云端地址，邀请同时提供会议号，其他入口可原地入会。
 export function joinUrlFor(meetingNo: string): string {
   if (!meetingNo) return ''
-  return `${shareOrigin()}${sitePath(preJoinPathByNumber(meetingNo))}`
+  const publicOrigin = typeof document === 'undefined' ? '' : document.querySelector<HTMLMetaElement>('meta[name="weitong-public-origin"]')?.content
+  return `${publicOrigin || shareOrigin()}${sitePath(preJoinPathByNumber(meetingNo))}`
 }
 
 /** 邀请文案里的会议号：三位一组、短横线分隔（旧粘贴兼容 / 系统内展示仍可用）。 */
@@ -202,7 +202,7 @@ export function inviteTextFor(f: InviteFields): string {
   const host = (f.hostName || '').trim() || '主持人'
   const title = (f.title || '').trim() || '会议'
   const link = joinUrlFor(no)
-  const lines = [`${host} 请您参加卫通会议`, `会议主题：${title}`]
+  const lines = [`${host} 请您参加卫通会议`, `会议主题：${title}`, `会议号：${no}`]
   const timeLine = formatInviteTimeRange(f.startTime, f.durationMinutes)
   if (timeLine) lines.push(`会议时间：${timeLine}`)
   lines.push('', '点击链接入会，或添加至会议列表：', link, '', '复制该信息，打开卫通会议即可参与')
@@ -220,6 +220,9 @@ export function parseMeetingNoFromText(text: string): string {
 
   const fromPath = raw.match(/\/meeting\/pre\/no\/(\d{6,12})\b/)
   if (fromPath) return fromPath[1]
+
+  const oceanInvite = raw.match(/(?:[?&])meeting=(\d{6,12})(?=[&#\s]|$)/)
+  if (oceanInvite) return oceanInvite[1]
 
   const labeled = raw.match(/#?\s*会议号\s*[:：]\s*([0-9][0-9\-\s]{4,20}[0-9])/)
   if (labeled) {
