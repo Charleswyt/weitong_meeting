@@ -1,0 +1,14 @@
+[Unit]
+Description=Prepare native media access for the Weitong board meeting
+Wants=network-online.target
+After=network-online.target rtsp-roi.service
+Before=weitong-edge.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/weitong-edge/prepare-media.py
+RemainAfterExit=yes
+TimeoutStartSec=55
+
+[Install]
+RequiredBy=weitong-edge.service

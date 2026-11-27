@@ -1,9 +1,11 @@
 [Unit]
 Description=Weitong standalone board meeting and Rockchip video gateway
-After=network-online.target rtsp-roi.service
+After=network-online.target rtsp-roi.service weitong-edge-media.service
 Wants=network-online.target
+Requires=weitong-edge-media.service
 
 [Service]
+Type=exec
 User=weitong-edge
 Group=weitong-edge
 SupplementaryGroups=video render

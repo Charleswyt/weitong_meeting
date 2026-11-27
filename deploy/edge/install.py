@@ -39,6 +39,7 @@ def main():
     run('openssl', 'x509', '-noout', '-checkend', '0', '-in', str(a.cloud_cert))
     root, etc = Path('/opt/weitong-edge'), Path('/etc/weitong-edge')
     root.mkdir(mode=0o755, exist_ok=True)
+    root.chmod(0o755)
     try:
         group = grp.getgrnam('weitong-edge').gr_gid
     except KeyError:
@@ -46,6 +47,7 @@ def main():
         group = grp.getgrnam('weitong-edge').gr_gid
     etc.mkdir(mode=0o750, exist_ok=True)
     os.chown(etc, 0, group)
+    etc.chmod(0o750)
     manifest = json.loads((a.release / 'files.json').read_bytes())
     tag = hashlib.sha256((a.release / 'files.json').read_bytes()).hexdigest()[:16]
     dst = root / tag
@@ -60,6 +62,10 @@ def main():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(a.release/n, target)
                 target.chmod(0o755 if n in ('edge','uplink') else 0o644)
+            # Remote maintenance agents may install under umask 0077.
+            for directory in stage.rglob('*'):
+                if directory.is_dir():
+                    directory.chmod(0o755)
             stage.chmod(0o755)
             stage.rename(dst)
         finally:
@@ -79,8 +85,10 @@ def main():
     temp.symlink_to(dst)
     os.replace(temp,root/'current')
     install_file(Path('/etc/systemd/system/weitong-edge.service'), (dst/'weitong-edge.service').read_bytes(), 0, 0o644)
+    install_file(root/'prepare-media.py', (dst/'prepare_media.py').read_bytes(), 0, 0o644)
+    install_file(Path('/etc/systemd/system/weitong-edge-media.service'), (dst/'weitong-edge-media.service').read_bytes(), 0, 0o644)
     run('systemctl','daemon-reload')
-    run('systemctl','enable','weitong-edge.service')
+    run('systemctl','enable','weitong-edge-media.service','weitong-edge.service')
     run('systemctl','restart','weitong-edge.service')
     print(json.dumps(dict(node=cfg['nodeId'],release=tag,publicKey=(etc/'public.key').read_text().strip(),url=f'https://{a.ip}:{a.port}/zwt-meeting/')))
 

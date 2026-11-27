@@ -183,11 +183,20 @@ func (g *gateway) encode(parent context.Context, name, endpoint, auth string, v 
 	reader := exec.CommandContext(ctx, bin, "-whep-capture", g.cfg.Media+"/"+name+"/whep", "-zha-output", "-", "-capture-width", width, "-capture-height", height, "-capture-fps", strconv.Itoa(fps))
 	encoder := exec.CommandContext(ctx, filepath.Join(g.cfg.Binaries, "mpp_dec_roi_bench"), "-i", "/dev/stdin", "-o", "/dev/stdout", "--dec", "h264", "--enc", "h264", "-w", width, "-h", height, "-n", "0", "--fps", strconv.Itoa(fps), "--bps", fmt.Sprintf("%d:%d:%d", bps, bps/2, bps*5/4), "--rc-mode", "1", "--gop", strconv.Itoa(2*fps))
 	encoder.Env = append(os.Environ(), "MPP_DEC_ROI_INPUT_AU_FRAMING=1", "MPP_DEC_ROI_OUTPUT_AU_FRAMING=1", "MPP_DEC_ROI_ASYNC_DECODE=1", "MPP_DEC_ROI_PARSER_SPLIT=0", "mpp_output_unbuffered=1", "roi_enable=1", "auto_roi_enable=1", "auto_roi_source=diff")
+	// Each camera has its own recovery marker. A viewer joining an already
+	// running intra-refresh stream needs a fresh IDR from this encoder.
+	feedback, err := os.MkdirTemp("", "weitong-camera-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(feedback)
+	requestIDR := filepath.Join(feedback, "request-idr")
+	encoder.Env = append(encoder.Env, "MPP_DEC_ROI_FORCE_IDR_REQUEST_PATH="+requestIDR)
 	senderBin := g.cfg.Uplink
 	if senderBin == "" {
 		senderBin = bin
 	}
-	args := []string{"-input", "/dev/stdin", "-whip-url", "http://" + listener.Addr().String() + secret}
+	args := []string{"-input", "/dev/stdin", "-whip-url", "http://" + listener.Addr().String() + secret, "-keyframe-request-path", requestIDR}
 	if g.cfg.Uplink != "" {
 		out, err := uplinkInterface(ctx, g.target.Hostname())
 		if err != nil {
