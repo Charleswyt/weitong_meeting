@@ -1,4 +1,4 @@
-import { get, put } from '@/utils/request'
+import { get, patch, put } from '@/utils/request'
 import type { components } from '@/types/api.gen'
 
 // UserSettingsVo 与后端 model.PreferenceVo 一一对应，线格式取自契约生成物。
@@ -22,4 +22,27 @@ export function getCapabilities() {
 
 export function updatePreferences(data: UserSettingsVo) {
   return put('/api/v1/settings/', data)
+}
+
+export interface VideoDeliveryPref {
+  transportMode: 'original' | 'cloud'
+  encodingStrategy: 'source_frames' | 'bandwidth_first' | 'optimized'
+  targetBitrateKbps: number
+}
+
+// 原先只在浏览器 localStorage 的个人偏好，现落库在 user_client_pref，跨设备同步。
+export interface ClientPrefsVo {
+  videoEnhance: boolean
+  speakerVolume: number
+  captionLanguage: string
+  cameraDelivery: VideoDeliveryPref
+  screenDelivery: VideoDeliveryPref
+}
+
+export function getClientPrefs() {
+  return get<ClientPrefsVo>('/api/v1/settings/client', { silent: true })
+}
+
+export function patchClientPrefs(data: Partial<ClientPrefsVo>) {
+  return patch<ClientPrefsVo>('/api/v1/settings/client', data)
 }

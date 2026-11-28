@@ -221,3 +221,113 @@ export function reportTelemetry(id: number, items: TelemetryItem[]) {
 export function mediaUrl(endpoint: string | undefined): string {
   return assetUrl(endpoint)
 }
+
+export type StatsDimension = 'total' | 'month' | 'week' | 'custom'
+
+export interface MeetingOverviewVolume {
+  total: number
+  hosted: number
+  participated: number
+  online: number
+  offline: number
+  hybrid: number
+  scheduled?: number
+  quick?: number
+  voice?: number
+  activeDays?: number
+}
+
+export interface MeetingOverviewDuration {
+  totalSeconds: number
+  hostedSeconds: number
+  participatedSeconds: number
+  averageSeconds: number
+  recordingSeconds: number
+}
+
+export interface MeetingOverviewRecording {
+  count: number
+  coverageRate: number
+}
+
+export interface MeetingOverviewExtremeItem {
+  id: number
+  title: string
+  hostName?: string
+  meetingNo?: string
+  startTime: string
+  endTime: string
+  durationSeconds: number
+}
+
+export interface MeetingOverviewExtremes {
+  earliest: MeetingOverviewExtremeItem | null
+  longest: MeetingOverviewExtremeItem | null
+  latest: MeetingOverviewExtremeItem | null
+}
+
+export interface MeetingOverviewTagCount {
+  key: string
+  label: string
+  count: number
+}
+
+export interface MeetingOverviewTags {
+  accessModes: MeetingOverviewTagCount[]
+  categories: MeetingOverviewTagCount[]
+}
+
+export interface MeetingOverviewDurationByKind {
+  meeting: MeetingOverviewDuration
+  voice: MeetingOverviewDuration
+}
+
+export interface MeetingOverviewStats {
+  dimension: StatsDimension
+  volume: MeetingOverviewVolume
+  duration: MeetingOverviewDuration
+  durationByKind?: MeetingOverviewDurationByKind
+  recording: MeetingOverviewRecording
+  extremes: MeetingOverviewExtremes
+  tags: MeetingOverviewTags
+}
+
+export function getMeetingOverview(params: {
+  dimension: StatsDimension
+  startDate?: string
+  endDate?: string
+}) {
+  return get<MeetingOverviewStats>('/api/v1/meetings/overview', { params, silent: true })
+}
+
+export interface InterviewCreateReq {
+  title: string
+  startTime: string
+  durationMinutes: number
+  candidates: string[]
+  maxJoins: number
+  expiresAt: string
+  cloudRecord?: boolean
+}
+
+export interface InterviewAccountVo {
+  candidateName: string
+  username: string
+  password: string
+  maxJoins: number
+  expiresAt: string
+}
+
+export interface InterviewCreateRes {
+  meetingId: number
+  meetingNo: string
+  title: string
+  startTime: string
+  durationMinutes: number
+  syncReason?: string
+  accounts: InterviewAccountVo[]
+}
+
+export function createInterviewRoom(data: InterviewCreateReq) {
+  return post<InterviewCreateRes>('/api/v1/meetings/interview', data)
+}

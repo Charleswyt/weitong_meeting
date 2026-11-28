@@ -653,6 +653,13 @@ const menus = computed(() => {
       short: "录制",
     },
     {
+      path: "/contacts",
+      active: ["/contacts"],
+      icon: "ri-contacts-book-line",
+      label: "通讯录",
+      short: "通讯录",
+    },
+    {
       path: "/settings",
       active: ["/settings"],
       icon: "ri-settings-3-line",
@@ -662,10 +669,10 @@ const menus = computed(() => {
   ];
 });
 
-/** 底栏四格：首页 / 会议 / 录制 / 设置；「全部」只在侧栏抽屉，避免五个标签挤成一条。 */
+/** 底栏四格：首页 / 会议 / 录制 / 设置；「全部」「通讯录」只在侧栏抽屉，避免标签挤成一条。 */
 const mobileTabs = computed(() => {
   const all = menus.value;
-  return [all[0], all[1], all[3], all[4]].filter(Boolean);
+  return [all[0], all[1], all[3], all[5]].filter(Boolean);
 });
 
 const avatarChar = computed(() =>
@@ -1182,6 +1189,7 @@ async function onUserCommand(cmd: string) {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-gutter: stable;
   min-height: 0;
 }
 

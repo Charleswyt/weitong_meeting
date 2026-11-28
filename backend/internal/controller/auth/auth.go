@@ -103,6 +103,13 @@ func (c *Controller) AutoLogin(r *ghttp.Request) {
 }
 
 func (c *Controller) loginRes(ctx context.Context, result *service.LoginResult) v1.LoginRes {
+	if result != nil && result.User != nil {
+		clientIP := ""
+		if req := ghttp.RequestFromCtx(ctx); req != nil {
+			clientIP = req.GetClientIp()
+		}
+		service.RecordLoginAudit(ctx, result.User.Id, clientIP)
+	}
 	return v1.LoginRes{
 		Token:      result.Token,
 		User:       c.userVoFromEntity(ctx, result.User),
@@ -243,14 +250,18 @@ func (c *Controller) EmailLogin(r *ghttp.Request) {
 }
 
 func (c *Controller) userVoFromEntity(ctx context.Context, u *entity.SysUser) v1.UserVo {
+	audit := service.GetLoginAudit(ctx, u.Id)
 	return v1.UserVo{
-		Id:              u.Id,
-		Username:        u.Username,
-		DisplayName:     u.DisplayName,
-		Avatar:          u.Avatar,
-		AccountType:     u.AccountType,
-		AccountTypeName: c.dictSvc.LabelOf(ctx, consts.DictTypeAccountType, u.AccountType),
-		PositionCode:    u.PositionCode,
-		PositionName:    c.dictSvc.LabelOf(ctx, consts.DictTypePosition, u.PositionCode),
+		Id:                u.Id,
+		Username:          u.Username,
+		DisplayName:       u.DisplayName,
+		Avatar:            u.Avatar,
+		AccountType:       u.AccountType,
+		AccountTypeName:   c.dictSvc.LabelOf(ctx, consts.DictTypeAccountType, u.AccountType),
+		PositionCode:      u.PositionCode,
+		PositionName:      c.dictSvc.LabelOf(ctx, consts.DictTypePosition, u.PositionCode),
+		LastLoginAt:       audit.LastLoginAt,
+		LastLoginIp:       audit.LastLoginIp,
+		LastLoginLocation: audit.LastLoginLocation,
 	}
 }

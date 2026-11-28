@@ -7,6 +7,7 @@ require (
 	github.com/gogf/gf/contrib/drivers/sqlite/v2 v2.10.3
 	github.com/gogf/gf/v2 v2.10.3
 	github.com/golang-jwt/jwt/v5 v5.2.1
+	github.com/mozillazg/go-pinyin v0.21.0
 )
 
 require (

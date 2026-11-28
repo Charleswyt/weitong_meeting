@@ -32,13 +32,29 @@ func NewSMTP(cfg Config) *SMTP {
 
 func (s *SMTP) Name() string { return "smtp" }
 
-func (s *SMTP) SendCode(ctx context.Context, toEmail, code, purpose string) error {
+func (s *SMTP) configured() error {
 	if s.cfg.From == "" || s.cfg.SMTPPassword == "" || s.cfg.SMTPPassword == "__REPLACE_ME__" {
 		return fmt.Errorf("邮件 SMTP 未配置：请在 config.yaml 的 auth.email 填 from 与 smtp.password（126 授权码）")
 	}
-	subj := purposeSubject(s.cfg.Subject, purpose)
-	msg := buildCodeMessage(s.cfg.From, toEmail, subj, code, purpose)
+	return nil
+}
 
+func (s *SMTP) SendCode(ctx context.Context, toEmail, code, purpose string) error {
+	if err := s.configured(); err != nil {
+		return err
+	}
+	subj := purposeSubject(s.cfg.Subject, purpose)
+	return s.send(ctx, toEmail, buildCodeMessage(s.cfg.From, toEmail, subj, code, purpose))
+}
+
+func (s *SMTP) SendMeetingInvite(ctx context.Context, toEmail string, inv MeetingInvite) error {
+	if err := s.configured(); err != nil {
+		return err
+	}
+	return s.send(ctx, toEmail, buildInviteMessage(s.cfg.From, toEmail, inv))
+}
+
+func (s *SMTP) send(ctx context.Context, toEmail, msg string) error {
 	addr := fmt.Sprintf("%s:%d", s.cfg.SMTPHost, s.cfg.SMTPPort)
 	auth := smtp.PlainAuth("", s.cfg.SMTPUser, s.cfg.SMTPPassword, s.cfg.SMTPHost)
 

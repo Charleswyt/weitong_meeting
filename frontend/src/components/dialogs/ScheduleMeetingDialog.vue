@@ -123,9 +123,9 @@
             </div>
           </div>
 
-          <!-- 原型（03_schedule_dlg.png）到「会议设置」三颗开关为止，弹窗里没有受邀成员区；
-               第 39 项也明确"受邀成员相关功能暂时不要"，所以这里不放人员勾选。
-               后端 participantIds 仍是可选字段（历史预约的名单照旧可读），只是不由这个弹窗录入。 -->
+          <div v-if="modelValue" class="settings-section">
+            <ContactPicker v-model="invitedIds" max-height="168px" @navigate="close" />
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn-cancel" @click="close">取消</button>
@@ -143,6 +143,9 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { scheduleMeeting, updateMeeting, type MeetingVo } from '@/api/meeting'
+import { inviteContacts } from '@/api/contact'
+import { ensureShareOrigin, joinUrlFor } from '@/utils/joinFlow'
+import ContactPicker from '@/components/ContactPicker.vue'
 
 const props = defineProps<{ modelValue: boolean; presetTitle?: string; meeting?: MeetingVo | null }>()
 const emit = defineEmits<{
@@ -158,6 +161,7 @@ const cameraOff = ref(false)
 const allowWaiting = ref(true)
 const meetingPassword = ref('')
 const durationPreset = ref('60')
+const invitedIds = ref<number[]>([])
 
 const form = reactive({
   title: '',
@@ -180,6 +184,7 @@ function reset() {
   muteOnJoin.value = true
   cameraOff.value = false
   allowWaiting.value = true
+  invitedIds.value = []
 }
 
 function pad(n: number) {
@@ -283,6 +288,21 @@ function close() {
   emit('update:modelValue', false)
 }
 
+// 会已经建好，邀请失败不回滚预约：提示一句，用户可在会中再邀请。
+async function sendInvites(m: MeetingVo) {
+  try {
+    await ensureShareOrigin()
+    const res = (await inviteContacts(m.id, invitedIds.value, m.meetingNo ? joinUrlFor(m.meetingNo) : '')).data
+    if (!res) return
+    const parts = [`已邀请 ${res.invited} 位好友`]
+    if (res.emailQueued) parts.push(`${res.emailQueued} 封邀请邮件发送中`)
+    if (res.noEmail.length) parts.push(`${res.noEmail.join('、')} 未绑定邮箱`)
+    ElMessage.success(parts.join('，'))
+  } catch {
+    /* 拦截器已提示 */
+  }
+}
+
 async function submit() {
   if (!form.title.trim()) {
     ElMessage.warning('请输入会议主题')
@@ -316,13 +336,15 @@ async function submit() {
     } else if (pwd) {
       payload.password = pwd
     }
+    let saved: MeetingVo | undefined
     if (isEdit.value && props.meeting) {
-      await updateMeeting(props.meeting.id, payload as any)
+      saved = (await updateMeeting(props.meeting.id, payload as any)).data || props.meeting
       ElMessage.success('会议已修改')
     } else {
-      await scheduleMeeting(payload as any)
+      saved = (await scheduleMeeting(payload as any)).data
       ElMessage.success('预约成功')
     }
+    if (saved?.id && invitedIds.value.length) await sendInvites(saved)
     meetingPassword.value = ''
     emit('created')
     close()

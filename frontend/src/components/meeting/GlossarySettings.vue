@@ -73,8 +73,8 @@
         <span class="gs-col-alias">识别别名 / 常见误识</span>
       </div>
 
-      <div v-if="filteredList.length" class="gs-table-body">
-        <div v-for="[term, aliases] in filteredList" :key="term" class="gs-row">
+      <div v-if="pagedList.length" class="gs-table-body">
+        <div v-for="[term, aliases] in pagedList" :key="term" class="gs-row">
           <div class="gs-col-term">
             <span class="gs-term-badge">{{ term }}</span>
           </div>
@@ -90,6 +90,38 @@
       <div v-else class="gs-no-match">
         <i class="ri-search-eye-line" />
         <span>未找到包含「{{ keyword }}」的术语</span>
+      </div>
+
+      <div v-if="totalPages > 1" class="gs-pager">
+        <span class="gs-pager-info">第 {{ currentPage }} / {{ totalPages }} 页（共 {{ filteredList.length }} 条）</span>
+        <div class="gs-pager-btns">
+          <button
+            type="button"
+            class="gs-pager-btn"
+            :disabled="currentPage <= 1"
+            @click="currentPage -= 1"
+          >
+            上一页
+          </button>
+          <button
+            v-for="p in totalPages"
+            :key="p"
+            type="button"
+            class="gs-pager-num"
+            :class="{ active: p === currentPage }"
+            @click="currentPage = p"
+          >
+            {{ p }}
+          </button>
+          <button
+            type="button"
+            class="gs-pager-btn"
+            :disabled="currentPage >= totalPages"
+            @click="currentPage += 1"
+          >
+            下一页
+          </button>
+        </div>
       </div>
     </div>
 
@@ -126,6 +158,26 @@ const filteredList = computed(() => {
     ([term, aliases]) =>
       term.toLowerCase().includes(q) || aliases.some((a) => a.toLowerCase().includes(q)),
   )
+})
+
+const PAGE_SIZE = 5
+const currentPage = ref(1)
+
+const totalPages = computed(() => Math.max(1, Math.ceil(filteredList.value.length / PAGE_SIZE)))
+
+const pagedList = computed(() => {
+  const start = (currentPage.value - 1) * PAGE_SIZE
+  return filteredList.value.slice(start, start + PAGE_SIZE)
+})
+
+watch([keyword, () => filteredList.value.length], () => {
+  if (currentPage.value > totalPages.value) {
+    currentPage.value = totalPages.value
+  }
+})
+
+watch(keyword, () => {
+  currentPage.value = 1
 })
 
 async function load() {
@@ -357,8 +409,52 @@ function exportJson() {
   color: var(--text-muted, var(--el-text-color-secondary));
 }
 .gs-table-body {
-  max-height: 360px;
+  min-height: 225px;
   overflow-y: auto;
+}
+.gs-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border-color, var(--el-border-color-lighter));
+  background: var(--bg-soft, var(--el-fill-color-lighter));
+  flex-wrap: wrap;
+}
+.gs-pager-info {
+  font-size: 12px;
+  color: var(--text-muted, var(--el-text-color-secondary));
+}
+.gs-pager-btns {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.gs-pager-btn,
+.gs-pager-num {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color, var(--el-border-color));
+  background: var(--bg-card, #ffffff);
+  color: var(--text-primary, #1f2937);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.gs-pager-num {
+  min-width: 28px;
+  padding: 0 6px;
+}
+.gs-pager-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.gs-pager-num.active {
+  background: var(--primary, #165dff);
+  border-color: var(--primary, #165dff);
+  color: #ffffff;
 }
 .gs-wrap.is-compact .gs-table-head {
   grid-template-columns: minmax(90px, 125px) 1fr;

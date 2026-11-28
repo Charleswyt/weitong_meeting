@@ -3,6 +3,7 @@
  * 解决插入 HDMI/DP 显示器后系统默认切到无喇叭显示口导致会议无声，
  * 或拔插音频设备后麦克风/扬声器失效的问题。
  */
+import { clientPrefs, onClientPrefsChange, updateClientPrefs } from '@/utils/clientPrefs'
 
 const DISPLAY_AUDIO_RE =
   /\b(hdmi|displayport|dp\b|nvidia\s+high\s+definition|amd\s+high\s+definition|intel\(r\)\s+display|digital\s+audio\s*\(hdmi\)|monitor\s+audio)/i
@@ -96,33 +97,28 @@ export async function applySinkIdToElement(el: HTMLMediaElement, sinkId: string)
   }
 }
 
-const SPEAKER_VOL_KEY = 'wt.speakerVolume'
-
 export function getSpeakerVolume(): number {
-  try {
-    const raw = window.localStorage.getItem(SPEAKER_VOL_KEY)
-    if (raw === null) return 80
-    const n = Number(raw)
-    if (!Number.isFinite(n)) return 80
-    return Math.min(100, Math.max(0, Math.round(n)))
-  } catch {
-    return 80
+  const n = Number(clientPrefs.speakerVolume)
+  if (!Number.isFinite(n)) return 80
+  return Math.min(100, Math.max(0, Math.round(n)))
+}
+
+function applySpeakerVolume(clamped: number) {
+  for (const el of Array.from(document.querySelectorAll('audio'))) {
+    el.volume = clamped / 100
   }
 }
 
 export function setSpeakerVolume(vol: number): number {
   const clamped = Math.min(100, Math.max(0, Math.round(vol)))
-  try {
-    window.localStorage.setItem(SPEAKER_VOL_KEY, String(clamped))
-  } catch {
-    // ignore storage errors
-  }
-  const els = Array.from(document.querySelectorAll('audio'))
-  for (const el of els) {
-    el.volume = clamped / 100
-  }
+  void updateClientPrefs({ speakerVolume: clamped })
+  applySpeakerVolume(clamped)
   return clamped
 }
+
+onClientPrefsChange((p) => {
+  if (typeof document !== 'undefined') applySpeakerVolume(p.speakerVolume)
+})
 
 export async function syncAllRemoteAudioElements(muted: boolean, sinkId: string): Promise<void> {
   const els = Array.from(document.querySelectorAll('audio'))

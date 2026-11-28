@@ -18,7 +18,7 @@ export interface StreamFailureInput {
   playable: boolean
 }
 
-const TERMINAL_REASONS = ['not_in_meeting', 'not_found', 'gone']
+const TERMINAL_REASONS = ['not_in_meeting', 'not_found', 'gone', 'self_stream']
 // 401 不在这里：实测（2026-10-13 本地双实例）音频腿的 401 全部发生在**发布号刚翻新**的窗口里，
 // 票据是当场新签、绑定正确、有效期还剩 12 小时 —— 它是"这张票此刻不被认"，不是"这路已经没了"。
 // 判成终态等于一次瞬时竞争就把这条腿永久放弃、还不回落，表现是声音间歇性掉而界面一句不说。

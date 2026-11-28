@@ -258,3 +258,21 @@
 .el-date-picker .el-date-table td.disabled .el-date-table-cell__text {
   opacity: 0.35;
 }
+
+/* 去掉 .form-group-modal input 全局规则对 Element Plus 日期/时间选择器内部 .el-input__inner 套上的嵌套底色框 */
+.form-group-modal .el-input__wrapper {
+  background-color: var(--bg-input) !important;
+  box-shadow: 0 0 0 1px var(--border-color) inset !important;
+  border-radius: 8px !important;
+}
+.form-group-modal .el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px var(--primary) inset !important;
+}
+.form-group-modal .el-input__inner {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  height: auto !important;
+  color: var(--text-primary) !important;
+}

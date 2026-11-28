@@ -100,6 +100,13 @@ func FailStream(r *ghttp.Request, status int, msg string) {
 	})
 }
 
+// FailStreamReason 与 FailStream 相同，但 reason 由调用方给出更细的机器值（HTTP 状态不足以区分时）。
+func FailStreamReason(r *ghttp.Request, status int, msg, reason string) {
+	r.Response.ClearBuffer()
+	r.Response.Status = status
+	r.Response.WriteJsonExit(g.Map{"code": status, "msg": msg, "reason": reason})
+}
+
 // streamReason 把媒体/资源代理端点的 HTTP 状态码换成机器可读的 reason（契约 §1 的映射表）。
 // 取名按 HTTP 语义而不是"流"：订阅、录制资源、头像三条端点共用这个出口，404 在头像那里不是"流没了"。
 // 前端要分支就读它 —— 之前这里填的是 msg 本身，逼得前端拿中文文案做匹配。

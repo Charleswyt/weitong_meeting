@@ -208,16 +208,19 @@
                缩略条/宫格等非主画面窗格只渲染格底状态栏。 -->
           <div v-if="!isMainTile(r)" class="im-tile-foot">
             <div class="im-tile-line">
-              <span class="im-tile-name">{{ r.name }}</span>
-              <span v-if="r.nodeType" class="im-chip" :class="r.nodeType === 'edge' ? 'im-chip-edge' : 'im-chip-cloud'">
-                {{ r.nodeType === 'edge' ? '边' : '云' }}
-              </span>
-              <span v-if="r.isHost && !r.strip" class="im-chip im-chip-host">主持人</span>
-              <span v-if="r.speaking && !r.strip" class="im-chip im-chip-speak">正在讲话</span>
+              <span class="im-tile-name" :title="r.name">{{ r.name }}</span>
               <span class="im-tile-media">
                 <i :class="r.micOn ? 'ri-mic-line' : 'ri-mic-off-line'" :title="r.micOn ? '麦克风已开' : '麦克风已关'" />
                 <i :class="r.cameraOn ? 'ri-vidicon-line' : 'ri-video-off-line'" :title="r.cameraOn ? '摄像头已开' : '摄像头已关'" />
               </span>
+            </div>
+            <div class="im-tile-line im-tile-tags">
+              <span v-if="r.nodeType" class="im-chip" :class="r.nodeType === 'edge' ? 'im-chip-edge' : 'im-chip-cloud'">
+                {{ r.nodeType === 'edge' ? '边' : '云' }}
+              </span>
+              <span v-if="r.isHost" class="im-chip im-chip-host">主持人</span>
+              <span v-if="r.isSelf" class="im-chip im-chip-self">我</span>
+              <span v-if="r.speaking && !r.strip" class="im-chip im-chip-speak">正在讲话</span>
             </div>
             <!-- 原型顶部排列的缩略条（15/16_meeting_top*.png）这一行是**带标签的两列**
                  「总上行速率 / 1.25 Mbps」，宫格与成员面板才是「↑1.25Mbps ↓3.82Mbps」。
@@ -228,15 +231,17 @@
             </div>
             <div v-else class="im-tile-rate">
               <span>↑{{ rateTextCompact(r.upKbps) }}</span><span>↓{{ rateTextCompact(r.downKbps) }}</span>
-              <em v-if="layout === 'grid' && !r.isSelf && specText(r)" class="im-tile-spec">{{ specText(r) }}</em>
+              <em v-if="specText(r)" class="im-tile-spec">{{ specText(r) }}</em>
             </div>
             <!-- 采不到轨（设备被占用）是真故障，要盖在名牌上说清楚，别装作黑帧正常。 -->
             <span v-if="r.isSelf && selfIssueText" class="im-off">{{ selfIssueText }}</span>
             <span v-else-if="r.error" class="im-off">{{ r.error }}</span>
           </div>
           <div v-if="r.speaking" class="im-speaking" />
-          <div v-if="isMainTile(r) && (focusStat || focusedIsSelf)" class="im-statbar" :class="{ open: statBarOpen }">
+          <div v-if="isMainTile(r) && (focusStat || focusSpec || focusedIsSelf)" class="im-statbar" :class="{ open: statBarOpen }">
             <template v-if="focusedIsSelf">
+              <div class="im-statbar-item"><span class="k">{{ sharing ? '共享分辨率' : '采集分辨率' }}</span><span class="v">{{ selfResolution }}</span></div>
+              <div class="im-statbar-item"><span class="k">发送帧率</span><span class="v">{{ selfFps }}</span></div>
               <div class="im-statbar-item"><span class="k">本端媒体上行</span><span class="v">{{ uplinkText }}</span></div>
               <div class="im-statbar-item"><span class="k">本端媒体下行</span><span class="v">{{ downlinkText }}</span></div>
             </template>
@@ -269,6 +274,7 @@
         </template>
         <!-- 腾讯会议风格批注画布图层（覆盖主画面，支持画笔/荧光笔/箭头/矩形/文字/橡皮擦） -->
         <AnnotationOverlay
+          v-if="!isVoiceMode"
           ref="annotationRef"
           :active="annotating"
           @close="annotating = false"
@@ -304,6 +310,7 @@
         v-if="dock === 'chat'"
         v-model:draft="chatDraft"
         :messages="messages"
+        :meeting-id="meetingId"
         :participants="participants"
         :my-name="myName"
         :started-at="meetingStore.state?.startedAt || ''"
@@ -311,6 +318,7 @@
         @close="dock = 'none'"
         @send="sendChat"
         @send-image="sendChatImage"
+        @image-error="onChatImageError"
         @not-wired="onNotWired"
       />
 
@@ -388,6 +396,9 @@
     />
 
     <footer :inert="!admitted" class="im-controls">
+      <button v-if="playbackBlocked" type="button" class="im-hear-banner" @click="unlockPlayback">
+        <i class="ri-volume-up-line" />点这里开启声音
+      </button>
       <div class="im-ctl-center">
         <!-- 主控：麦 / 声音 / 视频 /（桌面共享）—— 窄屏只留参会必需，其余进「更多」 -->
         <button class="im-btn" :class="{ 'im-btn-off': !micOn }" @click="toggleMic">
@@ -395,6 +406,9 @@
         </button>
         <button class="im-btn" :class="{ 'im-btn-off': speakerMuted }" @click="toggleSpeaker">
           <i :class="speakerMuted ? 'ri-volume-mute-line' : 'ri-volume-up-line'" /><span>{{ speakerMuted ? '开启声音' : '关闭声音' }}</span>
+        </button>
+        <button v-if="handheld" class="im-btn" :class="{ 'im-btn-on': speakerRoute === 'loudspeaker' }" @click="toggleOutputRoute">
+          <i :class="speakerRoute === 'loudspeaker' ? 'ri-volume-up-line' : 'ri-headphone-line'" /><span>{{ speakerRoute === 'loudspeaker' ? '扬声器' : '听筒' }}</span>
         </button>
         <button
           v-if="!isVoiceMode"
@@ -436,8 +450,8 @@
           <i class="ri-cloud-line" /><span>{{ cloudRecording ? '停止云录制' : '开启云录制' }}</span>
         </button>
 
-        <button v-if="!isCompact" class="im-btn" @click="captureMeetingScreen"><i class="ri-screenshot-2-line" /><span>截图</span></button>
-        <button v-if="!isCompact" class="im-btn" :class="{ 'im-btn-on': annotating }" @click="annotating = !annotating"><i class="ri-edit-2-line" /><span>{{ annotating ? '结束批注' : '批注' }}</span></button>
+        <button v-if="!isCompact && !isVoiceMode" class="im-btn" @click="captureMeetingScreen"><i class="ri-screenshot-2-line" /><span>截图</span></button>
+        <button v-if="!isCompact && !isVoiceMode" class="im-btn" :class="{ 'im-btn-on': annotating }" @click="annotating = !annotating"><i class="ri-edit-2-line" /><span>{{ annotating ? '结束批注' : '批注' }}</span></button>
         <button v-if="!isCompact" class="im-btn" :class="{ 'im-btn-on': captionsOn }" :aria-pressed="captionsOn" :disabled="assistant?.working" @click="assistant?.toggleSpeech()"><i class="ri-translate-2" /><span>转录与翻译</span></button>
         <button v-if="!isCompact" class="im-btn" @click="openAssistant('materials')"><i class="ri-file-list-3-line" /><span>会议助手</span></button>
         <!-- 窄屏：成员 + 更多（邀请/聊天/共享/截图/批注/录制/设置） -->
@@ -450,14 +464,14 @@
           <i class="ri-group-line" /><span>成员</span>
         </button>
         <button
-          v-if="isCompact"
+          v-if="isCompact && !isVoiceMode"
           class="im-btn"
           @click="captureMeetingScreen"
         >
           <i class="ri-screenshot-2-line" /><span>截图</span>
         </button>
         <button
-          v-if="isCompact"
+          v-if="isCompact && !isVoiceMode"
           class="im-btn"
           :class="{ 'im-btn-on': annotating }"
           @click="annotating = !annotating"
@@ -470,8 +484,8 @@
           </button>
           <template #dropdown>
             <el-dropdown-menu class="im-more-menu">
-              <el-dropdown-item command="screenshot"><i class="ri-screenshot-2-line" /> 一键截图</el-dropdown-item>
-              <el-dropdown-item command="annotate"><i class="ri-edit-2-line" /> {{ annotating ? '退出批注' : '画面批注' }}</el-dropdown-item>
+              <el-dropdown-item v-if="!isVoiceMode" command="screenshot"><i class="ri-screenshot-2-line" /> 一键截图</el-dropdown-item>
+              <el-dropdown-item v-if="!isVoiceMode" command="annotate"><i class="ri-edit-2-line" /> {{ annotating ? '退出批注' : '画面批注' }}</el-dropdown-item>
               <el-dropdown-item command="captions" divided><i class="ri-translate-2" /> {{ captionsOn ? '关闭转录与翻译' : '转录与翻译' }}</el-dropdown-item>
               <el-dropdown-item command="assistant"><i class="ri-file-list-3-line" /> 会议助手</el-dropdown-item>
               <el-dropdown-item command="invite"><i class="ri-user-add-line" /> 邀请</el-dropdown-item>
@@ -592,7 +606,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, ElDropdown, ElDropdownMenu, ElDropdownItem } from 'element-plus'
 import GlossarySettings from '@/components/meeting/GlossarySettings.vue'
@@ -635,6 +649,15 @@ import {
   applySinkIdToElement,
   syncAllRemoteAudioElements,
 } from '@/utils/audioRouting'
+import {
+  installPlaybackUnlock,
+  isHandheld,
+  keepLoudspeakerOnHandheld,
+  onPlaybackBlocked,
+  outputRoute,
+  resumeRemotePlayback,
+  setOutputRoute,
+} from '@/utils/playbackOutput'
 import { acquireMicrophoneTrack, useMediaSettings } from '@/composables/useMediaSettings'
 import { useViewport } from '@/composables/useViewport'
 import { useFaceEnhancement } from '@/composables/useFaceEnhancement'
@@ -930,19 +953,42 @@ const cameraOn = ref(true)
 const micOn = ref(true)
 const speakerMuted = ref(false)
 const activeSpeakerSinkId = ref('')
+const handheld = isHandheld()
+const speakerRoute = ref(outputRoute())
+const playbackBlocked = ref(false)
 let deviceChangeTimer: number | null = null
+let stopPlaybackWatch: (() => void) | null = null
 
 async function toggleSpeaker() {
   speakerMuted.value = !speakerMuted.value
   await syncAllRemoteAudioElements(speakerMuted.value, activeSpeakerSinkId.value)
+  if (playbackBlocked.value) await unlockPlayback()
+}
+
+function toggleOutputRoute() {
+  const next = speakerRoute.value === 'loudspeaker' ? 'earpiece' : 'loudspeaker'
+  speakerRoute.value = next
+  setOutputRoute(next)
+  void resumeRemotePlayback()
+}
+
+async function unlockPlayback() {
+  playbackBlocked.value = await resumeRemotePlayback()
 }
 
 async function reconcileAudioDevices(reason: 'init' | 'devicechange') {
   if (!navigator.mediaDevices?.enumerateDevices) return
   try {
     const devs = await navigator.mediaDevices.enumerateDevices()
-    const pickedSpeaker = pickPreferredSpeakerId(devs, media.prefs.value?.speakerDeviceId)
-    if (pickedSpeaker.deviceId) {
+    // 手机和平板不套扬声器 deviceId：那串号是另一台电脑的，硬套会没声音。
+    // 外放/听筒/蓝牙由系统路由，上面的「扬声器」按钮只切换外放和听筒。
+    if (handheld) {
+      activeSpeakerSinkId.value = ''
+      keepLoudspeakerOnHandheld()
+      await syncAllRemoteAudioElements(speakerMuted.value, '')
+    }
+    const pickedSpeaker = handheld ? null : pickPreferredSpeakerId(devs, media.prefs.value?.speakerDeviceId)
+    if (pickedSpeaker?.deviceId) {
       const changed = activeSpeakerSinkId.value !== pickedSpeaker.deviceId
       activeSpeakerSinkId.value = pickedSpeaker.deviceId
       await syncAllRemoteAudioElements(speakerMuted.value, pickedSpeaker.deviceId)
@@ -1016,8 +1062,12 @@ const remoteStreams = computed(() =>
 )
 // 别人共享出来的那一路屏幕流：原型「共享屏幕中」要把它顶成主画面。
 const shareStreamId = computed(() => remoteStreams.value.find((s) => s.kind === 'screen')?.id || '')
+// 后端判定为本端自己的发布（参会身份刚换过、ownerId 与 myId 暂未对齐时会出现）：本地已有预览，不再订阅。
+const selfOwnedStreams = reactive(new Set<string>())
 const subscribableStreams = computed(() =>
-  myId.value ? streams.value.filter(s => (s.video || s.audio) && s.ownerId && s.ownerId !== myId.value) : [],
+  myId.value
+    ? streams.value.filter(s => (s.video || s.audio) && s.ownerId && s.ownerId !== myId.value && !selfOwnedStreams.has(s.id))
+    : [],
 )
 
 // 原型三档排列里成员的位置由**排列**决定，不由一个独立开关决定：
@@ -1061,22 +1111,65 @@ function formatResolutionSpec(height?: number, fps?: number): string {
   return ''
 }
 
+// 帧头不一定带会话描述（宽高/帧率），getStats 也可能没有 framesPerSecond：
+// 这时按「每秒解出几帧」实测帧率、按真正画出来的画布/视频元素量高度，别让规格一直空着。
+const measuredFps = ref<Record<string, number>>({})
+const decodedSamples = new Map<string, { n: number; t: number }>()
+function sampleMeasuredFps() {
+  const now = performance.now()
+  const next: Record<string, number> = {}
+  for (const [id, st] of Object.entries(streamStats.value)) {
+    const prev = decodedSamples.get(id)
+    if (prev && st.decoded >= prev.n && now - prev.t > 300) {
+      next[id] = ((st.decoded - prev.n) * 1000) / (now - prev.t)
+    }
+    decodedSamples.set(id, { n: st.decoded, t: now })
+  }
+  for (const id of [...decodedSamples.keys()]) if (!streamStats.value[id]) decodedSamples.delete(id)
+  measuredFps.value = next
+}
+function renderedSize(id: string): { w: number; h: number } {
+  const canvas = playerCanvases.get(id)
+  if (canvas && canvas.width > 2 && canvas.height > 2) return { w: canvas.width, h: canvas.height }
+  const track = lanWhepVideo.value[id]?.getVideoTracks()[0]?.getSettings()
+  return { w: track?.width || 0, h: track?.height || 0 }
+}
+function streamSpec(id: string, fallback?: { height?: number; fps?: number }) {
+  const st = streamStats.value[id]
+  const size = renderedSize(id)
+  return {
+    w: st?.w || size.w,
+    h: st?.h || size.h || fallback?.height || 0,
+    fps: st?.fps || measuredFps.value[id] || fallback?.fps || 0,
+  }
+}
+function selfSpec(): { w: number; h: number; fps: number } {
+  const track = (sharing.value ? shareStream.value : selfStream.value)?.getVideoTracks()[0]
+  const s = track?.getSettings()
+  const el = selfRef.value
+  return {
+    w: s?.width || el?.videoWidth || 0,
+    h: s?.height || el?.videoHeight || 0,
+    fps: (sharing.value ? screenFps.value : cameraFps.value) || s?.frameRate || 0,
+  }
+}
+
 const joinedRows = computed<MemberRow[]>(() =>
   participants.value.map((p) => {
     const isSelf = p.id === myId.value
     const stream = isSelf ? null : streamOfMember(p.id)
     const st = stream ? streamStats.value[stream.id] : null
     let resolution = ''
+    // 读一下 measuredFps，让本端规格（取自轨道设置、本身不响应式）也随每秒采样刷新。
+    void measuredFps.value
     if (isSelf) {
-      if (sharing.value) {
-        const sTrack = shareStream.value?.getVideoTracks()[0]?.getSettings()
-        resolution = formatResolutionSpec(sTrack?.height, screenFps.value || sTrack?.frameRate)
-      } else if (cameraOn.value) {
-        const cTrack = selfStream.value?.getVideoTracks()[0]?.getSettings()
-        resolution = formatResolutionSpec(cTrack?.height, cameraFps.value || cTrack?.frameRate)
+      if (sharing.value || cameraOn.value) {
+        const spec = selfSpec()
+        resolution = formatResolutionSpec(spec.h, spec.fps)
       }
-    } else if (stream) {
-      resolution = formatResolutionSpec(st?.h || stream.height, st?.fps || stream.fps)
+    } else if (stream && (p.cameraOn || stream.kind === 'screen')) {
+      const spec = streamSpec(stream.id, { height: stream.height, fps: stream.fps })
+      resolution = formatResolutionSpec(spec.h, spec.fps)
     }
     return {
       key: p.id,
@@ -1302,9 +1395,12 @@ function tileAvatarSrc(r: MemberRow): string {
 }
 
 function specText(r: MemberRow) {
-  if (!r.cameraOn) return '摄像头关闭 · 仅音频'
-  const st = r.streamId ? streamStats.value[r.streamId] : null
-  return st && st.w && st.h ? `${st.w}×${st.h}p · ${Math.round(st.fps)} fps` : ''
+  if (!r.cameraOn && !r.sharing) return '仅音频'
+  void measuredFps.value
+  const st = r.isSelf ? selfSpec() : r.streamId ? streamSpec(r.streamId) : null
+  if (!st) return ''
+  if (!st.h) return ''
+  return st.w ? `${st.w}×${st.h}p${st.fps ? ` · ${Math.round(st.fps)} fps` : ''}` : formatResolutionSpec(st.h, st.fps)
 }
 
 function rowClick(r: MemberRow) {
@@ -1485,8 +1581,8 @@ let lastScreenshotUrl = ''
 
 function onMoreCommand(cmd: string | number | object) {
   const c = String(cmd) as MoreCmd
-  if (c === 'screenshot') void captureMeetingScreen()
-  else if (c === 'annotate') annotating.value = !annotating.value
+  if (c === 'screenshot' && !isVoiceMode.value) void captureMeetingScreen()
+  else if (c === 'annotate' && !isVoiceMode.value) annotating.value = !annotating.value
   else if (c === 'captions') void assistant.value?.toggleSpeech()
   else if (c === 'assistant') openAssistant('materials')
   else if (c === 'invite') showInvite.value = true
@@ -2200,13 +2296,17 @@ async function sendChat() {
   }
 }
 
+function onChatImageError(msg: string) {
+  ElMessage.warning(msg)
+}
+
 async function sendChatImage(payload: string) {
   if (!payload) return
   try {
     await ws.sendChat(payload)
   } catch (e) {
     console.warn('[meeting] 发送图片消息失败', e)
-    ElMessage.error('图片发送失败，请尝试换一张更小的图片')
+    ElMessage.error('图片发送失败，请检查网络后重试')
   }
 }
 
@@ -2299,6 +2399,7 @@ function resolveLaunchKind(): string {
 
 const isVoiceMode = computed(() => resolveLaunchKind() === 'voice')
 const isShareMode = computed(() => resolveLaunchKind() === 'share')
+watch(isVoiceMode, (on) => { if (on) annotating.value = false })
 
 const voiceRemotePeers = computed(() => joinedRows.value.filter((r) => !r.isSelf))
 /** 语音舞台：对方优先居中展示，自己放次位；无人时只显示自己。 */
@@ -2338,7 +2439,9 @@ async function applyLaunchIntentOnce() {
 
 async function onPrefsChanged() {
   await attachSelfMedia()
-  await media.setElementSink([...streamRefs.values()], media.effectivePrefs()?.speakerDeviceId || '')
+  if (!handheld) {
+    await media.setElementSink([...streamRefs.values()], media.effectivePrefs()?.speakerDeviceId || '')
+  }
 }
 
 async function leave() {
@@ -2441,8 +2544,17 @@ function blockRetry(id: string, ms = 10000) {
 const MEETING_OVER_STATES = ['ended', 'cancelled', 'failed']
 function streamFailureKind(s: StreamVo, e: unknown, playable: boolean): StreamFailure {
   const se = e as { reason?: unknown; status?: unknown }
+  // 旧版后端对"订到自己"只回 403/forbidden，订阅端点也没有别的 403 分支，按同一件事处理。
+  if (se?.reason === 'self_stream' || (e instanceof SubscribeError && e.status === 403)) {
+    selfOwnedStreams.add(s.id)
+    return 'terminal'
+  }
+  // 直连播放器拿不到信封，只会用 Error('warming') 表达"上游还没就绪"。
+  const reason = typeof se?.reason === 'string' && se.reason
+    ? se.reason
+    : (e instanceof Error && e.message === 'warming' ? 'warming' : '')
   return classifyStreamFailure({
-    reason: typeof se?.reason === 'string' ? se.reason : '',
+    reason,
     status: typeof se?.status === 'number' ? se.status : undefined,
     inLatestState: streams.value.some((x) => x.id === s.id),
     meetingOver: MEETING_OVER_STATES.includes(meetingStore.state?.status || ''),
@@ -2768,6 +2880,9 @@ async function attachAudioLeg(s: StreamVo, engine: MediaPlayer) {
   if (!url) return
   const player = new engine.DirectAudioPlayer({
     headers: authHeaders(),
+    // 不打开这个开关时，直连那条腿只解码、不往喇叭送，手机上就是完全没声音。
+    outputToSpeakers: true,
+    muted: speakerMuted.value,
     onRate: (kbps) => audioDown.value[s.id] = kbps,
     onTraffic: (bytes) => setStreamBytes(s.id, bytes),
     // 这一路的原始音频流：播放器回吐得了，录制才有独立音轨可录；回吐不了就不录这一路声音，
@@ -2784,12 +2899,15 @@ async function attachAudioLeg(s: StreamVo, engine: MediaPlayer) {
   }).catch((e) => {
     // 同上：不在册说明这一路已经被我们自己摘掉或被新实例顶替，那次 reject 不算这路的失败。
     if (audioPlayers.get(s.id) !== player) return
-    console.error('[audio] 起播失败', e)
     // 失败必须把条目摘掉，否则这路流再也重试不了（对端稍后才开始推是常态）。
     audioPlayers.delete(s.id)
     delete audioDown.value[s.id]
-    if (streamFailureKind(s, e, !!url) === 'terminal') clearStreamError(s.id)
-    else {
+    const kind = streamFailureKind(s, e, !!url)
+    if (kind === 'terminal') clearStreamError(s.id)
+    else if (kind === 'warming') {
+      streamError.value = { ...streamError.value, [s.id]: warmingOutcome(s.id, e, '这路声音一直没准备好') }
+    } else {
+      console.error('[audio] 起播失败', e)
       blockRetry(s.id)
       streamError.value = {
         ...streamError.value,
@@ -2954,11 +3072,25 @@ const focusedStream = computed(() => {
   return remoteStreams.value.find((s) => s.id === id) || null
 })
 const focusName = computed(() => focusedStream.value?.ownerName || '—')
-const focusResolution = computed(() => {
-  const s = focusStat.value
-  return s && s.w && s.h ? s.w + '×' + s.h : '—'
+function sizeText(w: number, h: number): string {
+  if (w && h) return `${w}×${h}`
+  return h ? `${h}p` : '—'
+}
+const focusSpec = computed(() => {
+  void measuredFps.value
+  const id = statStreamId.value
+  if (!id || id === SELF_FOCUS) return null
+  const s = streams.value.find((x) => x.id === id)
+  return streamSpec(id, { height: s?.height, fps: s?.fps })
 })
-const focusFps = computed(() => fpsText(focusStat.value?.fps))
+const focusResolution = computed(() => (focusSpec.value ? sizeText(focusSpec.value.w, focusSpec.value.h) : '—'))
+const focusFps = computed(() => (focusSpec.value?.fps ? fpsText(focusSpec.value.fps) : '—'))
+const selfStatSpec = computed(() => {
+  void measuredFps.value
+  return focusedIsSelf.value && (sharing.value || cameraOn.value) ? selfSpec() : null
+})
+const selfResolution = computed(() => (selfStatSpec.value ? sizeText(selfStatSpec.value.w, selfStatSpec.value.h) : '—'))
+const selfFps = computed(() => (selfStatSpec.value?.fps ? fpsText(selfStatSpec.value.fps) : '—'))
 const focusKbps = ref(0)
 
 const focusedIsSelf = computed(() => statIsSelf.value)
@@ -3042,6 +3174,7 @@ trafficTickTimer = window.setInterval(() => {
     avgUpKbps.value = Math.round(statsUpSum / statsSampleCount)
     avgDownKbps.value = Math.round(statsDownSum / statsSampleCount)
   }
+  sampleMeasuredFps()
 }, 1000)
 
 onBeforeUnmount(() => {
@@ -3205,6 +3338,9 @@ watch(canPublish, (ok) => {
 })
 
 onMounted(() => {
+  installPlaybackUnlock()
+  if (handheld) setOutputRoute('loudspeaker')
+  stopPlaybackWatch = onPlaybackBlocked((blocked) => { playbackBlocked.value = blocked })
   document.addEventListener('fullscreenchange', handleFullscreenChange)
   navigator.mediaDevices?.addEventListener?.('devicechange', onMediaDeviceChange)
   void reconcileAudioDevices('init')
@@ -3223,6 +3359,7 @@ onMounted(() => {
   })
 })
 onBeforeUnmount(() => {
+  stopPlaybackWatch?.()
   document.removeEventListener('fullscreenchange', handleFullscreenChange)
   navigator.mediaDevices?.removeEventListener?.('devicechange', onMediaDeviceChange)
   if (deviceChangeTimer !== null) window.clearTimeout(deviceChangeTimer)
@@ -3680,11 +3817,14 @@ onBeforeUnmount(() => {
   background: rgba(15, 23, 42, 0.55);
 }
 .im-tile-line { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; flex-wrap: wrap; }
-.im-tile-name { min-width: 0; max-width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+.im-tile-name { min-width: 0; max-width: 100%; white-space: normal; word-break: break-all; line-height: 1.35; font-weight: 500; }
+.im-chip-self { background: rgba(59, 130, 246, 0.35); color: #dbeafe; }
+.im-tile-tags { order: 10; margin-top: 2px; }
+.im-tile-tags:empty { display: none; }
 .im-tile-media { display: inline-flex; gap: 4px; font-size: 15px; }
 .im-tile-media .ri-mic-off-line, .im-tile-media .ri-video-off-line { opacity: 0.55; }
 .im-tile-rate { display: flex; gap: 10px; font-size: 12px; color: #cbd5e1; font-variant-numeric: tabular-nums; }
-.im-tile-spec { font-style: normal; color: var(--text-tertiary); }
+.im-tile-spec { font-style: normal; color: #cbd5e1; }
 /* 名牌上的 边/云、主持人、正在讲话 小标签（原型 18px 高） */
 .im-chip {
   flex-shrink: 0; min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box;
@@ -3723,6 +3863,7 @@ onBeforeUnmount(() => {
 
 /* 底部控制条 */
 .im-controls {
+  position: relative;
   flex-shrink: 0; display: flex; align-items: center; gap: 14px;
   /* 与控制条同源的坑：固定高 + 中间那组 flex-wrap，窄屏下按钮换行会溢出压住画面。 */
   min-height: 66px; padding: 6px 16px; background: var(--bg-card);
@@ -3737,6 +3878,13 @@ onBeforeUnmount(() => {
 }
 .im-strategy-item select:disabled { color: var(--text-muted); cursor: not-allowed; }
 
+.im-hear-banner {
+  position: absolute; left: 50%; top: -46px; transform: translateX(-50%); z-index: 5;
+  display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 16px;
+  border: 0; border-radius: 999px; background: var(--primary); color: #fff;
+  font-size: 13px; cursor: pointer; white-space: nowrap;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.25);
+}
 .im-ctl-center { display: flex; align-items: center; gap: 6px; flex: 1; justify-content: center; flex-wrap: wrap; }
 .im-ctl-right { display: flex; gap: 8px; flex-shrink: 0; }
 /* 原型控制键：remixicon 图标在上、文字在下 */

@@ -16,6 +16,7 @@ const (
 	meetingsPrefix   = "/api/v1/meetings/"
 	recordingsPrefix = "/api/v1/recordings/"
 	usersPrefix      = "/api/v1/users/"
+	chatImagesPrefix = "/api/v1/chat/images/"
 )
 
 // acceptsQueryToken 判定这条请求能不能用 ?token= 票参代替 Authorization 头。
@@ -35,7 +36,7 @@ func acceptsQueryToken(r *ghttp.Request) bool {
 	if strings.HasPrefix(path, meetingsPrefix) {
 		return isMediaFrameStream(path)
 	}
-	if isAvatarRead(path) {
+	if isAvatarRead(path) || isChatImageRead(path) {
 		return true
 	}
 	if !strings.HasPrefix(path, recordingsPrefix) {
@@ -89,6 +90,20 @@ func isAvatarRead(path string) bool {
 	return true
 }
 
+// isChatImageRead 形状恒为 /api/v1/chat/images/{数字}：会中聊天里的 <img> 带不了请求头。
+func isChatImageRead(path string) bool {
+	id, found := strings.CutPrefix(path, chatImagesPrefix)
+	if !found || id == "" {
+		return false
+	}
+	for _, c := range id {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // isDecodedMediaPath 判断"这条响应会被交给解码器，而不是被我方前端代码读"的路径：
 // 录制回放的 HLS 清单/分片，以及会中帧流。
 // 这类请求失败必须回**真 4xx** —— 沿用 HTTP 200 + JSON 错误体的话，
@@ -120,14 +135,18 @@ func authFailure(r *ghttp.Request, msg string) {
 // auto-login 在这里放行**不等于任何人能进** —— 能不能签、签给谁，由 service.AutoLogin 按配置判，
 // 开关关着它自己回 403（契约 §5.1）。
 var publicAuthPaths = map[string]struct{}{
-	"/api/v1/auth/login":               {},
-	"/api/v1/auth/sm2-public-key":      {},
-	"/api/v1/auth/auto-login":          {},
-	"/api/v1/auth/sms/send":            {},
-	"/api/v1/auth/sms/login":           {},
-	"/api/v1/auth/sms/reset-password":  {},
-	"/api/v1/auth/email/send":          {},
-	"/api/v1/auth/email/login":         {},
+	"/api/v1/auth/login":              {},
+	"/api/v1/auth/sm2-public-key":     {},
+	"/api/v1/auth/auto-login":         {},
+	"/api/v1/auth/sms/send":           {},
+	"/api/v1/auth/sms/login":          {},
+	"/api/v1/auth/sms/reset-password": {},
+	"/api/v1/auth/email/send":         {},
+	"/api/v1/auth/email/login":        {},
+	// 登录页「关于我们」的点赞与反馈：匿名可提交，服务端按客户端摘要去重、限频。
+	"/api/v1/feedback/summary": {},
+	"/api/v1/feedback/like":    {},
+	"/api/v1/feedback/submit":  {},
 }
 
 func Auth(r *ghttp.Request) {

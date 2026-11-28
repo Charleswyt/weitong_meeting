@@ -87,6 +87,7 @@ func LoadInvitees(ctx context.Context, meetingId int64) ([]Invitee, error) {
 	for _, r := range rows {
 		out = append(out, Invitee{UserId: r.Id, Name: r.Name, Account: r.Account, Avatar: r.Avatar})
 	}
+	out = append(out, loadInterviewInvitees(ctx, meetingId)...)
 	return out, nil
 }
 

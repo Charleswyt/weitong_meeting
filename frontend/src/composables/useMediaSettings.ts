@@ -1,18 +1,19 @@
-import { ref, computed } from 'vue'
+import { ref, computed, toRef } from 'vue'
+import { clientPrefs } from '@/utils/clientPrefs'
 import type { UserSettingsVo } from '@/api/settings'
 import { getPreferences, updatePreferences } from '@/api/settings'
 import { createBgBlurTrack, type BgBlurSession } from '@/utils/bgBlur'
 import {
   createVideoEnhanceTrack,
-  readVideoEnhanceEnabled,
   saveVideoEnhanceEnabled,
   type VideoEnhanceSession,
 } from '@/utils/videoEnhance'
 import { BG_BLUR_AVAILABLE } from '@/utils/virtualBackground'
+import { keepLoudspeakerOnHandheld } from '@/utils/playbackOutput'
 
 // 全局共享的偏好与设备状态：设置页写入、会议页读取，只此一处枚举设备。
 const prefs = ref<UserSettingsVo | null>(null)
-const videoEnhanceEnabled = ref<boolean>(readVideoEnhanceEnabled())
+const videoEnhanceEnabled = toRef(clientPrefs, 'videoEnhance')
 const devices = ref<{
   cameras: MediaDeviceInfo[]
   microphones: MediaDeviceInfo[]
@@ -38,8 +39,60 @@ function currentPreferencesSession() {
     preferencesSession = session
     prefs.value = null
     loadInFlight = null
+    serverDeviceIds = null
   }
   return session
+}
+
+// 麦克风/摄像头/扬声器的 deviceId 只在「这一台设备的这个浏览器」里有效。
+// 后端那一行是按账号存的，手机读到的是笔记本上的 id，套上来麦会采空、声音会送到不存在的喇叭。
+// 所以设备号留在本机；写回后端时原样放回，避免这台手机把另一台机器的选择清掉。
+const LOCAL_DEVICES_KEY = 'weitong.localDevices'
+let serverDeviceIds: { camera: string; mic: string; speaker: string } | null = null
+
+function readLocalDevices(): { camera: string; mic: string; speaker: string } {
+  try {
+    const raw = JSON.parse(localStorage.getItem(LOCAL_DEVICES_KEY) || '')
+    return { camera: String(raw?.camera || ''), mic: String(raw?.mic || ''), speaker: String(raw?.speaker || '') }
+  } catch {
+    return { camera: '', mic: '', speaker: '' }
+  }
+}
+
+function writeLocalDevices(d: { camera: string; mic: string; speaker: string }) {
+  try {
+    localStorage.setItem(LOCAL_DEVICES_KEY, JSON.stringify(d))
+  } catch { /* 隐私模式写不进时，这一场仍用内存里的选择 */ }
+}
+
+async function bindDevicesToThisMachine(vo: UserSettingsVo): Promise<UserSettingsVo> {
+  if (!serverDeviceIds) {
+    serverDeviceIds = {
+      camera: vo.cameraDeviceId || '',
+      mic: vo.microphoneDeviceId || '',
+      speaker: vo.speakerDeviceId || '',
+    }
+  }
+  const local = readLocalDevices()
+  let list: MediaDeviceInfo[] = []
+  try {
+    list = await navigator.mediaDevices?.enumerateDevices() || []
+  } catch { /* 枚举失败就不要拿别的机器的 id 凑 */ }
+  const named = list.some((d) => d.deviceId && d.deviceId !== 'default')
+  const present = (kind: MediaDeviceKind, id: string) =>
+    !!id && list.some((d) => d.kind === kind && d.deviceId === id)
+  const pick = (kind: MediaDeviceKind, serverId: string, localId: string) => {
+    if (present(kind, localId)) return localId
+    if (present(kind, serverId)) return serverId
+    // 列表里没有的 id（别的电脑存下来的，或还没授权）一律不用。
+    return ''
+  }
+  const camera = pick('videoinput', serverDeviceIds.camera, local.camera)
+  const mic = pick('audioinput', serverDeviceIds.mic, local.mic)
+  const speaker = pick('audiooutput', serverDeviceIds.speaker, local.speaker)
+  const bound = { camera, mic, speaker }
+  if (camera || mic || speaker || named) writeLocalDevices(bound)
+  return { ...vo, cameraDeviceId: camera, microphoneDeviceId: mic, speakerDeviceId: speaker }
 }
 
 
@@ -71,6 +124,7 @@ async function probeTrack(kind: 'video' | 'audio'): Promise<'ok' | 'denied' | 's
       kind === 'video' ? { video: true, audio: false } : { video: false, audio: true },
     )
     stream.getTracks().forEach((t) => t.stop())
+    keepLoudspeakerOnHandheld()
     return 'ok'
   } catch (e: any) {
     const name = e?.name as string
@@ -110,7 +164,6 @@ export function useMediaSettings() {
   const mirrorStyle = computed(() => (prefs.value?.mirrorVideo ? 'row-reverse' : 'row'))
 
   function setVideoEnhance(on: boolean) {
-    videoEnhanceEnabled.value = on
     saveVideoEnhanceEnabled(on)
   }
 
@@ -119,9 +172,9 @@ export function useMediaSettings() {
     if (loadInFlight) return loadInFlight
     if (prefs.value && !force) return prefs.value
     loadInFlight = getPreferences()
-      .then((res) => {
+      .then(async (res) => {
         if (currentPreferencesSession() !== session) return null
-        prefs.value = res.data || null
+        prefs.value = res.data ? await bindDevicesToThisMachine(res.data) : null
         // 旧版设置页只写 bgBlur；读到它而 vbMode 还是 off 时按 blur 迁移一次。
         // 只改内存：下次保存由 savePreferences 把镜像同步回库。
         if (prefs.value && prefs.value.bgBlur && prefs.value.vbMode === 'off') {
@@ -142,18 +195,27 @@ export function useMediaSettings() {
   async function savePreferences(next: UserSettingsVo, alignSessionDevices = true) {
     // bgBlur 是旧开关的兼容镜像：判生效只看 vbMode，落库时把镜像同步过去。
     const session = currentPreferencesSession()
-    const payload = { ...next, bgBlur: next.vbMode === 'blur' }
+    const localDevices = {
+      camera: next.cameraDeviceId || '',
+      mic: next.microphoneDeviceId || '',
+      speaker: next.speakerDeviceId || '',
+    }
+    writeLocalDevices(localDevices)
+    // 设备号不进账号级设置：那一列换一台机器就失效，写进去会把另一台电脑的选择盖掉。
+    const payload = {
+      ...next,
+      bgBlur: next.vbMode === 'blur',
+      cameraDeviceId: serverDeviceIds?.camera ?? next.cameraDeviceId,
+      microphoneDeviceId: serverDeviceIds?.mic ?? next.microphoneDeviceId,
+      speakerDeviceId: serverDeviceIds?.speaker ?? next.speakerDeviceId,
+    }
     await updatePreferences(payload)
     if (currentPreferencesSession() !== session) return
-    prefs.value = payload
-    // 显式保存过一次就把临时设备对齐到刚落库的值：否则会中设置弹层存的设备会被预检页的临时选择盖掉。
+    prefs.value = { ...payload, cameraDeviceId: localDevices.camera, microphoneDeviceId: localDevices.mic, speakerDeviceId: localDevices.speaker }
+    // 显式保存过一次就把临时设备对齐到这台机器刚选的值。
     // 只改非设备项时传 false，别把预检页的临时设备覆盖掉。
     if (alignSessionDevices) {
-      sessionDevices.value = {
-        camera: payload.cameraDeviceId,
-        mic: payload.microphoneDeviceId,
-        speaker: payload.speakerDeviceId,
-      }
+      sessionDevices.value = { camera: localDevices.camera, mic: localDevices.mic, speaker: localDevices.speaker }
     }
   }
 
@@ -297,6 +359,8 @@ export function useMediaSettings() {
       error.value = ''
       captureIssue.value = { camera: audioOnly ? '未开启' : '', mic: '' }
       await enumerateDevices()
+      keepLoudspeakerOnHandheld()
+      if (prefs.value) prefs.value = await bindDevicesToThisMachine(prefs.value)
 
       // 轨道级画面处理：先 GPU 实时降噪与弱光增强，再按需叠背景虚化；预览与发布共用同一条干净流。
       captureTrack = stream.getVideoTracks()[0]
@@ -509,6 +573,7 @@ async function captureAvailableLegs(p: UserSettingsVo | null): Promise<{
     { audio: buildAudioConstraints(p) },
     { audio: buildAudioConstraints(null) },
   )
+  keepLoudspeakerOnHandheld()
   return { stream: tracks.length ? new MediaStream(tracks) : null, issue }
 }
 
@@ -566,10 +631,14 @@ export async function acquireMicrophoneTrack(
     return t
   }
   try {
-    return await tryOnce(buildAudioConstraints(p))
+    const track = await tryOnce(buildAudioConstraints(p))
+    keepLoudspeakerOnHandheld()
+    return track
   } catch {
     try {
-      return await tryOnce(buildAudioConstraints(null))
+      const track = await tryOnce(buildAudioConstraints(null))
+      keepLoudspeakerOnHandheld()
+      return track
     } catch (e: any) {
       console.warn('[media] 补采麦克风失败', e?.name, e?.message)
       return null

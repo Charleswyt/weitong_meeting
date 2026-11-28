@@ -125,6 +125,50 @@ func (c *Controller) Stats(r *ghttp.Request) {
 	})
 }
 
+func (c *Controller) Overview(r *ghttp.Request) {
+	var req v1.MeetingOverviewReq
+	if err := r.Parse(&req); err != nil {
+		response.FailValidate(r, err)
+		return
+	}
+	userId := service.GetUserIdFromCtx(r.Context())
+	board, cu, err := c.scheduleItems(r)
+	if err != nil {
+		response.FailSystem(r, "请求处理失败", err)
+		return
+	}
+	overview := service.BuildMeetingOverview(
+		board,
+		userId,
+		cu.Account,
+		req.Dimension,
+		req.StartDate,
+		req.EndDate,
+		gtime.Now().Time,
+	)
+	response.Ok(r, overview)
+}
+
+func (c *Controller) CreateInterview(r *ghttp.Request) {
+	var req v1.InterviewCreateReq
+	if err := r.Parse(&req); err != nil {
+		response.FailValidate(r, err)
+		return
+	}
+	userId := service.GetUserIdFromCtx(r.Context())
+	cu := c.callerOf(r)
+	res, err := c.meetingSvc.CreateInterviewRoom(r.Context(), userId, cu.Account, &req)
+	if err != nil {
+		if msg := errs.BizMessage(err); msg != "" {
+			response.Fail(r, msg)
+			return
+		}
+		response.FailSystem(r, "创建失败", err)
+		return
+	}
+	response.Ok(r, res)
+}
+
 func (c *Controller) Detail(r *ghttp.Request) {
 	var req v1.MeetingDetailReq
 	if err := r.Parse(&req); err != nil {
@@ -463,12 +507,32 @@ func (c *Controller) Join(r *ghttp.Request) {
 	if local != nil {
 		preLocalId = local.Id
 	}
+	var onlineUserIds []int64
+	wasAlreadyInRoom := false
 	if preKey := c.registry.RoomKey(preLocalId, externalNo); preKey != 0 {
 		if existingRoom, ok := c.registry.Room(preKey); ok {
 			if override := existingRoom.GetDisplayNameOverride(userId); override != "" {
 				displayName = override
 			}
+			for _, sess := range existingRoom.SessionsSnapshot() {
+				if sess == nil {
+					continue
+				}
+				if sess.UserId == userId {
+					wasAlreadyInRoom = true
+				}
+				onlineUserIds = append(onlineUserIds, sess.UserId)
+			}
 		}
+	}
+	// 面试工坊门禁：临时面试者过期/超次禁止入会，且同场面试同时在线的面试者不超过 2 人。
+	if err := service.CheckInterviewJoinGuard(r.Context(), userId, preLocalId, onlineUserIds); err != nil {
+		if msg := errs.BizMessage(err); msg != "" {
+			response.Fail(r, msg)
+			return
+		}
+		response.Fail(r, "当前账户已经过期")
+		return
 	}
 	endpointType, deviceID := service.JoinEndpoint(r.Context())
 	if edge != "" {
@@ -543,6 +607,9 @@ func (c *Controller) Join(r *ghttp.Request) {
 		EndpointType:     endpointType,
 		JoinedAt:         gtime.Now().Time,
 	})
+	if !wasAlreadyInRoom {
+		service.RecordInterviewJoinUsage(r.Context(), userId)
+	}
 	if room, ok := c.registry.Room(roomKey); ok {
 		if ct := room.GetCustomTitle(); ct != "" {
 			title = ct

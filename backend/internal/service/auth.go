@@ -69,13 +69,23 @@ func (s *AuthService) Login(ctx context.Context, username, plainPass string) (*L
 		return nil, err
 	}
 	if user == nil {
-		return nil, errs.Bizf("用户名或密码错误")
+		ivUser, err := loginInterviewAccount(ctx, username, plainPass)
+		if err != nil {
+			return nil, err
+		}
+		if ivUser == nil {
+			return nil, errs.Bizf("用户名或密码错误")
+		}
+		return s.issueToken(ctx, ivUser)
 	}
 	if !password.Verify(user.Password, plainPass) {
 		return nil, errs.Bizf("用户名或密码错误")
 	}
 	if user.Status != 1 {
 		return nil, errs.Bizf("账号已禁用")
+	}
+	if err := CheckInterviewAccountLogin(ctx, user.Id); err != nil {
+		return nil, err
 	}
 	if password.NeedsUpgrade(user.Password) {
 		s.upgradeToHashed(ctx, user.Id, plainPass)
@@ -161,6 +171,9 @@ func (s *AuthService) Logout(ctx context.Context, userId int64) {
 }
 
 func (s *AuthService) GetMe(ctx context.Context, userId int64) (*entity.SysUser, error) {
+	if IsInterviewUserId(userId) {
+		return loadInterviewUser(ctx, userId)
+	}
 	rec, err := dao.SysUser.Ctx(ctx).
 		FieldsEx(avatarBlobColumns()).
 		Where(do.SysUser{Id: userId}).
@@ -179,6 +192,13 @@ func (s *AuthService) GetMe(ctx context.Context, userId int64) (*entity.SysUser,
 }
 
 func (s *AuthService) GetThirdPartyToken(ctx context.Context, userId int64) (string, error) {
+	if IsInterviewUserId(userId) {
+		iv, err := loadInterviewUser(ctx, userId)
+		if err != nil {
+			return "", err
+		}
+		return s.tokenManager.GetToken(ctx, userId, "", "", iv.Username, iv.DisplayName)
+	}
 	var user entity.SysUser
 	err := dao.SysUser.Ctx(ctx).
 		FieldsEx(avatarBlobColumns()).

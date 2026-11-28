@@ -117,6 +117,9 @@ func (c *Controller) scheduleToVo(ctx context.Context, it service.ScheduleItem, 
 		if m.StartedAt != nil {
 			vo.StartedAt = formatTime(m.StartedAt)
 		}
+		if m.Status == consts.MeetingStatusEnded && m.UpdatedAt != nil {
+			vo.EndedAt = formatTime(m.UpdatedAt)
+		}
 		if b, ok := brief[m.CreatorId]; ok {
 			vo.CreatorName = b.DisplayName
 			vo.CreatorPositionName = c.dictSvc.LabelOf(ctx, consts.DictTypePosition, b.PositionCode)
@@ -187,6 +190,9 @@ func (c *Controller) meetingToVo(ctx context.Context, m *entity.MeetingAppointme
 	}
 	if m.StartedAt != nil {
 		vo.StartedAt = formatTime(m.StartedAt)
+	}
+	if m.Status == consts.MeetingStatusEnded && m.UpdatedAt != nil {
+		vo.EndedAt = formatTime(m.UpdatedAt)
 	}
 	if m.CreatedAt != nil {
 		vo.CreatedAt = formatTime(m.CreatedAt)

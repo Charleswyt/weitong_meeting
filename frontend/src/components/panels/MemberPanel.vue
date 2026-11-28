@@ -48,13 +48,6 @@
           <div class="mp-name-row">
             <div class="mp-name-group">
               <span class="mp-name" :title="r.name">{{ r.name }}</span>
-              <span
-                v-if="r.nodeType"
-                class="mp-tag"
-                :class="r.nodeType === 'edge' ? 'mp-tag-edge' : 'mp-tag-cloud'"
-              >{{ r.nodeType === 'edge' ? '边' : '云' }}</span>
-              <span v-if="r.isHost" class="mp-tag mp-tag-host">主持人</span>
-              <span v-if="r.isSelf" class="mp-tag mp-tag-self">我</span>
               <button
                 v-if="r.isSelf && r.joined"
                 type="button"
@@ -64,10 +57,10 @@
               >
                 <i class="ri-edit-line" />
               </button>
-              <span v-if="!r.joined" class="mp-tag mp-tag-wait">待入会</span>
             </div>
             <!-- 设备状态只有已入会者才有真值；等候入场的人不给画图标。 -->
             <span v-if="r.joined" class="mp-media">
+              <span v-if="r.isSelf" class="mp-tag mp-tag-self">我</span>
               <span
                 class="mp-media-dot"
                 :class="r.micOn ? 'is-on' : 'is-off'"
@@ -96,6 +89,12 @@
 
           <div v-if="r.joined" class="mp-sub-row">
             <div class="mp-meta-group">
+              <span
+                v-if="r.nodeType"
+                class="mp-tag"
+                :class="r.nodeType === 'edge' ? 'mp-tag-edge' : 'mp-tag-cloud'"
+              >{{ r.nodeType === 'edge' ? '边' : '云' }}</span>
+              <span v-if="r.isHost" class="mp-tag mp-tag-host">主持人</span>
               <span v-if="r.sharing" class="mp-pill mp-pill-share" title="正在共享屏幕">共享中</span>
               <span v-else-if="r.speaking" class="mp-pill mp-pill-speak" title="正在发言">发言中</span>
               <span
@@ -103,19 +102,23 @@
                 class="mp-spec"
                 title="画面分辨率与帧率"
               >{{ r.resolution }}</span>
-              <span v-else-if="!r.cameraOn" class="mp-spec mp-spec-muted">
-                {{ r.micOn ? '仅语音' : '音视频已关' }}
-              </span>
+              <span v-else-if="!r.cameraOn && !r.micOn" class="mp-spec mp-spec-muted">音视频已关</span>
             </div>
-            <div class="mp-rate-row" :title="rateTooltip(r)">
-              <span v-if="r.isSelf">↑{{ rateTextCompact(r.upKbps) }}</span>
-              <span v-else>↓{{ rateTextCompact(r.downKbps) }}</span>
+            <span class="mp-rate" :title="rateTooltip(r)">
+              <span v-if="r.isSelf">↑{{ rateOneDecimal(r.upKbps) }}</span>
+              <span v-else>↓{{ rateOneDecimal(r.downKbps) }}</span>
               <span v-if="r.delayMs != null && r.delayMs > 0" class="mp-delay" :class="delayClass(r.delayMs)">
                 {{ Math.round(r.delayMs) }}ms
               </span>
+            </span>
+          </div>
+          <div v-else class="mp-sub-row">
+            <div class="mp-meta-group">
+              <span v-if="r.isHost" class="mp-tag mp-tag-host">主持人</span>
+              <span class="mp-tag mp-tag-wait">待入会</span>
+              <span class="mp-wait-hint">等待加入会议</span>
             </div>
           </div>
-          <div v-else class="mp-wait-hint">等待加入会议</div>
 
           <p v-if="r.error" class="mp-error">{{ r.error }}</p>
         </div>
@@ -149,6 +152,12 @@
 
 <script lang="ts">
 import { rateTextCompact } from '@/utils/compression'
+
+function rateOneDecimal(kbps: number | null | undefined): string {
+  const v = Number(kbps)
+  if (!(v > 0)) return '—'
+  return v >= 1000 ? (v / 1000).toFixed(1) + 'Mbps' : v.toFixed(1) + 'kbps'
+}
 
 // 成员行由 InMeetingView 统一构造：缩略图放哪儿（主画面/面板/头像）只有父级按排列才说得清。
 export interface MemberRow {
@@ -422,7 +431,7 @@ function rateTooltip(r: MemberRow) {
 }
 .mp-name-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 6px;
   min-width: 0;
@@ -438,10 +447,10 @@ function rateTooltip(r: MemberRow) {
   min-width: 0;
   font-size: 13px;
   font-weight: 600;
+  line-height: 1.35;
   color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  word-break: break-all;
 }
 .mp-tag {
   flex-shrink: 0; min-width: 18px; height: 17px; padding: 0 5px; box-sizing: border-box;
@@ -518,14 +527,16 @@ function rateTooltip(r: MemberRow) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 .mp-meta-group {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 5px;
+  gap: 4px 5px;
   min-width: 0;
+  flex: 1;
   overflow: hidden;
 }
 .mp-pill {
@@ -552,14 +563,16 @@ function rateTooltip(r: MemberRow) {
 }
 .mp-spec-muted { color: var(--text-muted); }
 
-.mp-rate-row {
+.mp-rate {
   flex-shrink: 0;
+  margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   font-size: 11px;
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .mp-delay { font-weight: 500; }
 .mp-delay.is-good { color: var(--success-text); }

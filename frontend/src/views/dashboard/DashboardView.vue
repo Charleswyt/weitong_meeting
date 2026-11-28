@@ -47,8 +47,12 @@
       >
         <i class="ri-mic-line" /><span>语音对讲</span>
       </button>
-      <button type="button" class="m-app-pill" @click="goRecordings">
-        <i class="ri-record-circle-line" /><span>录制回放</span>
+      <button
+        type="button"
+        class="m-app-pill"
+        @click="showInterviewDialog = true"
+      >
+        <i class="ri-user-voice-line" /><span>面试工坊</span>
       </button>
     </div>
 
@@ -150,6 +154,7 @@
       @created="load(true)"
     />
     <JoinMeetingDialog v-model="showJoinDialog" />
+    <InterviewRoomDialog v-model="showInterviewDialog" @created="load(true)" />
     <MyScheduleDialog
       v-model="showMySchedule"
       :meetings="upcomingMonthMeetings"
@@ -278,9 +283,13 @@
         <span>语音对讲</span>
       </button>
       <span class="sec-dot" aria-hidden="true" />
-      <button class="sec-link" type="button" @click="goRecordings">
-        <i class="ri-record-circle-line" />
-        <span>录制回放</span>
+      <button
+        class="sec-link"
+        type="button"
+        @click="showInterviewDialog = true"
+      >
+        <i class="ri-user-voice-line" />
+        <span>面试工坊</span>
       </button>
       <form class="sec-join" @submit.prevent="handleInlineJoin">
         <input
@@ -470,6 +479,7 @@
       @created="load(true)"
     />
     <JoinMeetingDialog v-model="showJoinDialog" />
+    <InterviewRoomDialog v-model="showInterviewDialog" @created="load(true)" />
     <MyScheduleDialog
       v-model="showMySchedule"
       :meetings="upcomingMonthMeetings"
@@ -486,6 +496,7 @@ import { useViewport } from "@/composables/useViewport";
 import { ElMessage, ElMessageBox } from "element-plus";
 import ScheduleMeetingDialog from "@/components/dialogs/ScheduleMeetingDialog.vue";
 import JoinMeetingDialog from "@/components/dialogs/JoinMeetingDialog.vue";
+import InterviewRoomDialog from "@/components/dialogs/InterviewRoomDialog.vue";
 import MyScheduleDialog from "@/components/dialogs/MyScheduleDialog.vue";
 import AccessNodeBadge from "@/components/dashboard/AccessNodeBadge.vue";
 import {
@@ -510,7 +521,10 @@ import {
   preJoinPath,
   preJoinPathByNumber,
 } from "@/utils/joinFlow";
-import { startQuickMeeting, guardSingleActiveMeeting } from "@/utils/startMeeting";
+import {
+  startQuickMeeting,
+  guardSingleActiveMeeting,
+} from "@/utils/startMeeting";
 import { formatMeetingNo } from "@/utils/meetingNo";
 import { fetchGeoWeather } from "@/utils/geoWeather";
 
@@ -522,6 +536,7 @@ const upcomingMonthMeetings = ref<MeetingVo[]>([]);
 const loading = ref(false);
 const showScheduleDialog = ref(false);
 const showJoinDialog = ref(false);
+const showInterviewDialog = ref(false);
 const showMySchedule = ref(false);
 const editingMeeting = ref<MeetingVo | null>(null);
 const upcomingMonthCount = computed(() => upcomingMonthMeetings.value.length);
@@ -597,10 +612,6 @@ async function startForShare() {
 
 async function startVoice() {
   await runQuickStart("voice");
-}
-
-function goRecordings() {
-  router.push("/recordings");
 }
 
 async function handleInlineJoin() {
@@ -687,17 +698,29 @@ function latestOf(items: MeetingVo[]) {
   return ts.length ? Math.max(...ts) : 0;
 }
 
-function timeOf(iso: string) {
-  return businessClock(iso);
+function timeOf(iso?: string) {
+  return iso ? businessClock(iso) : "";
 }
 function endTimeOf(m: MeetingVo) {
-  const d = new Date(m.startTime);
-  if (isNaN(d.getTime())) return "";
-  d.setMinutes(d.getMinutes() + m.durationMinutes);
-  return businessClock(d);
+  const ext = m as MeetingVo & { endedAt?: string };
+  const startIso = m.startedAt || m.startTime;
+  const startDate = new Date(startIso);
+  if (m.status === "ended" && ext.endedAt) {
+    const endDate = new Date(ext.endedAt);
+    if (!isNaN(endDate.getTime()) && (isNaN(startDate.getTime()) || endDate.getTime() >= startDate.getTime())) {
+      return businessClock(endDate);
+    }
+  }
+  if (isNaN(startDate.getTime())) return "";
+  startDate.setMinutes(startDate.getMinutes() + (m.durationMinutes || 0));
+  return businessClock(startDate);
 }
 function timeRangeOf(m: MeetingVo) {
-  const start = timeOf(m.startTime);
+  const startIso = m.startedAt || m.startTime;
+  const start = timeOf(startIso);
+  if (m.status === "running") {
+    return start ? `${start} - 进行中` : "进行中";
+  }
   const end = endTimeOf(m);
   if (start && end) return `${start} - ${end}`;
   return start || end || "--:--";
@@ -864,7 +887,10 @@ async function load(silent = false) {
 }
 
 async function handleJoin(m: MeetingVo) {
-  if (meetingStore.inMeeting && String(meetingStore.meetingId) !== String(m.id)) {
+  if (
+    meetingStore.inMeeting &&
+    String(meetingStore.meetingId) !== String(m.id)
+  ) {
     if (!(await guardSingleActiveMeeting(router))) return;
   }
   if (m.meetingNo) {

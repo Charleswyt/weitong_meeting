@@ -272,9 +272,10 @@
           <button
             type="button"
             class="btn-confirm"
+            :disabled="feedbackSubmitting"
             @click="submitFeedback"
           >
-            <i class="ri-send-plane-line" />提交
+            <i class="ri-send-plane-line" />{{ feedbackSubmitting ? "提交中..." : "提交" }}
           </button>
         </footer>
       </div>
@@ -289,6 +290,11 @@ import appIcon from "@/assets/icon.png";
 import { currentRelease } from "@/data/changelog";
 import type { LegalDocId } from "@/data/legal";
 import { playMelodyToSink, probeNetwork } from "@/utils/mediaTest";
+import {
+  getFeedbackSummary,
+  likeApp,
+  submitFeedback as submitFeedbackApi,
+} from "@/api/feedback";
 
 const props = defineProps<{ modelValue: boolean }>();
 const emit = defineEmits<{
@@ -308,14 +314,10 @@ const tabs = [
   { id: "about" as const, label: "关于我们", icon: "ri-information-line" },
 ];
 
-const LIKE_FLAG_KEY = "weitong.about.liked";
-const LIKE_COUNT_KEY = "weitong.about.likeCount";
-const FEEDBACK_KEY = "weitong.about.feedback";
-
-const liked = ref(localStorage.getItem(LIKE_FLAG_KEY) === "1");
-const likeCount = ref(
-  Math.max(0, Number(localStorage.getItem(LIKE_COUNT_KEY) || "0") || 0),
-);
+const liked = ref(false);
+const likeCount = ref(0);
+const liking = ref(false);
+const feedbackSubmitting = ref(false);
 const feedbackOpen = ref(false);
 const feedbackMore = ref("");
 const rateColors = ["#F5B14C", "#F5B14C", "#165DFF"] as string[];
@@ -329,38 +331,57 @@ const feedbackItems = ref<FeedbackItem[]>([
   { id: "overall", label: "整体满意度", score: 0 },
 ]);
 
-function onLike() {
+async function refreshLikeSummary() {
+  try {
+    const res = await getFeedbackSummary();
+    if (res.data) {
+      liked.value = res.data.liked;
+      likeCount.value = res.data.likeCount;
+    }
+  } catch {
+    /* 后端不可达时保持未点赞态 */
+  }
+}
+
+async function onLike() {
   if (liked.value) {
     ElMessage.info("您已经点过赞了");
     return;
   }
-  liked.value = true;
-  likeCount.value += 1;
-  localStorage.setItem(LIKE_FLAG_KEY, "1");
-  localStorage.setItem(LIKE_COUNT_KEY, String(likeCount.value));
-  ElMessage.success("感谢点赞");
+  if (liking.value) return;
+  liking.value = true;
+  try {
+    const res = await likeApp();
+    if (res.data) {
+      liked.value = res.data.liked;
+      likeCount.value = res.data.likeCount;
+    }
+    ElMessage.success("感谢点赞");
+  } finally {
+    liking.value = false;
+  }
 }
 
-function submitFeedback() {
+async function submitFeedback() {
   const more = feedbackMore.value.trim().slice(0, 300);
   const rated = feedbackItems.value.filter((i) => i.score > 0);
   if (!rated.length && !more) {
     ElMessage.warning("请至少给一项打分，或填写更多意见");
     return;
   }
-  const payload = {
-    at: new Date().toISOString(),
-    scores: feedbackItems.value.map((i) => ({
-      id: i.id,
-      label: i.label,
-      score: i.score,
-    })),
-    more,
-  };
-  localStorage.setItem(FEEDBACK_KEY, JSON.stringify(payload));
-  feedbackOpen.value = false;
-  feedbackMore.value = "";
-  ElMessage.success("已收到您的反馈，谢谢");
+  if (feedbackSubmitting.value) return;
+  feedbackSubmitting.value = true;
+  try {
+    await submitFeedbackApi(
+      feedbackItems.value.map((i) => ({ id: i.id, label: i.label, score: i.score })),
+      more,
+    );
+    feedbackOpen.value = false;
+    feedbackMore.value = "";
+    ElMessage.success("已收到您的反馈，谢谢");
+  } finally {
+    feedbackSubmitting.value = false;
+  }
 }
 
 const cameras = ref<MediaDeviceInfo[]>([]);
@@ -636,6 +657,7 @@ watch(
       feedbackOpen.value = false;
     } else {
       void refreshDevices();
+      void refreshLikeSummary();
       // 默认落在视频页：打开面板即申请摄像头并显示预览
       if (tab.value === "video") void restartPreview();
     }

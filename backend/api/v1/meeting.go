@@ -36,6 +36,81 @@ type MeetingStatsRes struct {
 	TotalMinutes int `json:"totalMinutes"`
 }
 
+type MeetingOverviewReq struct {
+	g.Meta    `path:"/meetings/overview" method:"get" tags:"会议"`
+	Dimension string `json:"dimension"`
+	StartDate string `json:"startDate"`
+	EndDate   string `json:"endDate"`
+}
+
+type MeetingOverviewVolumeVo struct {
+	Total        int `json:"total"`
+	Hosted       int `json:"hosted"`
+	Participated int `json:"participated"`
+	Online       int `json:"online"`
+	Offline      int `json:"offline"`
+	Hybrid       int `json:"hybrid"`
+	Scheduled    int `json:"scheduled"`
+	Quick        int `json:"quick"`
+	Voice        int `json:"voice"`
+	ActiveDays   int `json:"activeDays"`
+}
+
+type MeetingOverviewDurationVo struct {
+	TotalSeconds        int64 `json:"totalSeconds"`
+	HostedSeconds       int64 `json:"hostedSeconds"`
+	ParticipatedSeconds int64 `json:"participatedSeconds"`
+	AverageSeconds      int64 `json:"averageSeconds"`
+	RecordingSeconds    int64 `json:"recordingSeconds"`
+}
+
+type MeetingOverviewRecordingVo struct {
+	Count        int     `json:"count"`
+	CoverageRate float64 `json:"coverageRate"`
+}
+
+type MeetingOverviewExtremeItemVo struct {
+	Id              int64  `json:"id"`
+	Title           string `json:"title"`
+	HostName        string `json:"hostName,omitempty"`
+	MeetingNo       string `json:"meetingNo,omitempty"`
+	StartTime       string `json:"startTime"`
+	EndTime         string `json:"endTime"`
+	DurationSeconds int64  `json:"durationSeconds"`
+}
+
+type MeetingOverviewExtremesVo struct {
+	Earliest *MeetingOverviewExtremeItemVo `json:"earliest"`
+	Longest  *MeetingOverviewExtremeItemVo `json:"longest"`
+	Latest   *MeetingOverviewExtremeItemVo `json:"latest"`
+}
+
+type MeetingOverviewTagCountVo struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Count int    `json:"count"`
+}
+
+type MeetingOverviewTagsVo struct {
+	AccessModes []MeetingOverviewTagCountVo `json:"accessModes"`
+	Categories  []MeetingOverviewTagCountVo `json:"categories"`
+}
+
+type MeetingOverviewDurationByKindVo struct {
+	Meeting MeetingOverviewDurationVo `json:"meeting"`
+	Voice   MeetingOverviewDurationVo `json:"voice"`
+}
+
+type MeetingOverviewRes struct {
+	Dimension      string                          `json:"dimension"`
+	Volume         MeetingOverviewVolumeVo         `json:"volume"`
+	Duration       MeetingOverviewDurationVo       `json:"duration"`
+	DurationByKind MeetingOverviewDurationByKindVo `json:"durationByKind"`
+	Recording      MeetingOverviewRecordingVo      `json:"recording"`
+	Extremes       MeetingOverviewExtremesVo       `json:"extremes"`
+	Tags           MeetingOverviewTagsVo           `json:"tags"`
+}
+
 type MeetingDetailReq struct {
 	g.Meta `path:"/meetings/{id}" method:"get" tags:"会议"`
 	Id     int64 `json:"id"`
@@ -52,6 +127,35 @@ type MeetingScheduleReq struct {
 	AllowWaiting    *bool   `json:"allowWaiting"`
 	Password        string  `v:"length:0,32" json:"password"`
 	ParticipantIds  []int64 `json:"participantIds"`
+}
+
+type InterviewCreateReq struct {
+	g.Meta          `path:"/meetings/interview" method:"post" tags:"会议"`
+	Title           string   `v:"required|length:1,64" json:"title"`
+	StartTime       string   `v:"required" json:"startTime"`
+	DurationMinutes int      `v:"required|min:1|max:240" json:"durationMinutes"`
+	Candidates      []string `v:"required" json:"candidates"`
+	MaxJoins        int      `v:"required|min:1|max:100" json:"maxJoins"`
+	ExpiresAt       string   `v:"required" json:"expiresAt"`
+	CloudRecord     bool     `json:"cloudRecord"`
+}
+
+type InterviewAccountVo struct {
+	CandidateName string `json:"candidateName"`
+	Username      string `json:"username"`
+	Password      string `json:"password"`
+	MaxJoins      int    `json:"maxJoins"`
+	ExpiresAt     string `json:"expiresAt"`
+}
+
+type InterviewCreateRes struct {
+	MeetingId       int64                `json:"meetingId"`
+	MeetingNo       string               `json:"meetingNo"`
+	Title           string               `json:"title"`
+	StartTime       string               `json:"startTime"`
+	DurationMinutes int                  `json:"durationMinutes"`
+	SyncReason      string               `json:"syncReason,omitempty"`
+	Accounts        []InterviewAccountVo `json:"accounts"`
 }
 
 // MeetingUpdateReq 仅允许修改尚未开始（status=scheduled）的会议。
@@ -365,6 +469,7 @@ type MeetingVo struct {
 	ThirdPartyMeetingId string `json:"thirdPartyMeetingId"`
 	StartTime           string `json:"startTime"`
 	StartedAt           string `json:"startedAt"`
+	EndedAt             string `json:"endedAt,omitempty"`
 	DurationMinutes     int    `json:"durationMinutes"`
 	Status              string `json:"status"`
 	// EndReason 记录正常结束、连续空房超时或历史异常退出。

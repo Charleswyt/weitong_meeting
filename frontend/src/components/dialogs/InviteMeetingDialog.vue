@@ -30,10 +30,21 @@
         <img :src="qrDataUrl" alt="入会二维码" width="168" height="168" />
         <p>扫码入会（内容即上方会议链接）</p>
       </div>
+
+      <ContactPicker v-if="modelValue && meetingId" v-model="pickedIds" max-height="200px" @navigate="$emit('update:modelValue', false)" />
     </div>
 
     <template #footer>
       <button class="btn-cancel" type="button" @click="$emit('update:modelValue', false)">取消</button>
+      <button
+        v-if="pickedIds.length"
+        class="btn-confirm"
+        type="button"
+        :disabled="inviting"
+        @click="inviteFriends"
+      >
+        <i class="ri-mail-send-line" />{{ inviting ? '邀请中…' : `邀请所选好友（${pickedIds.length}）` }}
+      </button>
       <button class="btn-confirm" type="button" :disabled="!inviteText" @click="copy(inviteText, '邀请信息')">
         <i class="ri-file-copy-line" />复制邀请信息
       </button>
@@ -48,6 +59,8 @@ import QRCode from 'qrcode'
 import { getMeetingDetail } from '@/api/meeting'
 import { ensureShareOrigin, inviteTextFor, joinUrlFor } from '@/utils/joinFlow'
 import { copyText } from '@/utils/clipboard'
+import { inviteContacts } from '@/api/contact'
+import ContactPicker from '@/components/ContactPicker.vue'
 
 const props = defineProps<{ modelValue: boolean; meetingId: number; meetingNo: string; title: string }>()
 
@@ -102,8 +115,32 @@ async function refreshShareSurface() {
   }
 }
 
+const pickedIds = ref<number[]>([])
+const inviting = ref(false)
+
+async function inviteFriends() {
+  if (!pickedIds.value.length || inviting.value) return
+  inviting.value = true
+  try {
+    await refreshShareSurface()
+    const res = (await inviteContacts(props.meetingId, pickedIds.value, joinUrlFor(props.meetingNo))).data
+    if (res) {
+      const parts = [`已邀请 ${res.invited} 位好友`]
+      if (res.emailQueued) parts.push(`${res.emailQueued} 封邀请邮件发送中`)
+      if (res.noEmail.length) parts.push(`${res.noEmail.join('、')} 未绑定邮箱，请把链接发给对方`)
+      ElMessage.success(parts.join('，'))
+    }
+    pickedIds.value = []
+  } catch {
+    /* 拦截器已提示 */
+  } finally {
+    inviting.value = false
+  }
+}
+
 watch(() => props.modelValue, async (v) => {
   if (!v) return
+  pickedIds.value = []
   load()
   await refreshShareSurface()
 })

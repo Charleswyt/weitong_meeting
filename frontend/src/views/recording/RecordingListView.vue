@@ -1,43 +1,47 @@
 <template>
   <div class="rec-page">
-    <div class="rec-page-header">
-      <div>
-        <h2 class="rec-page-title">录制会议<span v-if="recordingCount" class="rec-count">共 {{ recordingCount }} 个录制</span></h2>
-        <p class="rec-page-sub">查看和管理所有会议录制内容</p>
-      </div>
-      <div class="rec-search-box">
-        <i class="ri-search-line rec-search-ic" aria-hidden="true" />
-        <input v-model="keyword" class="rec-search" type="text" placeholder="搜索录制名称" @input="debounceLoad">
-      </div>
-    </div>
-
-    <div class="rec-tabs-bar">
+    <div class="rec-topbar">
       <div class="rec-tabs-left">
         <div class="rec-tabs" role="tablist" aria-label="录制来源">
-          <div
+          <button
             v-for="t in tabs"
             :key="t.value"
+            type="button"
             class="rec-tab"
             role="tab"
-            tabindex="0"
             :aria-selected="activeTab === t.value"
             :class="{ active: activeTab === t.value }"
             @click="switchTab(t.value)"
-            @keydown.enter.prevent="switchTab(t.value)"
-            @keydown.space.prevent="switchTab(t.value)"
-          >{{ t.label }}</div>
+          >{{ t.label }}</button>
         </div>
-        <!-- 放在标签栏右侧：不占额外整行高度，仍清晰提示本地录制仅本机可见 -->
         <p v-if="activeTab === 'local'" class="rec-notice">
           <i class="ri-information-line" /> 只在你这台电脑上可见
         </p>
       </div>
-      <select v-model="timeFilter" class="rec-filter" aria-label="按时间筛选" @change="load()">
-        <option value="">全部时间</option>
-        <option value="7">最近7天</option>
-        <option value="30">最近30天</option>
-      </select>
+
+      <div class="rec-toolbar-right">
+        <select v-model="timeFilter" class="rec-filter" aria-label="按时间筛选" @change="load()">
+          <option value="">全部时间</option>
+          <option value="7">最近7天</option>
+          <option value="30">最近30天</option>
+        </select>
+        <div class="rec-search-group">
+          <div class="rec-search-wrap">
+            <i class="ri-search-line rec-search-ic" aria-hidden="true" />
+            <input
+              v-model="keyword"
+              class="rec-search"
+              type="text"
+              placeholder="搜索录制名称"
+              @input="debounceLoad"
+              @keyup.enter="load()"
+            >
+          </div>
+          <button type="button" class="rec-search-btn" @click="load()">搜索</button>
+        </div>
+      </div>
     </div>
+    <div class="rec-tab-divider" />
 
     <div v-if="loading" class="rec-loading">加载中...</div>
     <div v-else-if="groups.length" class="rec-grid">
@@ -95,7 +99,7 @@
       </div>
     </div>
     <div v-else class="rec-empty">
-      <div class="rec-empty-icon"><i class="ri-vidicon-line" /></div>
+      <div class="rec-empty-icon ri-vidicon-line" />
       <div class="rec-empty-title">暂无录制内容</div>
       <div class="rec-empty-sub">{{ emptyHint }}</div>
     </div>
@@ -690,100 +694,137 @@ onMounted(() => {
 
 <style scoped>
 .rec-page {
-  padding: 16px 20px;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 0 0 24px;
   box-sizing: border-box;
 }
-.rec-page-header {
+
+.rec-topbar {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
-  margin-bottom: 16px;
-}
-
-.rec-page-title {
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.rec-page-sub {
-  font-size: 13px;
-  color: var(--text-muted);
-  margin-top: 4px;
-}
-
-.rec-tabs-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 16px;
+  padding: 16px 20px 0;
   flex-wrap: wrap;
-  border-bottom: 1px solid var(--border-color);
-  margin-bottom: 18px;
 }
 
 .rec-tabs-left {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  align-items: flex-end;
+  gap: 16px;
   flex-wrap: wrap;
   min-width: 0;
 }
 
+/* prototype.css 里有同名 .rec-tabs/.rec-tab（侧栏底色、28px 内边距、底边线），这里逐项归零 */
 .rec-tabs {
   display: flex;
-  gap: 0;
+  gap: 32px;
+  padding: 0;
+  background: none;
+  border-bottom: 0;
 }
 
 .rec-tab {
-  padding: 10px 20px;
-  font-size: 14px;
-  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--text-tertiary);
+  background: none;
+  border: none;
+  padding: 0 0 10px;
   cursor: pointer;
-  border-bottom: 2px solid transparent;
-  transition: all 0.2s;
-  user-select: none;
+  transition: none;
 }
 
-.rec-tab:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
+.rec-tab::after {
+  content: "";
+  width: 100%;
+  height: 3px;
+  border-radius: 2px;
+  background: transparent;
 }
 
-.rec-tab:hover {
+.rec-tab:hover,
+:global(.light-theme) .rec-tab {
+  color: var(--text-tertiary);
+}
+
+.rec-tab.active,
+.rec-tab.active:hover {
   color: var(--primary-text);
-}
-
-.rec-tab.active {
-  color: var(--primary-text);
-  border-bottom-color: var(--primary);
   font-weight: 600;
 }
 
-.rec-search-box {
-  position: relative;
+.rec-tab.active::after {
+  background: var(--primary);
+}
+
+.rec-tab-divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: 4px 0 0;
+}
+
+.rec-toolbar-right {
   display: flex;
   align-items: center;
-  flex: 1;
-  max-width: 300px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.rec-filter {
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 11px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  cursor: pointer;
+}
+
+.rec-filter:focus {
+  border-color: var(--primary);
+}
+
+.rec-search-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rec-search-wrap {
+  position: relative;
+  width: 280px;
 }
 
 .rec-search-ic {
   position: absolute;
-  left: 11px;
-  font-size: 15px;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 16px;
   color: var(--text-muted);
   pointer-events: none;
 }
 
 .rec-search {
   width: 100%;
-  padding: 8px 14px 8px 34px;
+  height: 42px;
+  padding: 0 14px 0 38px;
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: 11px;
   background: var(--bg-card);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: 14px;
   outline: none;
 }
 
@@ -791,16 +832,25 @@ onMounted(() => {
   border-color: var(--primary);
 }
 
-.rec-filter {
-  padding: 6px 12px;
-  margin-bottom: 6px;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  background: var(--bg-card);
-  color: var(--text-primary);
-  font-size: 13px;
-  outline: none;
+.rec-search-btn {
+  height: 42px;
+  padding: 0 20px;
+  border: none;
+  border-radius: 11px;
+  background: var(--primary);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
+  white-space: nowrap;
+}
+
+.rec-search-btn:hover {
+  opacity: 0.92;
+}
+
+.rec-grid {
+  padding: 18px 20px 0;
 }
 
 .rec-loading {
@@ -1006,27 +1056,24 @@ onMounted(() => {
 }
 .rec-more-btn:disabled { opacity: 0.6; cursor: default; }
 .rec-empty {
-  padding: 60px 20px;
+  padding: 72px 0;
   text-align: center;
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
 }
 
 .rec-empty-icon {
-  font-size: 48px;
-  margin-bottom: 12px;
+  font-size: 40px;
   opacity: 0.5;
 }
 
 .rec-empty-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 6px;
+  margin-top: 12px;
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--text-secondary);
 }
 
 .rec-empty-sub {
+  margin-top: 6px;
   font-size: 13px;
   color: var(--text-muted);
 }

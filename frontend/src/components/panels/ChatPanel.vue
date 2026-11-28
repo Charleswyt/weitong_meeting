@@ -1,5 +1,12 @@
 <template>
-  <aside class="cp">
+  <aside
+    class="cp"
+    :class="{ 'cp-drag': dragOver }"
+    @paste="onPasteImage"
+    @dragover="onDragOver"
+    @dragleave.self="dragOver = false"
+    @drop="onDrop"
+  >
     <header class="cp-head">
       <span class="cp-title">聊天</span>
       <span class="cp-count">{{ messages.length }}</span>
@@ -39,10 +46,17 @@
               <span class="cp-time">{{ row.time }}</span>
             </div>
             <div v-if="isImageMsg(row.text)" class="cp-bubble cp-bubble-img">
+              <span v-if="brokenImages.has(row.key)" class="cp-img-broken">
+                <i class="ri-image-line" />图片已过期或无法加载
+              </span>
               <img
+                v-else
                 :src="extractImageSrc(row.text)"
                 alt="聊天图片"
                 class="cp-img-thumb"
+                loading="lazy"
+                @load="onImageLoaded"
+                @error="markImageBroken(row.key)"
                 @click="previewImg = extractImageSrc(row.text)"
               />
             </div>
@@ -59,9 +73,8 @@
         class="cp-textarea"
         rows="2"
         maxlength="1000"
-        :placeholder="placeholder + '（支持粘贴图片）'"
+        :placeholder="uploading ? '图片发送中…' : placeholder + '（可粘贴或拖入图片）'"
         @keydown.enter.exact.prevent="$emit('send')"
-        @paste="onPasteImage"
       />
       <input
         ref="imgInputRef"
@@ -75,8 +88,9 @@
           type="button"
           class="cp-tool cp-tool-btn"
           title="发送图片"
+          :disabled="uploading"
           @click="imgInputRef?.click()"
-        ><i class="ri-image-add-line" /></button>
+        ><i :class="uploading ? 'ri-loader-4-line cp-spin' : 'ri-image-add-line'" /></button>
         <span
           v-for="t in tools"
           :key="t.icon"
@@ -105,9 +119,12 @@ import type { ChatLine } from '@/composables/useWebSocket'
 import type { ParticipantVo } from '@/api/meeting'
 import { avatarSrcFor, markAvatarBroken } from '@/utils/avatarImage'
 import { businessClock } from '@/utils/time'
+import { assetUrl } from '@/utils/request'
+import { uploadChatImage } from '@/api/chat'
 
 const props = defineProps<{
   messages: ChatLine[]
+  meetingId: number
   participants: ParticipantVo[]
   myName: string
   startedAt: string
@@ -117,7 +134,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'send'): void
-  (e: 'send-image', dataUrl: string): void
+  (e: 'send-image', payload: string): void
+  (e: 'image-error', msg: string): void
   (e: 'not-wired', label: string): void
 }>()
 
@@ -126,52 +144,77 @@ const imgInputRef = ref<HTMLInputElement | null>(null)
 const previewImg = ref('')
 
 const IMG_PREFIX = '[WT_IMG]'
+const IMG_PATH_PREFIX = '/api/v1/chat/images/'
 function isImageMsg(text: string): boolean {
-  return typeof text === 'string' && text.startsWith(IMG_PREFIX) && text.includes('data:image/')
+  if (typeof text !== 'string' || !text.startsWith(IMG_PREFIX)) return false
+  const body = text.slice(IMG_PREFIX.length)
+  // 早期版本把整张图 base64 塞进正文，历史消息里还可能有，照样能显示。
+  return body.startsWith(IMG_PATH_PREFIX) || body.startsWith('data:image/')
 }
 function extractImageSrc(text: string): string {
-  return text.slice(IMG_PREFIX.length)
+  const body = text.slice(IMG_PREFIX.length)
+  return body.startsWith(IMG_PATH_PREFIX) ? assetUrl(body) : body
+}
+const brokenImages = ref<Set<string>>(new Set())
+function markImageBroken(key: string) {
+  brokenImages.value = new Set(brokenImages.value).add(key)
 }
 
-async function compressImageFile(file: File): Promise<string | null> {
+async function compressImageFile(file: File): Promise<Blob | null> {
   if (!file.type.startsWith('image/')) return null
-  return new Promise((resolve) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const img = new Image()
-      img.onload = () => {
-        const maxW = 720
-        const scale = img.width > maxW ? maxW / img.width : 1
-        const w = Math.max(1, Math.round(img.width * scale))
-        const h = Math.max(1, Math.round(img.height * scale))
-        const canvas = document.createElement('canvas')
-        canvas.width = w
-        canvas.height = h
-        const ctx = canvas.getContext('2d')
-        if (!ctx) {
-          resolve(null)
-          return
-        }
-        ctx.drawImage(img, 0, 0, w, h)
-        // 控制图片体积以兼容实时聊天通道
-        let dataUrl = canvas.toDataURL('image/webp', 0.72)
-        if (!dataUrl.startsWith('data:image/webp')) {
-          dataUrl = canvas.toDataURL('image/jpeg', 0.72)
-        }
-        resolve(dataUrl)
-      }
-      img.onerror = () => resolve(null)
-      img.src = String(reader.result || '')
-    }
-    reader.onerror = () => resolve(null)
-    reader.readAsDataURL(file)
-  })
+  const url = URL.createObjectURL(file)
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image()
+      el.onload = () => resolve(el)
+      el.onerror = () => reject(new Error('decode'))
+      el.src = url
+    })
+    const maxW = 1280
+    const scale = img.naturalWidth > maxW ? maxW / img.naturalWidth : 1
+    const w = Math.max(1, Math.round(img.naturalWidth * scale))
+    const h = Math.max(1, Math.round(img.naturalHeight * scale))
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return null
+    ctx.drawImage(img, 0, 0, w, h)
+    const toBlob = (type: string) =>
+      new Promise<Blob | null>((resolve) => canvas.toBlob((b) => resolve(b), type, 0.8))
+    const webp = await toBlob('image/webp')
+    // Safari 不支持编码 WebP 时会静默回落成 PNG，体积大得多，改用 JPEG。
+    if (webp && webp.type === 'image/webp') return webp
+    return await toBlob('image/jpeg')
+  } catch {
+    return null
+  } finally {
+    URL.revokeObjectURL(url)
+  }
 }
 
+const uploading = ref(false)
 async function handleImageFile(file: File) {
-  const dataUrl = await compressImageFile(file)
-  if (!dataUrl) return
-  emit('send-image', `${IMG_PREFIX}${dataUrl}`)
+  if (uploading.value) return
+  uploading.value = true
+  try {
+    const blob = await compressImageFile(file)
+    if (!blob) {
+      emit('image-error', '这张图片读不出来，换一张试试')
+      return
+    }
+    const ext = blob.type === 'image/webp' ? 'webp' : 'jpg'
+    const res = await uploadChatImage(props.meetingId, blob, `image.${ext}`)
+    if (!res.data?.url) {
+      emit('image-error', '图片上传失败，请重试')
+      return
+    }
+    emit('send-image', `${IMG_PREFIX}${res.data.url}`)
+  } catch (e) {
+    console.warn('[chat] 图片上传失败', e)
+  } finally {
+    uploading.value = false
+  }
 }
 
 async function onPickImage(e: Event) {
@@ -181,11 +224,30 @@ async function onPickImage(e: Event) {
   if (file) await handleImageFile(file)
 }
 
+function firstImageFile(data: DataTransfer | null): File | null {
+  if (!data) return null
+  const fromFiles = Array.from(data.files || []).find((f) => f.type.startsWith('image/'))
+  if (fromFiles) return fromFiles
+  const item = Array.from(data.items || []).find((i) => i.kind === 'file' && i.type.startsWith('image/'))
+  return item?.getAsFile() ?? null
+}
+
 async function onPasteImage(e: ClipboardEvent) {
-  const items = Array.from(e.clipboardData?.items || [])
-  const imgItem = items.find((i) => i.type.startsWith('image/'))
-  if (!imgItem) return
-  const file = imgItem.getAsFile()
+  const file = firstImageFile(e.clipboardData)
+  if (!file) return
+  e.preventDefault()
+  await handleImageFile(file)
+}
+
+const dragOver = ref(false)
+function onDragOver(e: DragEvent) {
+  if (!Array.from(e.dataTransfer?.types || []).includes('Files')) return
+  e.preventDefault()
+  dragOver.value = true
+}
+async function onDrop(e: DragEvent) {
+  dragOver.value = false
+  const file = firstImageFile(e.dataTransfer)
   if (!file) return
   e.preventDefault()
   await handleImageFile(file)
@@ -274,13 +336,21 @@ const placeholder = computed(() =>
   tab.value === 'mine' ? '发送消息给自己' : '发送消息给所有人',
 )
 
+function scrollToBottom() {
+  if (listRef.value) listRef.value.scrollTop = listRef.value.scrollHeight
+}
 watch(
   () => visible.value.length,
   async () => {
     await nextTick()
-    if (listRef.value) listRef.value.scrollTop = listRef.value.scrollHeight
+    scrollToBottom()
   },
 )
+// 图片加载完才有高度：只在用户本来就停在底部附近时跟随，避免把翻看历史的人拽回去。
+function onImageLoaded() {
+  const el = listRef.value
+  if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 240) scrollToBottom()
+}
 
 watch(searchOpen, async (v) => {
   if (v) {
@@ -367,12 +437,23 @@ watch(searchOpen, async (v) => {
   object-fit: cover;
   cursor: zoom-in;
 }
-.cp-tool-btn {
+.cp-tool.cp-tool-btn {
   border: none;
   background: transparent;
   padding: 0;
   cursor: pointer;
+  opacity: 1;
+  color: var(--text-secondary);
 }
+.cp-tool.cp-tool-btn:hover { color: var(--primary-text); }
+.cp-tool.cp-tool-btn:disabled { cursor: progress; }
+.cp-spin { display: inline-block; animation: cp-spin 0.9s linear infinite; }
+@keyframes cp-spin { to { transform: rotate(360deg); } }
+.cp-img-broken {
+  display: inline-flex; align-items: center; gap: 4px; padding: 6px 8px;
+  font-size: 12px; color: var(--text-muted);
+}
+.cp-drag { outline: 2px dashed var(--primary); outline-offset: -4px; }
 .cp-lightbox {
   position: fixed;
   inset: 0;

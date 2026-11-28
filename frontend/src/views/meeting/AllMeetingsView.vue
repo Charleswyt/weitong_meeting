@@ -3,13 +3,45 @@
     <!-- 原型顶部栏只有「页签 + 搜索」，预约/快速会议的入口在首页三卡 -->
     <div class="am-topbar">
       <div class="am-tabs" role="tablist">
-        <button class="am-tab" role="tab" :class="{ active: activeTab === 'upcoming' }" :aria-selected="activeTab === 'upcoming'" @click="switchTab('upcoming')">待开始会议</button>
-        <button class="am-tab" role="tab" :class="{ active: activeTab === 'history' }" :aria-selected="activeTab === 'history'" @click="switchTab('history')">历史会议</button>
+        <button
+          class="am-tab"
+          role="tab"
+          :class="{ active: activeTab === 'upcoming' }"
+          :aria-selected="activeTab === 'upcoming'"
+          @click="switchTab('upcoming')"
+        >
+          待开会议
+        </button>
+        <button
+          class="am-tab"
+          role="tab"
+          :class="{ active: activeTab === 'history' }"
+          :aria-selected="activeTab === 'history'"
+          @click="switchTab('history')"
+        >
+          历史会议
+        </button>
+        <button
+          class="am-tab"
+          role="tab"
+          :class="{ active: activeTab === 'overview' }"
+          :aria-selected="activeTab === 'overview'"
+          @click="switchTab('overview')"
+        >
+          会议概览
+        </button>
       </div>
-      <div class="am-search-group">
+      <div v-if="activeTab !== 'overview'" class="am-search-group">
         <div class="am-search-wrap">
           <i class="am-search-icon ri-search-line" />
-          <input v-model="keyword" class="am-search" type="text" placeholder="搜索会议主题、发起人或会议号" @input="onSearch" @keyup.enter="load">
+          <input
+            v-model="keyword"
+            class="am-search"
+            type="text"
+            placeholder="搜索会议主题、发起人或会议号"
+            @input="onSearch"
+            @keyup.enter="load"
+          />
         </div>
         <button class="am-search-btn" @click="load">搜索</button>
       </div>
@@ -17,7 +49,9 @@
     <div class="am-tab-divider"></div>
 
     <div class="am-content">
-      <div v-if="loading" class="am-loading">
+      <MyMeetingOverview v-if="activeTab === 'overview'" />
+
+      <div v-else-if="loading" class="am-loading">
         <div class="am-spinner"></div>
         <span>加载中...</span>
       </div>
@@ -40,7 +74,12 @@
             <div class="am-row-info">
               <div class="am-row-title-line">
                 <!-- 原型的历史行只有「查看录制」一颗动作按钮，详情入口挂在标题上 -->
-                <span class="am-row-title" title="查看会议详情" @click="goDetail(m)">{{ m.title }}</span>
+                <span
+                  class="am-row-title"
+                  title="查看会议详情"
+                  @click="goDetail(m)"
+                  >{{ m.title }}</span
+                >
                 <span class="am-status-chip" :class="chipClass(m)">
                   <i v-if="isRunning(m)" class="am-chip-dot"></i>
                   <i v-else class="am-chip-icon" :class="chipGlyph(m)" />
@@ -49,27 +88,75 @@
                 <span
                   v-if="m.status === 'ended' && endReasonLabel(m.endReason)"
                   class="am-end-reason"
-                  :class="m.endReason === 'abnormal_exit' ? 'is-abnormal' : 'is-normal'"
-                >{{ endReasonLabel(m.endReason) }}</span>
+                  :class="
+                    m.endReason === 'abnormal_exit'
+                      ? 'is-abnormal'
+                      : 'is-normal'
+                  "
+                  >{{ endReasonLabel(m.endReason) }}</span
+                >
               </div>
-              <div class="am-row-no"><span class="am-no-icon">#</span> 会议号 {{ m.meetingNo ? formatMeetingNo(m.meetingNo) : '尚未同步' }}</div>
+              <div class="am-row-no">
+                <span class="am-no-icon">#</span> 会议号
+                {{ m.meetingNo ? formatMeetingNo(m.meetingNo) : "尚未同步" }}
+              </div>
             </div>
             <div class="am-row-actions">
               <template v-if="isRunning(m)">
-                <button v-if="m.meetingNo" class="am-btn-line" @click="handleShare(m)"><i class="am-btn-icon ri-share-forward-line" />分享</button>
-                <button v-if="m.managed && m.isHost" class="am-btn-line" @click="handleStop(m)">结束会议</button>
-                <button v-if="isSelfIn(m)" class="am-btn-chip am-btn-joined"><i class="am-btn-icon ri-check-line" />已入会</button>
-                <button v-else class="am-btn-solid" @click="handleJoin(m)">入会</button>
+                <button
+                  v-if="m.meetingNo"
+                  class="am-btn-line"
+                  @click="handleShare(m)"
+                >
+                  <i class="am-btn-icon ri-share-forward-line" />分享
+                </button>
+                <button
+                  v-if="m.managed && m.isHost"
+                  class="am-btn-line"
+                  @click="handleStop(m)"
+                >
+                  结束会议
+                </button>
+                <button v-if="isSelfIn(m)" class="am-btn-chip am-btn-joined">
+                  <i class="am-btn-icon ri-check-line" />已入会
+                </button>
+                <button v-else class="am-btn-solid" @click="handleJoin(m)">
+                  入会
+                </button>
               </template>
               <template v-else-if="isScheduled(m)">
-                <button v-if="m.meetingNo" class="am-btn-line" @click="handleShare(m)"><i class="am-btn-icon ri-share-forward-line" />分享</button>
-                <button v-if="m.managed && m.isHost" class="am-btn-line" @click="handleEdit(m)">修改会议</button>
-                <button v-if="m.managed && m.isHost" class="am-btn-line am-btn-danger" @click="handleCancel(m)">取消会议</button>
-                <button v-if="isSelfIn(m)" class="am-btn-chip am-btn-joined"><i class="am-btn-icon ri-check-line" />已入会</button>
-                <button v-else class="am-btn-solid" @click="handleJoin(m)">入会</button>
+                <button
+                  v-if="m.meetingNo"
+                  class="am-btn-line"
+                  @click="handleShare(m)"
+                >
+                  <i class="am-btn-icon ri-share-forward-line" />分享
+                </button>
+                <button
+                  v-if="m.managed && m.isHost"
+                  class="am-btn-line"
+                  @click="handleEdit(m)"
+                >
+                  修改会议
+                </button>
+                <button
+                  v-if="m.managed && m.isHost"
+                  class="am-btn-line am-btn-danger"
+                  @click="handleCancel(m)"
+                >
+                  取消会议
+                </button>
+                <button v-if="isSelfIn(m)" class="am-btn-chip am-btn-joined">
+                  <i class="am-btn-icon ri-check-line" />已入会
+                </button>
+                <button v-else class="am-btn-solid" @click="handleJoin(m)">
+                  入会
+                </button>
               </template>
               <template v-else>
-                <button class="am-btn-line" @click="handleRecord(m)"><i class="am-btn-icon ri-play-line" />查看录制</button>
+                <button class="am-btn-line" @click="handleRecord(m)">
+                  <i class="am-btn-icon ri-play-line" />查看录制
+                </button>
               </template>
             </div>
           </div>
@@ -78,195 +165,257 @@
 
       <div v-else class="am-empty">
         <div class="am-empty-icon ri-clipboard-line" />
-        <div class="am-empty-text">{{ activeTab === 'upcoming' ? '暂无待开始的会议' : '暂无历史会议' }}</div>
-        <div class="am-empty-sub">{{ activeTab === 'upcoming' ? '在首页点击「预约」安排新的日程' : '结束会议后将自动归档到此处' }}</div>
+        <div class="am-empty-text">
+          {{ activeTab === "upcoming" ? "暂无待开始的会议" : "暂无历史会议" }}
+        </div>
+        <div class="am-empty-sub">
+          {{
+            activeTab === "upcoming"
+              ? "在首页点击「预约」安排新的日程"
+              : "结束会议后将自动归档到此处"
+          }}
+        </div>
       </div>
     </div>
 
-    <ScheduleMeetingDialog v-model="showScheduleDialog" :meeting="editingMeeting" @created="load" />
-    <MeetingAssistant v-if="replayMeeting" :model-value="true" initial-tab="record" :meeting-id="Number(replayMeeting.id)" :number="String(replayMeeting.meetingNo || '')" @update:model-value="replayMeeting=null" />
+    <ScheduleMeetingDialog
+      v-model="showScheduleDialog"
+      :meeting="editingMeeting"
+      @created="load"
+    />
+    <MeetingAssistant
+      v-if="replayMeeting"
+      :model-value="true"
+      initial-tab="record"
+      :meeting-id="Number(replayMeeting.id)"
+      :number="String(replayMeeting.meetingNo || '')"
+      @update:model-value="replayMeeting = null"
+    />
     <MeetingDetailDialog v-model="showDetail" :meeting="detailMeeting" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import ScheduleMeetingDialog from '@/components/dialogs/ScheduleMeetingDialog.vue'
-import MeetingAssistant from '@/components/meeting/MeetingAssistant.vue'
-import MeetingDetailDialog from '@/components/dialogs/MeetingDetailDialog.vue'
-import { getMeetingList, cancelMeeting, stopMeeting, precheckMeeting, endReasonLabel, type MeetingVo } from '@/api/meeting'
-import { useMeetingStore } from '@/store/meeting'
-import { getDict, dictLabelSync, dictTagTypeSync, DICT } from '@/api/dict'
-import { formatTime } from '@/utils/time'
-import { copyMeetingInvite, preJoinPath } from '@/utils/joinFlow'
-import { formatMeetingNo } from '@/utils/meetingNo'
+import { ref, computed, onMounted } from "vue";
+import { useRouter } from "vue-router";
+import { ElMessage, ElMessageBox } from "element-plus";
+import ScheduleMeetingDialog from "@/components/dialogs/ScheduleMeetingDialog.vue";
+import MeetingAssistant from "@/components/meeting/MeetingAssistant.vue";
+import MeetingDetailDialog from "@/components/dialogs/MeetingDetailDialog.vue";
+import MyMeetingOverview from "@/components/meeting/MyMeetingOverview.vue";
+import {
+  getMeetingList,
+  cancelMeeting,
+  stopMeeting,
+  precheckMeeting,
+  endReasonLabel,
+  type MeetingVo,
+} from "@/api/meeting";
+import { useMeetingStore } from "@/store/meeting";
+import { getDict, dictLabelSync, dictTagTypeSync, DICT } from "@/api/dict";
+import { formatTime } from "@/utils/time";
+import { copyMeetingInvite, preJoinPath } from "@/utils/joinFlow";
+import { formatMeetingNo } from "@/utils/meetingNo";
 
-const router = useRouter()
-const meetingStore = useMeetingStore()
-const activeTab = ref<'upcoming' | 'history'>('upcoming')
-const keyword = ref('')
-const loading = ref(false)
-const upcomingList = ref<MeetingVo[]>([])
-const historyList = ref<MeetingVo[]>([])
-const showScheduleDialog = ref(false)
-const showDetail = ref(false)
-const replayMeeting = ref<MeetingVo | null>(null)
-const detailMeeting = ref<MeetingVo | null>(null)
-const editingMeeting = ref<MeetingVo | null>(null)
+const router = useRouter();
+const meetingStore = useMeetingStore();
+const activeTab = ref<"upcoming" | "history" | "overview">("upcoming");
+const keyword = ref("");
+const loading = ref(false);
+const upcomingList = ref<MeetingVo[]>([]);
+const historyList = ref<MeetingVo[]>([]);
+const showScheduleDialog = ref(false);
+const showDetail = ref(false);
+const replayMeeting = ref<MeetingVo | null>(null);
+const detailMeeting = ref<MeetingVo | null>(null);
+const editingMeeting = ref<MeetingVo | null>(null);
 
-let searchTimer: ReturnType<typeof setTimeout> | null = null
+let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
-const displayList = computed(() => (activeTab.value === 'upcoming' ? upcomingList.value : historyList.value))
+const displayList = computed(() =>
+  activeTab.value === "upcoming" ? upcomingList.value : historyList.value,
+);
 
 // 原型按日期分组（今天 / 明天 / 周X），组的先后随时刻走：待开始从近到远，历史从新到旧。
 const groups = computed(() => {
-  const map = new Map<string, MeetingVo[]>()
+  const map = new Map<string, MeetingVo[]>();
   for (const m of displayList.value) {
-    const label = groupLabel(m.startTime)
-    if (!map.has(label)) map.set(label, [])
-    map.get(label)!.push(m)
+    const label = groupLabel(m.startTime);
+    if (!map.has(label)) map.set(label, []);
+    map.get(label)!.push(m);
   }
   const earliest = (items: MeetingVo[]) => {
-    const ts = items.map((m) => new Date(m.startTime).getTime()).filter((t) => !isNaN(t))
-    return ts.length ? Math.min(...ts) : Number.MAX_SAFE_INTEGER
-  }
-  const dir = activeTab.value === 'upcoming' ? 1 : -1
+    const ts = items
+      .map((m) => new Date(m.startTime).getTime())
+      .filter((t) => !isNaN(t));
+    return ts.length ? Math.min(...ts) : Number.MAX_SAFE_INTEGER;
+  };
+  const dir = activeTab.value === "upcoming" ? 1 : -1;
   return [...map.entries()]
     .map(([label, items]) => ({ label, items }))
-    .sort((a, b) => dir * (earliest(a.items) - earliest(b.items)))
-})
+    .sort((a, b) => dir * (earliest(a.items) - earliest(b.items)));
+});
 
 function groupLabel(iso: string) {
-  const d = new Date(iso)
-  if (isNaN(d.getTime())) return '时间待定'
-  const today = new Date()
-  const dayOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
-  const diff = (dayOf(d) - dayOf(today)) / 86400000
-  if (diff === 0) return '今天'
-  if (diff === 1) return '明天'
-  if (diff === -1) return '昨天'
-  const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]
-  return `${week} ${d.getMonth() + 1}月${d.getDate()}日`
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "时间待定";
+  const today = new Date();
+  const dayOf = (x: Date) =>
+    new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = (dayOf(d) - dayOf(today)) / 86400000;
+  if (diff === 0) return "今天";
+  if (diff === 1) return "明天";
+  if (diff === -1) return "昨天";
+  const week = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][
+    d.getDay()
+  ];
+  return `${week} ${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
 // 原型的时间列两行：起始 HH:mm（18/Bold）+「— 结束 HH:mm」（13/Regular）。格式化只走 utils/time。
 function clock(iso: string) {
-  return isNaN(new Date(iso).getTime()) ? '--:--' : formatTime(iso)
+  return isNaN(new Date(iso).getTime()) ? "--:--" : formatTime(iso);
 }
 
 function endTime(m: MeetingVo) {
-  const s = new Date(m.startTime).getTime()
-  if (isNaN(s)) return '--:--'
-  return formatTime(new Date(s + m.durationMinutes * 60000).toISOString())
+  const s = new Date(m.startTime).getTime();
+  if (isNaN(s)) return "--:--";
+  return formatTime(new Date(s + m.durationMinutes * 60000).toISOString());
 }
 
 function isSelfIn(m: MeetingVo) {
-  return meetingStore.inMeeting && String(meetingStore.meetingNo) === String(m.meetingNo)
+  return (
+    meetingStore.inMeeting &&
+    String(meetingStore.meetingNo) === String(m.meetingNo)
+  );
 }
 
-function switchTab(tab: 'upcoming' | 'history') {
-  activeTab.value = tab
-  keyword.value = ''
-  void load()
+function switchTab(tab: "upcoming" | "history" | "overview") {
+  activeTab.value = tab;
+  if (tab === "overview") return;
+  keyword.value = "";
+  void load();
 }
 
 // 关键字交给后端过滤（主题/本地号/三方号三列 LIKE），不是本地截断当前页。
 function onSearch() {
-  if (searchTimer) clearTimeout(searchTimer)
-  searchTimer = setTimeout(() => load(), 300)
+  if (searchTimer) clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => load(), 300);
 }
 
 function statusLabel(s: string) {
-  return dictLabelSync(DICT.meetingStatus, s) || s
+  return dictLabelSync(DICT.meetingStatus, s) || s;
 }
 
 function isRunning(m: MeetingVo) {
-  return m.status === 'running' || m.status === 'starting'
+  return m.status === "running" || m.status === "starting";
 }
 
 function isScheduled(m: MeetingVo) {
-  return m.status === 'scheduled'
+  return m.status === "scheduled";
 }
 
 // 画布只给了 待开始=橙 / 进行中=蓝 / 已结束=灰 三态的取色；其余状态（启动中/失败/已取消）
 // 按 sys_dict_data.tag_type 落色，不再新写状态 switch。
-const CANVAS_CHIP_STATUS = ['scheduled', 'running', 'ended']
+const CANVAS_CHIP_STATUS = ["scheduled", "running", "ended"];
 
 function chipClass(m: MeetingVo) {
-  if (CANVAS_CHIP_STATUS.includes(m.status)) return 'chip-' + m.status
-  return 'chip-' + (dictTagTypeSync(DICT.meetingStatus, m.status) || 'ended')
+  if (CANVAS_CHIP_STATUS.includes(m.status)) return "chip-" + m.status;
+  return "chip-" + (dictTagTypeSync(DICT.meetingStatus, m.status) || "ended");
 }
 
 function chipGlyph(m: MeetingVo) {
-  if (CANVAS_CHIP_STATUS.includes(m.status)) return m.status === 'scheduled' ? 'ri-time-line' : 'ri-check-line'
-  const tag = dictTagTypeSync(DICT.meetingStatus, m.status)
-  if (tag === 'warning') return 'ri-time-line'
-  if (tag === 'danger') return 'ri-error-warning-line'
-  return 'ri-check-line'
+  if (CANVAS_CHIP_STATUS.includes(m.status))
+    return m.status === "scheduled" ? "ri-time-line" : "ri-check-line";
+  const tag = dictTagTypeSync(DICT.meetingStatus, m.status);
+  if (tag === "warning") return "ri-time-line";
+  if (tag === "danger") return "ri-error-warning-line";
+  return "ri-check-line";
 }
 
 async function load() {
-  loading.value = true
-  const kw = keyword.value.trim()
+  loading.value = true;
+  const kw = keyword.value.trim();
   try {
     const [upcoming, history] = await Promise.all([
-      getMeetingList({ pageNum: 1, pageSize: 100, status: 'scheduled', keyword: kw }),
-      getMeetingList({ pageNum: 1, pageSize: 100, status: 'ended', keyword: kw }),
-    ])
-    upcomingList.value = upcoming.rows || []
-    historyList.value = history.rows || []
+      getMeetingList({
+        pageNum: 1,
+        pageSize: 100,
+        status: "scheduled",
+        keyword: kw,
+      }),
+      getMeetingList({
+        pageNum: 1,
+        pageSize: 100,
+        status: "ended",
+        keyword: kw,
+      }),
+    ]);
+    upcomingList.value = upcoming.rows || [];
+    historyList.value = history.rows || [];
 
-    const running = await getMeetingList({ pageNum: 1, pageSize: 100, status: 'running', keyword: kw })
+    const running = await getMeetingList({
+      pageNum: 1,
+      pageSize: 100,
+      status: "running",
+      keyword: kw,
+    });
     if (running.rows?.length) {
-      upcomingList.value = [...running.rows, ...upcomingList.value]
+      upcomingList.value = [...running.rows, ...upcomingList.value];
     }
   } catch {
     /* 提示由 request 拦截器统一给出 */
   } finally {
-    loading.value = false
+    loading.value = false;
   }
 }
 
 async function handleJoin(m: MeetingVo) {
   if (m.meetingNo) {
-    const res = await precheckMeeting(m.meetingNo)
+    const res = await precheckMeeting(m.meetingNo);
     if (res.data && !res.data.joinable) {
-      ElMessage.error(res.data.message || '会议不可加入')
-      return
+      ElMessage.error(res.data.message || "会议不可加入");
+      return;
     }
   }
-  router.push(preJoinPath(m))
+  router.push(preJoinPath(m));
 }
 
 async function handleShare(m: MeetingVo) {
   const ok = await copyMeetingInvite({
-    hostName: m.creatorName || m.hostName || '',
+    hostName: m.creatorName || m.hostName || "",
     title: m.title,
     meetingNo: m.meetingNo,
     startTime: m.startTime || m.startedAt,
     durationMinutes: m.durationMinutes,
-  })
-  if (ok) ElMessage.success('已复制会议邀请信息，可直接发送给参会人')
-  else ElMessage.warning('复制失败，请手动复制会议号')
+  });
+  if (ok) ElMessage.success("已复制会议邀请信息，可直接发送给参会人");
+  else ElMessage.warning("复制失败，请手动复制会议号");
 }
 
 function handleEdit(m: MeetingVo) {
-  editingMeeting.value = m
-  showScheduleDialog.value = true
+  editingMeeting.value = m;
+  showScheduleDialog.value = true;
 }
 
 async function handleCancel(m: MeetingVo) {
   try {
-    await ElMessageBox.confirm(`确定取消会议「${m.title}」？取消后仍保留这条记录。`, '取消会议', { type: 'warning', confirmButtonText: '确定取消', cancelButtonText: '返回' })
+    await ElMessageBox.confirm(
+      `确定取消会议「${m.title}」？取消后仍保留这条记录。`,
+      "取消会议",
+      {
+        type: "warning",
+        confirmButtonText: "确定取消",
+        cancelButtonText: "返回",
+      },
+    );
   } catch {
-    return
+    return;
   }
   try {
-    await cancelMeeting(m.id)
-    ElMessage.success('会议已取消')
-    load()
+    await cancelMeeting(m.id);
+    ElMessage.success("会议已取消");
+    load();
   } catch {
     /* 后端 msg 由 request 拦截器统一弹一次，这里只收尾、不再二次加工 */
   }
@@ -275,33 +424,37 @@ async function handleCancel(m: MeetingVo) {
 // 删除会议已随后端 DELETE 接口下线（取消保留行，就是唯一的移除方式）。
 async function handleStop(m: MeetingVo) {
   try {
-    await ElMessageBox.confirm(`确定结束会议「${m.title}」？所有参会者会被移出。`, '结束会议', { type: 'warning' })
+    await ElMessageBox.confirm(
+      `确定结束会议「${m.title}」？所有参会者会被移出。`,
+      "结束会议",
+      { type: "warning" },
+    );
   } catch {
-    return
+    return;
   }
   try {
-    await stopMeeting(m.id)
-    ElMessage.success('会议已结束')
-    load()
+    await stopMeeting(m.id);
+    ElMessage.success("会议已结束");
+    load();
   } catch {
     /* 后端 msg 由 request 拦截器统一弹一次，这里只收尾、不再二次加工 */
   }
 }
 
 function goDetail(m: MeetingVo) {
-  detailMeeting.value = m
-  showDetail.value = true
+  detailMeeting.value = m;
+  showDetail.value = true;
 }
 
 // 画布上每场历史会议都有「查看录制」，但录制是否有货取决于这场会到底建没建成：
 function handleRecord(m: MeetingVo) {
-  replayMeeting.value=m
+  replayMeeting.value = m;
 }
 
 onMounted(() => {
-  void getDict(DICT.meetingStatus)
-  void load()
-})
+  void getDict(DICT.meetingStatus);
+  void load();
+});
 </script>
 
 <style scoped>
@@ -342,7 +495,7 @@ onMounted(() => {
 }
 
 .am-tab::after {
-  content: '';
+  content: "";
   width: 100%;
   height: 3px;
   border-radius: 2px;
@@ -415,7 +568,7 @@ onMounted(() => {
 }
 
 .am-content {
-  padding: 24px 40px;
+  padding: 0;
 }
 
 .am-panel {
@@ -681,7 +834,9 @@ onMounted(() => {
 }
 
 @keyframes am-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .am-empty {

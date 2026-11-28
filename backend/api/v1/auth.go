@@ -105,12 +105,15 @@ type EmailLoginReq struct {
 }
 
 type UserVo struct {
-	Id              int64  `json:"id"`
-	Username        string `json:"username"`
-	DisplayName     string `json:"displayName"`
-	Avatar          string `json:"avatar"`
-	AccountType     string `json:"accountType"`
-	AccountTypeName string `json:"accountTypeName"`
-	PositionCode    string `json:"positionCode"`
-	PositionName    string `json:"positionName"`
+	Id                int64  `json:"id"`
+	Username          string `json:"username"`
+	DisplayName       string `json:"displayName"`
+	Avatar            string `json:"avatar"`
+	AccountType       string `json:"accountType"`
+	AccountTypeName   string `json:"accountTypeName"`
+	PositionCode      string `json:"positionCode"`
+	PositionName      string `json:"positionName"`
+	LastLoginAt       string `json:"lastLoginAt,omitempty"`
+	LastLoginIp       string `json:"lastLoginIp,omitempty"`
+	LastLoginLocation string `json:"lastLoginLocation,omitempty"`
 }

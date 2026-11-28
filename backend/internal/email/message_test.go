@@ -24,6 +24,19 @@ func TestBuildCodeMessageHighlightsCode(t *testing.T) {
 	}
 }
 
+func TestBuildInviteMessageEscapesAndLinks(t *testing.T) {
+	msg := buildInviteMessage("from@126.com", "to@example.com", MeetingInvite{
+		InviteeName: "<b>张三</b>", InviterName: "李四", Title: "周会", MeetingNo: "1234567890",
+		StartTime: "2026-11-28 10:00", DurationMinutes: 60, JoinUrl: "https://example.com/meeting/pre/no/1234567890",
+	})
+	if !strings.Contains(msg, "1234567890") || !strings.Contains(msg, "https://example.com/meeting/pre/no/1234567890") {
+		t.Fatal("邀请邮件必须包含会议号与入会链接")
+	}
+	if strings.Contains(msg, "<b>张三</b>，您好") && !strings.Contains(msg, "&lt;b&gt;") {
+		t.Fatal("HTML 正文里的用户输入必须转义")
+	}
+}
+
 func TestPurposeSubject(t *testing.T) {
 	if got := purposeSubject("卫通会议登录验证码", "reset"); got != "卫通会议找回密码验证码" {
 		t.Fatalf("reset subject = %q", got)

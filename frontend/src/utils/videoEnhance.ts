@@ -6,25 +6,16 @@
 //   3. 轻度边缘锐化（Unsharp Mask）：补回降噪后的细节清晰度。
 // 处理结果输出为新的 MediaStreamTrack，本地预览与远端推流共用同一条干净画面。
 
-const STORAGE_KEY = 'weitong.videoEnhance'
+import { clientPrefs, updateClientPrefs } from '@/utils/clientPrefs'
+
 const INIT_TIMEOUT_MS = 4000
 
 export function readVideoEnhanceEnabled(): boolean {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw === '0' || raw === 'false') return false
-    return true
-  } catch {
-    return true
-  }
+  return clientPrefs.videoEnhance
 }
 
 export function saveVideoEnhanceEnabled(enabled: boolean): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, enabled ? '1' : '0')
-  } catch {
-    /* 忽略无痕模式或存储受限 */
-  }
+  void updateClientPrefs({ videoEnhance: enabled })
 }
 
 export interface VideoEnhanceSession {

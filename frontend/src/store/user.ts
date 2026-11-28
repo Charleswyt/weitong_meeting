@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import * as authApi from '@/api/auth'
 import { useMeetingStore } from '@/store/meeting'
+import { loadClientPrefs, resetClientPrefs } from '@/utils/clientPrefs'
 import type { UserInfo } from '@/api/auth'
 
 export { type UserInfo }
@@ -67,6 +68,7 @@ export const useUserStore = defineStore('user', () => {
     userInfo.value = res.user || null
     linkSynced.value = res.linkSynced !== false
     linkReason.value = res.linkReason || ''
+    void loadClientPrefs(true)
     // 有人主动登录，这一台就不再是免登录那台了：模式位必须跟着清，
     // 否则「退出登录」会被继续藏起来，点不到的按钮留着就是骗人。
     autoLoginMode.value = false
@@ -111,6 +113,7 @@ export const useUserStore = defineStore('user', () => {
   async function fetchUserInfo() {
     const res = await authApi.getMe()
     userInfo.value = res.data!
+    void loadClientPrefs()
   }
 
   // 录制归属判据要先知道"我是谁"。MainLayout 里那句 fetchUserInfo() 是不 await 的，
@@ -142,6 +145,7 @@ export const useUserStore = defineStore('user', () => {
       autoLoginMode.value = false
       localStorage.removeItem('weitong.token')
       localStorage.removeItem('weitong.autoLogin')
+      resetClientPrefs()
       // 会议态和登录态同生共死：不清它就会在下一次登录后直接落进一场已结束的会中页。
       useMeetingStore().clear()
     }

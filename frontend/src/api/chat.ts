@@ -13,6 +13,14 @@ export function getChatMessages(params: { meetingId: number; afterId?: number; l
   return get<ChatMessageVo[]>('/api/v1/chat/messages', { params })
 }
 
+// 会中图片先落后端、聊天正文只带回来的短路径：整图 base64 进正文会超出聊天通道的长度上限。
+export function uploadChatImage(meetingId: number, file: Blob, filename = 'image.webp') {
+  const fd = new FormData()
+  fd.append('meetingId', String(meetingId))
+  fd.append('file', file, filename)
+  return post<{ url: string }>('/api/v1/chat/images', fd)
+}
+
 export function sendMessage(data: { meetingId: number; text: string; clientMessageId?: string }) {
   return post<ChatMessageVo>('/api/v1/chat/messages', data)
 }

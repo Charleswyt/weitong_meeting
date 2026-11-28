@@ -510,6 +510,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
+import { clientPrefs, updateClientPrefs } from '@/utils/clientPrefs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { assistantRequest, jsonBody as payload, type AssistantState as State } from '@/api/assistant'
 import { listen, wav } from '@/utils/meetingSpeech'
@@ -533,7 +534,12 @@ const state = ref<State | null>(null)
 const tab = ref('materials')
 const error = ref('')
 const captions = ref<Line[]>([])
-const target = ref(localStorage.getItem('weitong.caption-language') || 'zh')
+const target = computed({
+  get: () => clientPrefs.captionLanguage || 'zh',
+  set: (v: string) => {
+    void updateClientPrefs({ captionLanguage: v })
+  },
+})
 const previewUrl = ref('')
 const replayUrl = ref('')
 const loadingReplay = ref('')
@@ -795,7 +801,6 @@ async function translate() {
 }
 
 watch(target, () => {
-  localStorage.setItem('weitong.caption-language', target.value)
   translations.value = {}
   void translate()
 })

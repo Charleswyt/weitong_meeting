@@ -13,7 +13,9 @@ import (
 
 	"cloud-conference-backend/internal/controller/auth"
 	"cloud-conference-backend/internal/controller/chat"
+	"cloud-conference-backend/internal/controller/contact"
 	"cloud-conference-backend/internal/controller/dict"
+	"cloud-conference-backend/internal/controller/feedback"
 	"cloud-conference-backend/internal/controller/meeting"
 	"cloud-conference-backend/internal/controller/netprobe"
 	"cloud-conference-backend/internal/controller/recording"
@@ -74,11 +76,29 @@ var Main = gcmd.Command{
 		ensureMeetingLaunchKindColumn(ctx)
 		ensureMeetingEndReasonColumn(ctx)
 		ensureMeetingPasswordColumn(ctx)
+		ensureInterviewAccountTable(ctx)
+		ensureUserLoginAuditTable(ctx)
+		ensureClientPrefTables(ctx)
 		if err := g.DB().GetCore().ClearTableFields(ctx, "meeting_appointment"); err != nil {
 			return err
 		}
 		go reconcileStale(ctx)
 		if _, err := gcron.Add(ctx, "0 * * * * *", reconcileStale, "meeting-reconcile-stale"); err != nil {
+			return err
+		}
+
+		cleanupInterview := func(ctx context.Context) {
+			if n := service.CleanupExpiredInterviewAccounts(ctx); n > 0 {
+				glog.Infof(ctx, "已清理 %d 个过期面试账号", n)
+			}
+			if n, err := service.CleanupExpiredChatImages(ctx); err != nil {
+				glog.Warningf(ctx, "%v", err)
+			} else if n > 0 {
+				glog.Infof(ctx, "已清理 %d 张过期聊天图片", n)
+			}
+		}
+		go cleanupInterview(ctx)
+		if _, err := gcron.Add(ctx, "0 0 3 * * *", cleanupInterview, "interview-account-cleanup"); err != nil {
 			return err
 		}
 
@@ -105,6 +125,8 @@ var Main = gcmd.Command{
 		dictCtrl := dict.New(dictSvc)
 		userCtrl := user.New(avatarSvc, userSvc, dictSvc)
 		netProbeCtrl := netprobe.New()
+		feedbackCtrl := feedback.New()
+		contactCtrl := contact.New(service.NewContactService(emailProvider, meetingSvc))
 
 		// 头像字节在库里，出口是 GET /api/v1/users/{id}/avatar（下面路由注册处），
 		// 不再有本地静态目录 —— 磁盘上那一份既不在备份里，也不在任何鉴权之后。
@@ -155,8 +177,10 @@ var Main = gcmd.Command{
 				g.GET("/list", meetingCtrl.List)
 				g.GET("/today", meetingCtrl.Today)
 				g.GET("/stats", meetingCtrl.Stats)
+				g.GET("/overview", meetingCtrl.Overview)
 				g.POST("/ws-ticket", meetingCtrl.WsTicket)
 				g.POST("/schedule", meetingCtrl.Schedule)
+				g.POST("/interview", meetingCtrl.CreateInterview)
 				g.POST("/quick-start", meetingCtrl.QuickStart)
 				g.POST("/join", meetingCtrl.Join)
 				g.POST("/precheck", meetingCtrl.Precheck)
@@ -201,12 +225,31 @@ var Main = gcmd.Command{
 			group.Group("/chat", func(g *ghttp.RouterGroup) {
 				g.GET("/messages", chatCtrl.ListMessages)
 				g.POST("/messages", chatCtrl.SendMessage)
+				g.POST("/images", chatCtrl.UploadImage)
+				g.GET("/images/:id", chatCtrl.Image)
 			})
 
 			group.Group("/settings", func(g *ghttp.RouterGroup) {
 				g.GET("/", settingsCtrl.Get)
 				g.PUT("/", settingsCtrl.Update)
 				g.GET("/capabilities", settingsCtrl.Capabilities)
+				g.GET("/client", settingsCtrl.GetClient)
+				g.PATCH("/client", settingsCtrl.PatchClient)
+			})
+
+			group.Group("/feedback", func(g *ghttp.RouterGroup) {
+				g.GET("/summary", feedbackCtrl.Summary)
+				g.POST("/like", feedbackCtrl.Like)
+				g.POST("/submit", feedbackCtrl.Submit)
+			})
+
+			group.Group("/contacts", func(g *ghttp.RouterGroup) {
+				g.GET("/", contactCtrl.List)
+				g.GET("/search", contactCtrl.Search)
+				g.POST("/", contactCtrl.Add)
+				g.POST("/invite", contactCtrl.Invite)
+				g.PUT("/{userId}/remark", contactCtrl.UpdateRemark)
+				g.DELETE("/{userId}", contactCtrl.Remove)
 			})
 
 			group.Group("/net-probe", func(g *ghttp.RouterGroup) {

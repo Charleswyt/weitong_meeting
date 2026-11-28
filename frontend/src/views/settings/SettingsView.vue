@@ -491,13 +491,8 @@
         </section>
       </template>
 
-      <!-- ═══ Tab 2: 辅助功能（转录翻译术语库 / 录制） ═══ -->
+      <!-- ═══ Tab 2: 辅助功能（录制 / 转录翻译术语库） ═══ -->
       <template v-else-if="activeTab === 'assist'">
-        <section class="settings-section">
-          <h3 class="section-title"><i class="section-title-icon ri-translate-2" />转录翻译术语库</h3>
-          <GlossarySettings />
-        </section>
-
         <section class="settings-section">
           <h3 class="section-title"><i class="section-title-icon ri-record-circle-line" />录制</h3>
 
@@ -581,6 +576,11 @@
             </div>
           </div>
         </section>
+
+        <section class="settings-section">
+          <h3 class="section-title"><i class="section-title-icon ri-translate-2" />转录翻译术语库</h3>
+          <GlossarySettings />
+        </section>
       </template>
 
       <!-- ═══ Tab 3: 账号与系统（账号信息 / 网络检测 / 关于） ═══ -->
@@ -643,6 +643,26 @@
                 placeholder="显示名"
                 @change="onDisplayNameBlur"
               />
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-left">
+              <span class="setting-label">上次登录</span>
+              <span class="setting-desc">时间、IP 地址与登录位置</span>
+            </div>
+            <div class="setting-right login-audit-right">
+              <span class="audit-chip">
+                <i class="ri-time-line" />
+                <span>{{ loginAudit.time || '—' }}</span>
+              </span>
+              <span class="audit-chip">
+                <i class="ri-global-line" />
+                <span>{{ loginAudit.ip || '—' }}</span>
+              </span>
+              <span class="audit-chip is-loc">
+                <i class="ri-map-pin-2-line" />
+                <span>{{ loginAudit.location || '—' }}</span>
+              </span>
             </div>
           </div>
         </section>
@@ -819,8 +839,16 @@ const avatarChar = computed(() =>
   (userStore.userInfo?.displayName || "用").charAt(0),
 );
 
+import {
+  resolveLoginAudit,
+  type LoginAuditDisplay,
+} from "@/utils/loginAudit";
+
 const displayName = ref("");
 const displayNameBusy = ref(false);
+const loginAudit = computed<LoginAuditDisplay>(() =>
+  resolveLoginAudit(userStore.userInfo as any),
+);
 watch(
   () => userStore.userInfo?.displayName,
   (v) => {
@@ -1650,7 +1678,12 @@ async function toggleMicTest() {
   }
 }
 
-const speakerVolume = ref(getSpeakerVolume());
+const speakerVolume = computed({
+  get: () => getSpeakerVolume(),
+  set: (v: number) => {
+    setSpeakerVolume(v);
+  },
+});
 const speakerTestRemain = ref(20);
 let speakerTestCtx: AudioContext | null = null;
 let speakerTestAudio: HTMLAudioElement | null = null;
@@ -1658,8 +1691,7 @@ let speakerTestMasterGain: GainNode | null = null;
 let speakerTestTimer: number | null = null;
 let speakerTestEndTimer: number | null = null;
 
-watch(speakerVolume, (v) => {
-  const clamped = setSpeakerVolume(v);
+watch(speakerVolume, (clamped) => {
   if (speakerTestAudio) {
     speakerTestAudio.volume = clamped / 100;
   }
@@ -1952,6 +1984,7 @@ onBeforeUnmount(() => {
 }
 
 .page-head {
+  max-width: 860px;
   margin-bottom: 12px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border-color);
@@ -1962,7 +1995,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .page-head h2 {
@@ -1980,11 +2013,13 @@ onBeforeUnmount(() => {
   border-radius: 11px;
   background: var(--bg-input);
   border: 1px solid var(--border-color);
+  flex-shrink: 0;
 }
 
 .settings-tab {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   height: 34px;
   padding: 0 14px;
@@ -2013,7 +2048,7 @@ onBeforeUnmount(() => {
 .settings-tab.active {
   background: var(--bg-card);
   color: var(--primary-text, var(--primary));
-  font-weight: 600;
+  font-weight: 500;
   box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
 }
 
@@ -2624,6 +2659,10 @@ onBeforeUnmount(() => {
     max-width: none;
   }
 
+  .page-head-row {
+    flex-wrap: wrap;
+  }
+
   .page-head h2 {
     font-size: 20px;
   }
@@ -2721,6 +2760,34 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 14px;
   min-width: 0;
+}
+.login-audit-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.audit-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.audit-chip i {
+  color: var(--primary-text);
+  font-size: 14px;
+}
+.audit-chip.is-loc {
+  font-family: inherit;
 }
 .volume-pair-cell + .volume-pair-cell {
   padding-left: 20px;

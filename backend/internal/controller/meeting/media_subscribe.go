@@ -644,7 +644,7 @@ func (c *Controller) StreamWhep(r *ghttp.Request) {
 		return
 	}
 	if alias.ParticipantId != "" && alias.ParticipantId == sess.ParticipantId && c.adapter.IsSinosatV1(r.Context()) {
-		response.FailStream(r, http.StatusForbidden, "本端发布的视频和音频使用本地预览")
+		response.FailStreamReason(r, http.StatusForbidden, "本端发布的视频和音频使用本地预览", "self_stream")
 		return
 	}
 	c.focusPublication(r.Context(), room, sess, alias.PublicationId)

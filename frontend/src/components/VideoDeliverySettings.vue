@@ -89,6 +89,7 @@ import {
   type VideoDelivery,
   type VideoKind,
 } from "@/utils/videoDelivery";
+import { clientPrefs } from "@/utils/clientPrefs";
 
 const props = defineProps<{
   applyLive?: (kind: VideoKind, value: VideoDelivery) => Promise<boolean>;
@@ -110,12 +111,16 @@ const rows = reactive(
     status: "",
   })),
 );
-watch(account, (name) => {
-  for (const source of rows) {
-    source.value = readDelivery(name, source.kind);
-    source.status = "";
-  }
-});
+watch(
+  [account, () => clientPrefs.cameraDelivery, () => clientPrefs.screenDelivery],
+  () => {
+    for (const source of rows) {
+      if (source.busy) continue;
+      source.value = readDelivery(account.value, source.kind);
+    }
+  },
+  { deep: true },
+);
 const row = computed(() => rows.find((r) => r.kind === kind.value)!);
 async function apply(row: (typeof rows)[number]) {
   const name = account.value;
@@ -135,7 +140,7 @@ async function apply(row: (typeof rows)[number]) {
   row.busy = true;
   try {
     const live = await props.applyLive?.(row.kind, value);
-    saveDelivery(name, row.kind, value);
+    await saveDelivery(name, row.kind, value);
     row.value.targetBitrateKbps = value.targetBitrateKbps;
     row.status = live ? "已应用到当前发布" : "已保存，下次发布时生效";
   } catch {

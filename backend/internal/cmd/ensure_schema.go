@@ -96,6 +96,113 @@ func ensureAccountTypeLabels(ctx context.Context) {
 	}
 }
 
+// ensureInterviewAccountTable 面试工坊临时面试者账号表（记录可开会次数、已用次数与截止有效期）。
+func ensureInterviewAccountTable(ctx context.Context) {
+	db := g.DB()
+	ddl := `CREATE TABLE IF NOT EXISTS interview_account (
+		ID INTEGER PRIMARY KEY AUTOINCREMENT,
+		APPOINTMENT_ID INTEGER NOT NULL,
+		MEETING_NUMBER VARCHAR(32) DEFAULT '',
+		USER_ID INTEGER NOT NULL UNIQUE,
+		CANDIDATE_NAME VARCHAR(64) NOT NULL,
+		USERNAME VARCHAR(64) NOT NULL,
+		PASSWORD VARCHAR(255) DEFAULT '',
+		MAX_JOINS INTEGER NOT NULL DEFAULT 1,
+		USED_JOINS INTEGER NOT NULL DEFAULT 0,
+		EXPIRES_AT DATETIME NOT NULL,
+		CREATED_BY INTEGER NOT NULL DEFAULT 0,
+		CREATED_AT DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`
+	if _, err := db.Exec(ctx, ddl); err != nil {
+		g.Log().Warningf(ctx, "创建 interview_account 表失败: %v", err)
+		return
+	}
+	if _, err := db.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_interview_account_appt ON interview_account(APPOINTMENT_ID)`); err != nil {
+		g.Log().Warningf(ctx, "创建 idx_interview_account_appt 索引失败: %v", err)
+	}
+	hasPassword := false
+	if rows, err := db.GetAll(ctx, `PRAGMA table_info(interview_account)`); err == nil {
+		for _, r := range rows {
+			if strings.EqualFold(r["name"].String(), "PASSWORD") {
+				hasPassword = true
+				break
+			}
+		}
+	}
+	if !hasPassword {
+		if _, err := db.Exec(ctx, `ALTER TABLE interview_account ADD COLUMN PASSWORD VARCHAR(255) DEFAULT ''`); err != nil {
+			g.Log().Warningf(ctx, "补 interview_account.PASSWORD 失败: %v", err)
+		}
+	}
+	if _, err := db.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_interview_account_username ON interview_account(USERNAME)`); err != nil {
+		g.Log().Warningf(ctx, "创建 idx_interview_account_username 索引失败: %v", err)
+	}
+}
+
+// ensureClientPrefTables 个人偏好（原浏览器 localStorage）与产品反馈 / 点赞。
+func ensureClientPrefTables(ctx context.Context) {
+	ddls := []string{
+		`CREATE TABLE IF NOT EXISTS user_client_pref (
+			USER_ID INTEGER PRIMARY KEY,
+			VIDEO_ENHANCE INTEGER NOT NULL DEFAULT 1,
+			SPEAKER_VOLUME INTEGER NOT NULL DEFAULT 80,
+			CAPTION_LANGUAGE VARCHAR(16) DEFAULT 'zh',
+			CAMERA_DELIVERY TEXT DEFAULT '',
+			SCREEN_DELIVERY TEXT DEFAULT '',
+			UPDATED_AT VARCHAR(32) DEFAULT ''
+		)`,
+		`CREATE TABLE IF NOT EXISTS app_feedback (
+			ID INTEGER PRIMARY KEY AUTOINCREMENT,
+			USER_ID INTEGER NOT NULL DEFAULT 0,
+			CLIENT_KEY VARCHAR(64) DEFAULT '',
+			SCORES TEXT DEFAULT '',
+			CONTENT TEXT DEFAULT '',
+			CREATED_AT VARCHAR(32) DEFAULT ''
+		)`,
+		`CREATE TABLE IF NOT EXISTS app_like (
+			CLIENT_KEY VARCHAR(64) PRIMARY KEY,
+			CREATED_AT VARCHAR(32) DEFAULT ''
+		)`,
+		`CREATE TABLE IF NOT EXISTS chat_image (
+			ID INTEGER PRIMARY KEY AUTOINCREMENT,
+			MEETING_ID INTEGER NOT NULL,
+			USER_ID INTEGER NOT NULL,
+			MIME VARCHAR(32) NOT NULL,
+			DATA BLOB NOT NULL,
+			CREATED_AT VARCHAR(32) DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_chat_image_created ON chat_image(CREATED_AT)`,
+		`CREATE TABLE IF NOT EXISTS user_contact (
+			OWNER_ID INTEGER NOT NULL,
+			CONTACT_ID INTEGER NOT NULL,
+			REMARK VARCHAR(64) DEFAULT '',
+			CREATED_AT VARCHAR(32) DEFAULT '',
+			PRIMARY KEY (OWNER_ID, CONTACT_ID)
+		)`,
+	}
+	for _, ddl := range ddls {
+		if _, err := g.DB().Exec(ctx, ddl); err != nil {
+			g.Log().Warningf(ctx, "创建偏好/反馈表失败: %v", err)
+		}
+	}
+}
+
+// ensureUserLoginAuditTable 记录用户上次登录时间、IP 与位置。
+func ensureUserLoginAuditTable(ctx context.Context) {
+	ddl := `CREATE TABLE IF NOT EXISTS user_login_audit (
+		USER_ID INTEGER PRIMARY KEY,
+		LAST_LOGIN_AT VARCHAR(32) DEFAULT '',
+		LAST_LOGIN_IP VARCHAR(64) DEFAULT '',
+		LAST_LOGIN_LOCATION VARCHAR(128) DEFAULT '',
+		PREV_LOGIN_AT VARCHAR(32) DEFAULT '',
+		PREV_LOGIN_IP VARCHAR(64) DEFAULT '',
+		PREV_LOGIN_LOCATION VARCHAR(128) DEFAULT ''
+	)`
+	if _, err := g.DB().Exec(ctx, ddl); err != nil {
+		g.Log().Warningf(ctx, "创建 user_login_audit 表失败: %v", err)
+	}
+}
+
 func ensureUserColumn(ctx context.Context, col, alterSQL, indexSQL string) {
 	db := g.DB()
 	rows, err := db.GetAll(ctx, `PRAGMA table_info(sys_user)`)

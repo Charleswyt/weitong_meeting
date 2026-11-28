@@ -30,6 +30,9 @@ func TestPublicAuthPathsMatchRouteDeclaration(t *testing.T) {
 		"/api/v1/auth/sms/reset-password": true,
 		"/api/v1/auth/email/send":         true,
 		"/api/v1/auth/email/login":        true,
+		"/api/v1/feedback/summary":        true,
+		"/api/v1/feedback/like":           true,
+		"/api/v1/feedback/submit":         true,
 		declared:                          true,
 	}
 	for path := range publicAuthPaths {

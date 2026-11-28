@@ -27,3 +27,10 @@ func (c *Console) SendCode(ctx context.Context, toEmail, code, purpose string) e
 		c.from, toEmail, purpose, code)
 	return nil
 }
+
+func (c *Console) SendMeetingInvite(ctx context.Context, toEmail string, inv MeetingInvite) error {
+	g.Log().Infof(ctx,
+		"[email/console] 会议邀请未经 SMTP 下发（开发通道） from=%s to=%s meeting=%s title=%s join=%s",
+		c.from, toEmail, inv.MeetingNo, inv.Title, inv.JoinUrl)
+	return nil
+}
